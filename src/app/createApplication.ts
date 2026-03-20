@@ -22,7 +22,7 @@ import { AuthService } from './auth/authService';
 import { EnvUserStore } from './auth/envUserStore';
 import { createPgPool } from '../core/db/pgClient';
 import { FinalizerDb } from '../core/pipeline/finalizerDb';
-import { ImporterPlaceholder } from '../core/pipeline/importerPlaceholder';
+import { ImporterDb } from '../core/pipeline/importerDb';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -30,12 +30,15 @@ function createMigrationError(target: string, legacyPath: string): Error {
   return new Error(`${target} is not implemented yet. Port logic from ${legacyPath}`);
 }
 
-function createSourceImporter(): SourceImporter {
-  return new ImporterPlaceholder();
+function createPgPoolOrThrow(databaseUrl: string) {
+  return createPgPool(databaseUrl);
 }
 
-function createFinalizer(databaseUrl: string, finalizeDeleteEnabled: boolean, priceAtImportEnabled: boolean): Finalizer {
-  const pool = createPgPool(databaseUrl);
+function createSourceImporter(pool: ReturnType<typeof createPgPoolOrThrow>): SourceImporter {
+  return new ImporterDb(pool);
+}
+
+function createFinalizer(pool: ReturnType<typeof createPgPoolOrThrow>, finalizeDeleteEnabled: boolean, priceAtImportEnabled: boolean): Finalizer {
   return new FinalizerDb(pool, {
     finalizeDeleteEnabled,
     priceAtImportEnabled
@@ -104,11 +107,12 @@ export interface Application {
 
 export function createApplication(env: Record<string, string | undefined>): Application {
   const config = loadConfig(env);
+  const pool = createPgPoolOrThrow(config.base.databaseUrl);
   const connector = createConnector(config);
   const pipeline = new PipelineOrchestrator({
-    sourceImporter: createSourceImporter(),
+    sourceImporter: createSourceImporter(pool),
     finalizer: createFinalizer(
-      config.base.databaseUrl,
+      pool,
       config.base.finalizeDeleteEnabled,
       env.PRICE_AT_IMPORT === 'true'
     ),
