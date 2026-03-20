@@ -5,6 +5,7 @@ import type {
   Finalizer,
   ExportPreviewProvider,
   ImportSummary,
+  SourceImportSummary,
   FinalizeSummary,
   StoreExportResult,
   StoreImportExecution,
@@ -84,6 +85,14 @@ export class PipelineOrchestrator<MappedRow = unknown> {
 
   runImportAll(jobId: number): Promise<ImportSummary> {
     return this.sourceImporter.importAll(jobId);
+  }
+
+  runImportSource(jobId: number, sourceId: number): Promise<SourceImportSummary> {
+    return this.sourceImporter.importSource(jobId, sourceId);
+  }
+
+  runImportSupplier(jobId: number, supplierId: number): Promise<SourceImportSummary> {
+    return this.sourceImporter.importSupplier(jobId, supplierId);
   }
 
   runFinalize(jobId: number): Promise<FinalizeSummary> {

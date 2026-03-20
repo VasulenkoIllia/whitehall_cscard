@@ -77,3 +77,9 @@ Auth / env для CS-Cart:
   - supplier-фільтр має збігатися;
   - checkpoint `processed > 0` обов'язковий.
 - В адмін-сторінці `public/admin/index.html` додані поля для `resumeLatest` і `resumeFromJobId`.
+
+## Import parity endpoints (legacy scope)
+- Для керованих імпортів без повного прогону пайплайна доступні:
+  - `POST /admin/api/jobs/import-source` (`sourceId`)
+  - `POST /admin/api/jobs/import-supplier` (`supplierId`)
+- Ці джоби використовують той самий імпортний код (`ImporterDb`) і ті самі бізнес-правила, що `import_all`.

@@ -34,13 +34,11 @@ What is already good:
 - env validation and basic auth/session layer exist
 
 What is still not at legacy parity:
-- no full job orchestration equivalent to legacy `runners.js`
-- no scheduler/cron layer
-- no cleanup/retention execution flow
-- no real Horoshop gateway implementation
-- admin API exposes only login, preview and store-import
-- `AUTH_STRATEGY=db` is declared, but application composition still wires `EnvUserStore`
-- docs copied from legacy describe more than current repo really does
+- admin CRUD/data APIs still partial (`suppliers/sources/mappings/markup rules/price overrides`)
+- legacy read endpoints parity is still pending (`stats`, `final-preview/export`, `compare-preview/export`)
+- integration test coverage for critical business invariants is still missing
+- no staged load-test baseline yet for 100k/300k/500k runs
+- Horoshop is intentionally paused in current scope (separate future connector)
 
 ## Quality assessment
 
@@ -343,6 +341,34 @@ Effect:
 - batch-level observability is now available for throughput tuning and incident analysis
 - no business logic or import decision rules were changed
 
+### 14. Legacy import orchestration parity for source/supplier scopes
+
+Changed files:
+- `src/core/pipeline/contracts.ts`
+- `src/core/pipeline/importerDb.ts`
+- `src/core/pipeline/PipelineOrchestrator.ts`
+- `src/core/jobs/PipelineJobRunner.ts`
+- `src/app/http/server.ts`
+- `public/admin/index.html`
+
+What changed:
+- extended source importer contract with:
+  - `importSource(jobId, sourceId)`
+  - `importSupplier(jobId, supplierId)`
+- reused existing Google Sheets import logic for these scopes (no business-rule changes)
+- added standalone job types and orchestration:
+  - `import_source`
+  - `import_supplier`
+- added admin API endpoints:
+  - `POST /admin/api/jobs/import-source`
+  - `POST /admin/api/jobs/import-supplier`
+- added basic admin UI controls for direct source/supplier import runs
+
+Effect:
+- restores key legacy operational scenarios for targeted import runs
+- keeps single lock/runner model and same concurrency safety guarantees
+- improves recoverability: operators can rerun smaller scopes instead of full import when needed
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path
@@ -360,6 +386,7 @@ Still required:
 ### Phase 2. Reach legacy parity for core pipeline
 
 Required next:
+- complete admin CRUD parity (`suppliers`, `sources`, `mappings`, `markup rules`, `price overrides`)
 - add resume-focused integration tests (supplier mismatch, empty checkpoint, wrong source job type)
 
 ### Phase 3. Finish CS-Cart connector for large syncs
@@ -368,10 +395,10 @@ Required next:
 - auto mirror refresh policy before delta import (scheduled `store_mirror_sync`)
 - staging load tests for 100k / 300k / 500k items
 
-### Phase 4. Only after CS-Cart is stable, bring Horoshop into the same contract
+### Phase 4. CS-Cart production hardening and cutover checklist
 
 Rule:
-- Horoshop must become just another connector, not a second source of core logic
+- Horoshop remains out of active scope until CS-Cart parity and load stability are fully closed
 
 ## Non-negotiable requirements for target load
 
@@ -384,4 +411,5 @@ Rule:
 ## Recommended next implementation order
 
 1. Add integration tests around resume edge-cases + import -> finalize -> preview for null/empty size, overrides and dedup priority.
-2. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).
+2. Implement admin CRUD parity for source/supplier/mapping/markup/override entities.
+3. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).

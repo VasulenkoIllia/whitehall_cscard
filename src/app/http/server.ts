@@ -35,6 +35,16 @@ export function createHttpServer(appContext: AppContext) {
     return false;
   };
 
+  const parseRequiredPositiveInt = (value: unknown, fieldName: string): number => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      const error = new Error(`${fieldName} must be a positive number`);
+      (error as any).status = 400;
+      throw error;
+    }
+    return Math.trunc(parsed);
+  };
+
   const readStoreImportRunOptions = (req: Request) => {
     const rawResumeFromJobId = req.body?.resumeFromJobId;
     let resumeFromJobId: number | null = null;
@@ -205,6 +215,50 @@ export function createHttpServer(appContext: AppContext) {
       res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'import_all_error') });
     }
   });
+
+  app.post(
+    '/admin/api/jobs/import-source',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const sourceId = parseRequiredPositiveInt(req.body?.sourceId, 'sourceId');
+        const result = await jobRunner.runImportSource(sourceId);
+        if (readVerboseFlag(req)) {
+          return res.json(result);
+        }
+        return res.json({
+          jobId: result.jobId,
+          result: result.result
+        });
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'import_source_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/jobs/import-supplier',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const supplierId = parseRequiredPositiveInt(req.body?.supplierId, 'supplierId');
+        const result = await jobRunner.runImportSupplier(supplierId);
+        if (readVerboseFlag(req)) {
+          return res.json(result);
+        }
+        return res.json({
+          jobId: result.jobId,
+          result: result.result
+        });
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'import_supplier_error') });
+      }
+    }
+  );
 
   app.post('/admin/api/jobs/finalize', authMw.requireRole('admin'), async (_req: Request, res: Response) => {
     try {

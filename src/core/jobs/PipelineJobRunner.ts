@@ -3,6 +3,7 @@ import { LogService } from '../pipeline/log';
 import type {
   FinalizeSummary,
   ImportSummary,
+  SourceImportSummary,
   StoreImportExecution,
   UpdatePipelineSummary
 } from '../pipeline/contracts';
@@ -14,6 +15,8 @@ import type { StoreImportProgress } from '../connectors/StoreConnector';
 const BLOCKING_JOB_TYPES = [
   'update_pipeline',
   'import_all',
+  'import_source',
+  'import_supplier',
   'finalize',
   'store_import',
   'cleanup',
@@ -64,7 +67,14 @@ function summarizeStoreImportResult(value: unknown): unknown {
 }
 
 function summarizeStepResult(
-  type: 'import_all' | 'finalize' | 'store_import' | 'cleanup' | 'store_mirror_sync',
+  type:
+    | 'import_all'
+    | 'import_source'
+    | 'import_supplier'
+    | 'finalize'
+    | 'store_import'
+    | 'cleanup'
+    | 'store_mirror_sync',
   value: unknown
 ): unknown {
   if (type === 'store_import') {
@@ -317,7 +327,14 @@ export class PipelineJobRunner<MappedRow = unknown> {
   }
 
   private async runStandaloneStep<T>(
-    type: 'import_all' | 'finalize' | 'store_import' | 'cleanup' | 'store_mirror_sync',
+    type:
+      | 'import_all'
+      | 'import_source'
+      | 'import_supplier'
+      | 'finalize'
+      | 'store_import'
+      | 'cleanup'
+      | 'store_mirror_sync',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<JobRunnerResult<T>> {
@@ -381,6 +398,28 @@ export class PipelineJobRunner<MappedRow = unknown> {
 
   runImportAll(): Promise<JobRunnerResult<ImportSummary>> {
     return this.runStandaloneStep('import_all', {}, (jobId) => this.pipeline.runImportAll(jobId));
+  }
+
+  runImportSource(sourceId: number): Promise<JobRunnerResult<SourceImportSummary>> {
+    const normalizedSourceId = Math.trunc(Number(sourceId));
+    if (!Number.isFinite(normalizedSourceId) || normalizedSourceId <= 0) {
+      throw this.createBadRequest('sourceId must be a positive number');
+    }
+    return this.runStandaloneStep('import_source', { sourceId: normalizedSourceId }, (jobId) =>
+      this.pipeline.runImportSource(jobId, normalizedSourceId)
+    );
+  }
+
+  runImportSupplier(supplierId: number): Promise<JobRunnerResult<SourceImportSummary>> {
+    const normalizedSupplierId = Math.trunc(Number(supplierId));
+    if (!Number.isFinite(normalizedSupplierId) || normalizedSupplierId <= 0) {
+      throw this.createBadRequest('supplierId must be a positive number');
+    }
+    return this.runStandaloneStep(
+      'import_supplier',
+      { supplierId: normalizedSupplierId },
+      (jobId) => this.pipeline.runImportSupplier(jobId, normalizedSupplierId)
+    );
   }
 
   runFinalize(): Promise<JobRunnerResult<FinalizeSummary>> {

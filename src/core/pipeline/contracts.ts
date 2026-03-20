@@ -7,6 +7,20 @@ export interface ImportSummary {
   warnings: string[];
 }
 
+export interface SourceImportItem {
+  sourceId: number;
+  sourceName: string | null;
+  supplierId: number;
+  supplierName: string | null;
+  imported: number;
+  skipped: number;
+  error: string | null;
+}
+
+export interface SourceImportSummary extends ImportSummary {
+  sources: SourceImportItem[];
+}
+
 export interface FinalizeSummary {
   rawCount: number;
   finalCount: number;
@@ -42,6 +56,8 @@ export interface MirrorSnapshot {
 
 export interface SourceImporter {
   importAll(jobId: number): Promise<ImportSummary>;
+  importSource(jobId: number, sourceId: number): Promise<SourceImportSummary>;
+  importSupplier(jobId: number, supplierId: number): Promise<SourceImportSummary>;
 }
 
 export interface Finalizer {

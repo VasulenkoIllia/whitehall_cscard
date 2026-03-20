@@ -1,5 +1,10 @@
 import type { Pool } from 'pg';
-import type { ImportSummary, SourceImporter } from './contracts';
+import type {
+  ImportSummary,
+  SourceImportItem,
+  SourceImportSummary,
+  SourceImporter
+} from './contracts';
 import { detectMappingFromRow, hasRequiredFields, normalizeHeader } from './mapping';
 import { getSheetInfo, getSheetRowChunk } from './googleSheetsService';
 import { computePriceWithMarkup, type PricingContext } from './pricing';
@@ -212,6 +217,16 @@ export interface ImportResult {
   error?: string | null;
 }
 
+interface SourceRowRecord {
+  id: number;
+  supplier_id: number;
+  source_type: string | null;
+  source_name?: string | null;
+  name?: string | null;
+  supplier_name?: string | null;
+  [key: string]: unknown;
+}
+
 export class ImporterDb implements SourceImporter {
   constructor(
     private readonly pool: Pool,
@@ -219,74 +234,231 @@ export class ImporterDb implements SourceImporter {
     private readonly priceAtImportEnabled: boolean
   ) {}
 
+  private toSourceImportItem(
+    source: SourceRowRecord,
+    imported: number,
+    skipped: number,
+    error: string | null
+  ): SourceImportItem {
+    return {
+      sourceId: Number(source.id || 0),
+      sourceName: String(source.source_name || source.name || '').trim() || null,
+      supplierId: Number(source.supplier_id || 0),
+      supplierName: String(source.supplier_name || '').trim() || null,
+      imported,
+      skipped,
+      error
+    };
+  }
+
+  private toFlatImportSummary(summary: SourceImportSummary): ImportSummary {
+    return {
+      importedSources: summary.importedSources,
+      importedRows: summary.importedRows,
+      skippedRows: summary.skippedRows,
+      warnings: summary.warnings
+    };
+  }
+
+  private async loadLatestMapping(supplierId: number, sourceId: number): Promise<{
+    mapping: Record<string, unknown> | null;
+    mappingMeta: MappingMeta | null;
+  }> {
+    const mappingResult = await this.pool.query(
+      `SELECT mapping, mapping_meta, header_row, source_id
+       FROM column_mappings
+       WHERE supplier_id = $1 AND source_id = $2
+       ORDER BY id DESC LIMIT 1`,
+      [supplierId, sourceId]
+    );
+    const record = mappingResult.rows[0];
+    return {
+      mapping: (record?.mapping || null) as Record<string, unknown> | null,
+      mappingMeta: buildMappingMeta(record)
+    };
+  }
+
+  private async importSourceWithSummary(
+    jobId: number,
+    source: SourceRowRecord
+  ): Promise<{ item: SourceImportItem; warning: string | null }> {
+    await ensureJobActive(this.pool, jobId);
+
+    const sourceId = Number(source.id || 0);
+    const supplierId = Number(source.supplier_id || 0);
+    const sourceName = String(source.source_name || source.name || '').trim() || null;
+    const supplierName = String(source.supplier_name || '').trim() || null;
+    const sourceType = String(source.source_type || '').trim();
+
+    const { mapping, mappingMeta } = await this.loadLatestMapping(supplierId, sourceId);
+
+    if (sourceType !== 'google_sheet') {
+      await this.logService.log(jobId, 'error', 'Unsupported source type', {
+        sourceId,
+        sourceType: source.source_type,
+        sourceName,
+        supplierName
+      });
+      return {
+        item: this.toSourceImportItem(source, 0, 0, 'unsupported source type'),
+        warning: `Source ${sourceId} unsupported type ${sourceType || 'unknown'}`
+      };
+    }
+
+    try {
+      const result = await this.importGoogleSheetSource({
+        source,
+        supplierId,
+        jobId,
+        mappingOverride: mapping,
+        mappingMeta
+      });
+
+      const warning = result.error ? `Source ${sourceId} failed: ${result.error}` : null;
+      return {
+        item: this.toSourceImportItem(
+          source,
+          Number(result.imported || 0),
+          Number(result.skipped || 0),
+          result.error ? String(result.error) : null
+        ),
+        warning
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.logService.log(jobId, 'error', 'Import source failed', {
+        sourceId,
+        sourceName,
+        supplierName,
+        error: msg
+      });
+      return {
+        item: this.toSourceImportItem(source, 0, 0, msg),
+        warning: `Source ${sourceId} failed: ${msg}`
+      };
+    }
+  }
+
+  private async importSelectedSources(
+    jobId: number,
+    sources: SourceRowRecord[],
+    messages: { started: string; finished: string },
+    startData?: Record<string, unknown>
+  ): Promise<SourceImportSummary> {
+    await this.logService.log(jobId, 'info', messages.started, startData);
+
+    let importedRows = 0;
+    let skippedRows = 0;
+    const warnings: string[] = [];
+    const sourceItems: SourceImportItem[] = [];
+
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = sources[index];
+      const { item, warning } = await this.importSourceWithSummary(jobId, source);
+      sourceItems.push(item);
+      importedRows += item.imported;
+      skippedRows += item.skipped;
+      if (warning) {
+        warnings.push(warning);
+      }
+    }
+
+    const summary: SourceImportSummary = {
+      importedSources: sources.length,
+      importedRows,
+      skippedRows,
+      warnings,
+      sources: sourceItems
+    };
+
+    await this.logService.log(jobId, 'info', messages.finished, summary);
+    return summary;
+  }
+
   async importAll(jobId: number): Promise<ImportSummary> {
-    await this.logService.log(jobId, 'info', 'Import all sources started');
-    const sourcesResult = await this.pool.query(
+    const sourcesResult = await this.pool.query<SourceRowRecord>(
       `SELECT s.*, sp.id AS supplier_id, sp.name AS supplier_name, s.name AS source_name
        FROM sources s
        JOIN suppliers sp ON sp.id = s.supplier_id
        WHERE s.is_active = TRUE AND sp.is_active = TRUE
        ORDER BY s.id ASC`
     );
+    const summary = await this.importSelectedSources(jobId, sourcesResult.rows, {
+      started: 'Import all sources started',
+      finished: 'Import all sources finished'
+    });
+    return this.toFlatImportSummary(summary);
+  }
 
-    let importedRows = 0;
-    let skippedRows = 0;
-    const warnings: string[] = [];
-
-    for (const source of sourcesResult.rows) {
-      await ensureJobActive(this.pool, jobId);
-      const mappingResult = await this.pool.query(
-        `SELECT mapping, mapping_meta, header_row, source_id
-         FROM column_mappings
-         WHERE supplier_id = $1 AND source_id = $2
-         ORDER BY id DESC LIMIT 1`,
-        [source.supplier_id, source.id]
-      );
-      const mappingRecord = mappingResult.rows[0];
-      const mappingMeta = buildMappingMeta(mappingRecord);
-
-      if (source.source_type !== 'google_sheet') {
-        await this.logService.log(jobId, 'error', 'Unsupported source type', {
-          sourceId: source.id,
-          sourceType: source.source_type
-        });
-        warnings.push(`Source ${source.id} unsupported type ${source.source_type}`);
-        continue;
-      }
-
-      try {
-        const result = await this.importGoogleSheetSource({
-          source,
-          supplierId: Number(source.supplier_id || 0),
-          jobId,
-          mappingOverride: mappingRecord?.mapping || null,
-          mappingMeta
-        });
-        importedRows += result.imported;
-        skippedRows += result.skipped;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await this.logService.log(jobId, 'error', 'Import source failed', {
-          sourceId: source.id,
-          error: msg
-        });
-        warnings.push(`Source ${source.id} failed: ${msg}`);
-      }
+  async importSource(jobId: number, sourceId: number): Promise<SourceImportSummary> {
+    const normalizedSourceId = Math.trunc(Number(sourceId));
+    if (!Number.isFinite(normalizedSourceId) || normalizedSourceId <= 0) {
+      const error = new Error('sourceId must be a positive number');
+      (error as any).status = 400;
+      throw error;
     }
 
-    await this.logService.log(jobId, 'info', 'Import all sources finished', {
-      importedSources: sourcesResult.rows.length,
-      importedRows,
-      skippedRows,
-      warnings
-    });
+    const sourceResult = await this.pool.query<SourceRowRecord>(
+      `SELECT s.*, sp.id AS supplier_id, sp.name AS supplier_name, s.name AS source_name
+       FROM sources s
+       JOIN suppliers sp ON sp.id = s.supplier_id
+       WHERE s.id = $1
+         AND s.is_active = TRUE
+         AND sp.is_active = TRUE
+       LIMIT 1`,
+      [normalizedSourceId]
+    );
+    const source = sourceResult.rows[0];
+    if (!source) {
+      const error = new Error(`source ${normalizedSourceId} not found`);
+      (error as any).status = 404;
+      throw error;
+    }
 
-    return {
-      importedSources: sourcesResult.rows.length,
-      importedRows,
-      skippedRows,
-      warnings
-    };
+    return this.importSelectedSources(
+      jobId,
+      [source],
+      {
+        started: 'Import source started',
+        finished: 'Import source finished'
+      },
+      {
+        sourceId: normalizedSourceId,
+        sourceName: String(source.source_name || source.name || '').trim() || null,
+        supplierId: Number(source.supplier_id || 0),
+        supplierName: String(source.supplier_name || '').trim() || null
+      }
+    );
+  }
+
+  async importSupplier(jobId: number, supplierId: number): Promise<SourceImportSummary> {
+    const normalizedSupplierId = Math.trunc(Number(supplierId));
+    if (!Number.isFinite(normalizedSupplierId) || normalizedSupplierId <= 0) {
+      const error = new Error('supplierId must be a positive number');
+      (error as any).status = 400;
+      throw error;
+    }
+
+    const sourcesResult = await this.pool.query<SourceRowRecord>(
+      `SELECT s.*, sp.id AS supplier_id, sp.name AS supplier_name, s.name AS source_name
+       FROM sources s
+       JOIN suppliers sp ON sp.id = s.supplier_id
+       WHERE s.is_active = TRUE
+         AND sp.is_active = TRUE
+         AND sp.id = $1
+       ORDER BY s.id ASC`,
+      [normalizedSupplierId]
+    );
+
+    return this.importSelectedSources(
+      jobId,
+      sourcesResult.rows,
+      {
+        started: 'Import supplier started',
+        finished: 'Import supplier finished'
+      },
+      { supplierId: normalizedSupplierId }
+    );
   }
 
   async insertRawBatch(rows: ImportBatchRow[]): Promise<InsertResult> {

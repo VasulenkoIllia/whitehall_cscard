@@ -67,6 +67,31 @@
       </div>
       <div id="importStatus" class="status"></div>
     </section>
+
+    <section>
+      <h2>Source/Supplier import</h2>
+      <div class="card-row">
+        <div>
+          <label>Source ID</label>
+          <input id="importSourceId" placeholder="e.g. 12"/>
+        </div>
+        <div>
+          <button id="importSourceBtn">Run import source</button>
+        </div>
+      </div>
+      <div id="importSourceStatus" class="status"></div>
+
+      <div class="card-row" style="margin-top:12px;">
+        <div>
+          <label>Supplier ID</label>
+          <input id="importSupplierId" placeholder="e.g. 3"/>
+        </div>
+        <div>
+          <button id="importSupplierBtn">Run import supplier</button>
+        </div>
+      </div>
+      <div id="importSupplierStatus" class="status"></div>
+    </section>
   </main>
   <script>
     const previewBtn = document.getElementById('previewBtn');
@@ -123,6 +148,62 @@
           `warnings=${(data.warnings||[]).length}`;
       } catch (err) {
         importStatus.textContent = err.message;
+      }
+    });
+
+    const importSourceBtn = document.getElementById('importSourceBtn');
+    const importSourceStatus = document.getElementById('importSourceStatus');
+    importSourceBtn.addEventListener('click', async () => {
+      importSourceStatus.textContent = 'Running import_source...';
+      const sourceIdRaw = (document.getElementById('importSourceId').value || '').trim();
+      const sourceId = Number(sourceIdRaw);
+      if (!Number.isFinite(sourceId) || sourceId <= 0) {
+        importSourceStatus.textContent = 'sourceId must be a positive number';
+        return;
+      }
+      try {
+        const res = await fetch('/admin/api/jobs/import-source', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'import_source_error');
+        const result = data.result || {};
+        importSourceStatus.textContent =
+          `Job=${data.jobId}, importedSources=${result.importedSources || 0}, ` +
+          `importedRows=${result.importedRows || 0}, skippedRows=${result.skippedRows || 0}, ` +
+          `warnings=${(result.warnings || []).length}`;
+      } catch (err) {
+        importSourceStatus.textContent = err.message;
+      }
+    });
+
+    const importSupplierBtn = document.getElementById('importSupplierBtn');
+    const importSupplierStatus = document.getElementById('importSupplierStatus');
+    importSupplierBtn.addEventListener('click', async () => {
+      importSupplierStatus.textContent = 'Running import_supplier...';
+      const supplierIdRaw = (document.getElementById('importSupplierId').value || '').trim();
+      const supplierId = Number(supplierIdRaw);
+      if (!Number.isFinite(supplierId) || supplierId <= 0) {
+        importSupplierStatus.textContent = 'supplierId must be a positive number';
+        return;
+      }
+      try {
+        const res = await fetch('/admin/api/jobs/import-supplier', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ supplierId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'import_supplier_error');
+        const result = data.result || {};
+        importSupplierStatus.textContent =
+          `Job=${data.jobId}, importedSources=${result.importedSources || 0}, ` +
+          `importedRows=${result.importedRows || 0}, skippedRows=${result.skippedRows || 0}, ` +
+          `warnings=${(result.warnings || []).length}`;
+      } catch (err) {
+        importSupplierStatus.textContent = err.message;
       }
     });
 
