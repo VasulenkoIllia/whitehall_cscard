@@ -204,6 +204,15 @@ export class PipelineJobRunner<MappedRow = unknown> {
     let lastMetaPersistAt = 0;
     let lastLoggedProcessed = 0;
     let baselineProcessed: number | null = null;
+    let baselineImported = 0;
+    let baselineFailed = 0;
+    let baselineSkipped = 0;
+    let lastBatchAt = startedAt;
+    let lastBatchProcessed = 0;
+    let lastBatchImported = 0;
+    let lastBatchFailed = 0;
+    let lastBatchSkipped = 0;
+    let batchSequence = 0;
     const metaPersistIntervalMs = 5000;
     const logStepRows = 5000;
 
@@ -211,8 +220,18 @@ export class PipelineJobRunner<MappedRow = unknown> {
       const now = Date.now();
       const elapsedMs = Math.max(1, now - startedAt);
       const processed = Math.max(0, Math.trunc(progress.processed));
+      const imported = Math.max(0, Math.trunc(progress.imported));
+      const failed = Math.max(0, Math.trunc(progress.failed));
+      const skipped = Math.max(0, Math.trunc(progress.skipped));
       if (baselineProcessed === null) {
         baselineProcessed = processed;
+        baselineImported = imported;
+        baselineFailed = failed;
+        baselineSkipped = skipped;
+        lastBatchProcessed = processed;
+        lastBatchImported = imported;
+        lastBatchFailed = failed;
+        lastBatchSkipped = skipped;
       }
       const runProcessed = Math.max(0, processed - baselineProcessed);
       const ratePerSecond =
@@ -220,21 +239,79 @@ export class PipelineJobRunner<MappedRow = unknown> {
       const remaining = Math.max(0, Math.trunc(progress.total) - processed);
       const etaSeconds = ratePerSecond && ratePerSecond > 0 ? Math.ceil(remaining / ratePerSecond) : null;
 
+      const runImported = Math.max(0, imported - baselineImported);
+      const runFailed = Math.max(0, failed - baselineFailed);
+      const runSkipped = Math.max(0, skipped - baselineSkipped);
+
       const snapshot = {
         ...progress,
+        runProcessed,
+        runImported,
+        runFailed,
+        runSkipped,
         updatedAt: new Date(now).toISOString(),
         ratePerSecond,
         etaSeconds
       };
 
-      if (progress.finished || progress.canceled || now - lastMetaPersistAt >= metaPersistIntervalMs) {
-        await this.jobs.mergeJobMeta(jobId, { storeImportProgress: snapshot });
-        lastMetaPersistAt = now;
+      const shouldLogBatch =
+        progress.finished || progress.canceled || processed - lastLoggedProcessed >= logStepRows;
+      let batchSummary: Record<string, unknown> | null = null;
+      if (shouldLogBatch) {
+        const batchDurationMs = Math.max(1, now - lastBatchAt);
+        const batchProcessed = Math.max(0, processed - lastBatchProcessed);
+        const batchImported = Math.max(0, imported - lastBatchImported);
+        const batchFailed = Math.max(0, failed - lastBatchFailed);
+        const batchSkipped = Math.max(0, skipped - lastBatchSkipped);
+        const batchRatePerSecond =
+          batchProcessed > 0 ? Number((batchProcessed / (batchDurationMs / 1000)).toFixed(2)) : null;
+
+        batchSequence += 1;
+        batchSummary = {
+          seq: batchSequence,
+          processedFrom: lastBatchProcessed,
+          processedTo: processed,
+          batchProcessed,
+          batchImported,
+          batchFailed,
+          batchSkipped,
+          batchDurationMs,
+          batchRatePerSecond,
+          totalRatePerSecond: ratePerSecond,
+          etaSeconds,
+          finished: progress.finished,
+          canceled: progress.canceled
+        };
+
+        await this.logs.log(jobId, 'info', 'store_import batch metrics', batchSummary);
+        lastLoggedProcessed = processed;
+        lastBatchAt = now;
+        lastBatchProcessed = processed;
+        lastBatchImported = imported;
+        lastBatchFailed = failed;
+        lastBatchSkipped = skipped;
       }
 
-      if (progress.finished || progress.canceled || processed - lastLoggedProcessed >= logStepRows) {
-        await this.logs.log(jobId, 'info', 'store_import progress', snapshot);
-        lastLoggedProcessed = processed;
+      if (progress.finished || progress.canceled || now - lastMetaPersistAt >= metaPersistIntervalMs) {
+        await this.jobs.mergeJobMeta(jobId, {
+          storeImportProgress: snapshot,
+          storeImportMetrics: {
+            updatedAt: snapshot.updatedAt,
+            elapsedMs,
+            ratePerSecond,
+            etaSeconds,
+            runProcessed,
+            runImported,
+            runFailed,
+            runSkipped,
+            totalProcessed: processed,
+            totalImported: imported,
+            totalFailed: failed,
+            totalSkipped: skipped,
+            lastBatch: batchSummary
+          }
+        });
+        lastMetaPersistAt = now;
       }
     };
   }

@@ -62,7 +62,8 @@ Auth / env для CS-Cart:
 ## Progress checkpoints (runtime)
 - Під час `store_import` CS-Cart gateway передає прогрес (`total/processed/imported/failed/skipped`) через `StoreImportContext.onProgress`.
 - Runner зберігає checkpoint у `jobs.meta.storeImportProgress` (періодично та фінальним записом).
-- У логи пишеться агрегований прогрес із `ratePerSecond` та `etaSeconds` (без великих payload масивів).
+- У логи пишуться batch-метрики (`store_import batch metrics`): вікно обробки, delta counters, batch rate, total rate, ETA.
+- У `jobs.meta.storeImportMetrics` зберігається останній агрегований snapshot + `lastBatch`.
 - Це не змінює бізнес-результат імпорту, але дає операційний контроль і базу для resume після cancel/failure.
 
 ## Resume API для store_import
@@ -75,3 +76,4 @@ Auth / env для CS-Cart:
   - status тільки `failed` або `canceled`;
   - supplier-фільтр має збігатися;
   - checkpoint `processed > 0` обов'язковий.
+- В адмін-сторінці `public/admin/index.html` додані поля для `resumeLatest` і `resumeFromJobId`.

@@ -52,6 +52,16 @@
           <input id="importSupplier" placeholder="supplier name"/>
         </div>
         <div>
+          <label>Resume From Job ID (optional)</label>
+          <input id="importResumeFromJobId" placeholder="e.g. 12345"/>
+        </div>
+        <div>
+          <label>
+            <input id="importResumeLatest" type="checkbox" style="margin-right:6px;"/>
+            Resume latest failed/canceled
+          </label>
+        </div>
+        <div>
           <button id="importBtn">Run store import</button>
         </div>
       </div>
@@ -91,15 +101,26 @@
     importBtn.addEventListener('click', async () => {
       importStatus.textContent = 'Running store import...';
       const supplier = document.getElementById('importSupplier').value || '';
+      const resumeFromJobIdRaw = (document.getElementById('importResumeFromJobId').value || '').trim();
+      const resumeLatest = document.getElementById('importResumeLatest').checked;
+      const payload = { supplier };
+      if (resumeFromJobIdRaw) {
+        payload.resumeFromJobId = Number(resumeFromJobIdRaw);
+      }
+      if (resumeLatest) {
+        payload.resumeLatest = true;
+      }
       try {
         const res = await fetch('/admin/api/store-import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ supplier })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'import_error');
-        importStatus.textContent = `Imported=${data.imported}, skipped=${data.skipped}, warnings=${(data.warnings||[]).length}`;
+        importStatus.textContent =
+          `Job=${data.jobId}, Imported=${data.imported}, skipped=${data.skipped}, ` +
+          `warnings=${(data.warnings||[]).length}`;
       } catch (err) {
         importStatus.textContent = err.message;
       }

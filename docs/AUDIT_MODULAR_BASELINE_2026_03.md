@@ -319,6 +319,7 @@ Changed files:
 - `src/core/jobs/JobService.ts`
 - `src/core/jobs/PipelineJobRunner.ts`
 - `src/app/http/server.ts`
+- `public/admin/index.html`
 - `docs/CSCART_CONNECTOR_NOTES.md`
 
 What changed:
@@ -331,10 +332,15 @@ What changed:
   - `resumeFromJobId` (explicit failed/canceled `store_import` job)
   - `resumeLatest` (auto-pick latest failed/canceled `store_import` for same supplier filter)
   - gateway skips already processed checkpoint segment via `resumeProcessed`
+- added batch telemetry in runner:
+  - `store_import batch metrics` log entries (delta counters, batch rate, total rate, ETA)
+  - `jobs.meta.storeImportMetrics` aggregate snapshot with latest batch info
+- added basic admin UI controls for resume (`resumeLatest`, `resumeFromJobId`)
 
 Effect:
 - operators can track long-running import state from DB/API without waiting for final job completion
 - canceled/failed import can continue from checkpoint instead of always starting from zero
+- batch-level observability is now available for throughput tuning and incident analysis
 - no business logic or import decision rules were changed
 
 ## Adjusted plan
@@ -354,13 +360,12 @@ Still required:
 ### Phase 2. Reach legacy parity for core pipeline
 
 Required next:
-- add admin UI controls for resume (`resumeLatest` / pick job to resume)
+- add resume-focused integration tests (supplier mismatch, empty checkpoint, wrong source job type)
 
 ### Phase 3. Finish CS-Cart connector for large syncs
 
 Required next:
 - auto mirror refresh policy before delta import (scheduled `store_mirror_sync`)
-- batched execution metrics and ETA in job metadata/logs
 - staging load tests for 100k / 300k / 500k items
 
 ### Phase 4. Only after CS-Cart is stable, bring Horoshop into the same contract
@@ -378,7 +383,5 @@ Rule:
 
 ## Recommended next implementation order
 
-1. Add admin UI controls for resume (`resumeLatest`, `resumeFromJobId`) and clear operator UX around checkpoint source.
-2. Add batch-level CS-Cart metrics (duration/rps/success/fail/skip/ETA) into job logs/meta.
-3. Add integration tests around import -> finalize -> preview for null/empty size, overrides and dedup priority.
-4. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).
+1. Add integration tests around resume edge-cases + import -> finalize -> preview for null/empty size, overrides and dedup priority.
+2. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).
