@@ -1,4 +1,4 @@
-import type { StoreConnector } from '../../core/connectors/StoreConnector';
+import type { StoreConnector, StoreImportContext } from '../../core/connectors/StoreConnector';
 import type { CursorPage, ExportPreviewRow, MirrorRow, StoreImportBatch, StoreImportResult } from '../../core/domain/store';
 export interface CsCartImportRow {
   productCode: string;
@@ -11,7 +11,7 @@ export interface CsCartImportRow {
 
 export interface CsCartGatewayClient {
   fetchProductsPage(page: number): Promise<CursorPage<MirrorRow>>;
-  importProducts(rows: CsCartImportRow[]): Promise<StoreImportResult>;
+  importProducts(rows: CsCartImportRow[], context?: StoreImportContext): Promise<StoreImportResult>;
 }
 
 export class CsCartConnector implements StoreConnector<CsCartImportRow> {
@@ -62,11 +62,14 @@ export class CsCartConnector implements StoreConnector<CsCartImportRow> {
     };
   }
 
-  importBatch(batch: StoreImportBatch<CsCartImportRow>): Promise<StoreImportResult> {
+  importBatch(
+    batch: StoreImportBatch<CsCartImportRow>,
+    context?: StoreImportContext
+  ): Promise<StoreImportResult> {
     if (batch.store !== this.store) {
       throw new Error(`Expected ${this.store} batch, received ${batch.store}`);
     }
 
-    return this.gateway.importProducts(batch.rows);
+    return this.gateway.importProducts(batch.rows, context);
   }
 }

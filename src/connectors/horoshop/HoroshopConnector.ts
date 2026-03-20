@@ -1,4 +1,4 @@
-import type { StoreConnector } from '../../core/connectors/StoreConnector';
+import type { StoreConnector, StoreImportContext } from '../../core/connectors/StoreConnector';
 import type {
   CursorPage,
   ExportPreviewRow,
@@ -137,7 +137,10 @@ export class HoroshopConnector implements StoreConnector<HoroshopProductInput> {
     };
   }
 
-  async importBatch(batch: StoreImportBatch<HoroshopProductInput>): Promise<StoreImportResult> {
+  async importBatch(
+    batch: StoreImportBatch<HoroshopProductInput>,
+    _context?: StoreImportContext
+  ): Promise<StoreImportResult> {
     if (batch.store !== this.store) {
       throw new Error(`Expected ${this.store} batch, received ${batch.store}`);
     }

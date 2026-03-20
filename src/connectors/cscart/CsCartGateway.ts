@@ -1,6 +1,7 @@
 import fetch, { Response } from 'node-fetch';
 import type { RequestInit } from 'node-fetch';
 import { URL } from 'url';
+import type { StoreImportContext } from '../../core/connectors/StoreConnector';
 import type { CursorPage, MirrorRow } from '../../core/domain/store';
 import type { CsCartImportRow } from './CsCartConnector';
 
@@ -13,6 +14,7 @@ export interface CsCartGatewayOptions {
   rateLimitBurst: number;
   retryLimit?: number;
   allowCreate?: boolean;
+  importConcurrency?: number;
 }
 
 interface CsCartProduct {
@@ -48,6 +50,8 @@ export class CsCartGateway {
 
   private readonly allowCreate: boolean;
 
+  private readonly importConcurrency: number;
+
   constructor(private readonly options: CsCartGatewayOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.authHeader =
@@ -59,6 +63,113 @@ export class CsCartGateway {
     this.lastRefill = Date.now();
     this.retryLimit = options.retryLimit && options.retryLimit > 0 ? options.retryLimit : 5;
     this.allowCreate = options.allowCreate === true;
+    this.importConcurrency =
+      options.importConcurrency && options.importConcurrency > 0
+        ? Math.max(1, Math.min(20, Math.trunc(options.importConcurrency)))
+        : 4;
+  }
+
+  private normalizeProductCode(value: unknown): string {
+    return String(value || '').trim();
+  }
+
+  private normalizeStatus(value: unknown): 'A' | 'H' {
+    const normalized = String(value || '').toUpperCase();
+    return normalized === 'A' ? 'A' : 'H';
+  }
+
+  private normalizePrice(value: unknown): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 0;
+    }
+    return parsed;
+  }
+
+  private normalizeParentProductId(value: unknown): string | null {
+    if (value === null || typeof value === 'undefined') {
+      return null;
+    }
+    const raw = String(value).trim();
+    if (!raw || raw === '0') {
+      return null;
+    }
+    return raw;
+  }
+
+  private appendWarning(warnings: string[], message: string): void {
+    if (warnings.length < 200) {
+      warnings.push(message);
+      return;
+    }
+    if (warnings.length === 200) {
+      warnings.push('warnings truncated');
+    }
+  }
+
+  private async fetchProductIndexByCode(): Promise<
+    Map<
+      string,
+      {
+        productId: string;
+        status: 'A' | 'H';
+        price: number;
+        parentProductId: string | null;
+      }
+    >
+  > {
+    const byCode = new Map<
+      string,
+      {
+        productId: string;
+        status: 'A' | 'H';
+        price: number;
+        parentProductId: string | null;
+      }
+    >();
+
+    let page = 1;
+    while (true) {
+      const data = await this.request(
+        `/api/products?items_per_page=${this.itemsPerPage}&page=${page}`
+      );
+      const products: CsCartProduct[] = Array.isArray(data.products) ? data.products : [];
+      for (let index = 0; index < products.length; index += 1) {
+        const product = products[index];
+        const code = this.normalizeProductCode(product.product_code);
+        if (!code || !product.product_id) {
+          continue;
+        }
+        byCode.set(code, {
+          productId: String(product.product_id),
+          status: this.normalizeStatus(product.status),
+          price: this.normalizePrice(product.price),
+          parentProductId: this.normalizeParentProductId(product.parent_product_id)
+        });
+      }
+
+      const totalItems = Number(data.params?.total_items || products.length);
+      const totalPages = Math.max(1, Math.ceil(totalItems / this.itemsPerPage));
+      if (products.length === 0 || page >= totalPages) {
+        break;
+      }
+      page += 1;
+    }
+
+    return byCode;
+  }
+
+  private isSameProductState(
+    current: { status: 'A' | 'H'; price: number; parentProductId: string | null },
+    next: { status: 'A' | 'H'; price: number; parentProductId: string | null }
+  ): boolean {
+    if (current.status !== next.status) {
+      return false;
+    }
+    if (Math.abs(current.price - next.price) > 0.01) {
+      return false;
+    }
+    return current.parentProductId === next.parentProductId;
   }
 
   private refillTokens(): void {
@@ -137,59 +248,142 @@ export class CsCartGateway {
     };
   }
 
-  async importProducts(rows: CsCartImportRow[]): Promise<{ imported: number; failed: number; skipped: number; warnings: string[] }> {
+  async importProducts(
+    rows: CsCartImportRow[],
+    context?: StoreImportContext
+  ): Promise<{ imported: number; failed: number; skipped: number; warnings: string[] }> {
     let imported = 0;
     let failed = 0;
     let skipped = 0;
     const warnings: string[] = [];
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i];
-      try {
-        // Try to find existing product by code to decide PUT vs POST
-        let productId: string | null = null;
-        try {
-          const lookup = await this.request(
-            `/api/products?items_per_page=1&page=1&pcode_from_q=Y&q=${encodeURIComponent(row.productCode)}`
-          );
-          const found = Array.isArray(lookup.products) ? lookup.products[0] : null;
-          if (found?.product_id) {
-            productId = String(found.product_id);
-          }
-        } catch (lookupErr) {
-          // ignore lookup errors, fallback to POST
-        }
 
+    const indexByCode = await this.fetchProductIndexByCode();
+    let cursor = 0;
+    const totalRows = rows.length;
+    let canceled = false;
+    let cancelCheckCounter = 0;
+
+    const takeNextRow = (): CsCartImportRow | null => {
+      while (cursor < totalRows) {
+        const row = rows[cursor];
+        cursor += 1;
+        if (this.normalizeProductCode(row.productCode)) {
+          return row;
+        }
+      }
+      return null;
+    };
+
+    const checkCanceled = async (): Promise<void> => {
+      if (canceled || !context?.isCanceled) {
+        return;
+      }
+      cancelCheckCounter += 1;
+      if (cancelCheckCounter % 25 !== 0) {
+        return;
+      }
+      const isCanceled = await context.isCanceled();
+      if (!isCanceled) {
+        return;
+      }
+      canceled = true;
+      const cancelError = new Error('Job canceled');
+      (cancelError as any).code = 'JOB_CANCELED';
+      throw cancelError;
+    };
+
+    const worker = async (): Promise<void> => {
+      while (true) {
+        await checkCanceled();
+        if (canceled) {
+          break;
+        }
+        const row = takeNextRow();
+        if (!row) {
+          break;
+        }
+        const productCode = this.normalizeProductCode(row.productCode);
+        const parentCode = this.normalizeProductCode(row.parentProductCode);
+        const parentFromIndex = parentCode ? indexByCode.get(parentCode) || null : null;
+        const desiredState = {
+          status: row.visibility ? 'A' as const : 'H' as const,
+          price: this.normalizePrice(row.price),
+          parentProductId: parentFromIndex ? parentFromIndex.productId : null
+        };
         const payload = {
-          product_code: row.productCode,
-          status: row.visibility ? 'A' : 'H',
-          price: row.price ?? 0,
-          parent_product_id: row.parentProductCode || 0
+          product_code: productCode,
+          status: desiredState.status,
+          price: desiredState.price,
+          parent_product_id: desiredState.parentProductId || 0
         };
 
-        if (productId) {
-          await this.request(`/api/products/${productId}`, {
-            method: 'PUT',
-            body: JSON.stringify(payload)
-          });
-        } else if (this.allowCreate) {
-          await this.request('/api/products', {
+        try {
+          const current = indexByCode.get(productCode) || null;
+          if (current) {
+            if (this.isSameProductState(current, desiredState)) {
+              skipped += 1;
+              continue;
+            }
+            await this.request(`/api/products/${current.productId}`, {
+              method: 'PUT',
+              body: JSON.stringify(payload)
+            });
+            indexByCode.set(productCode, {
+              productId: current.productId,
+              status: desiredState.status,
+              price: desiredState.price,
+              parentProductId: desiredState.parentProductId
+            });
+            imported += 1;
+            continue;
+          }
+
+          if (!this.allowCreate) {
+            skipped += 1;
+            this.appendWarning(
+              warnings,
+              `product_code=${productCode}: missing in store, skipped (update-only mode)`
+            );
+            continue;
+          }
+
+          const created = await this.request('/api/products', {
             method: 'POST',
             body: JSON.stringify(payload)
           });
-        } else {
-          skipped += 1;
-          warnings.push(`product_code=${row.productCode}: missing in store, skipped (update-only mode)`);
-          continue;
-        }
-
-        imported += 1;
-      } catch (err) {
-        failed += 1;
-        if (err instanceof Error) {
-          warnings.push(`product_code=${row.productCode}: ${err.message}`);
+          const createdProductId = String(
+            created?.product_id || created?.response?.product_id || ''
+          ).trim();
+          if (createdProductId) {
+            indexByCode.set(productCode, {
+              productId: createdProductId,
+              status: desiredState.status,
+              price: desiredState.price,
+              parentProductId: desiredState.parentProductId
+            });
+          }
+          imported += 1;
+        } catch (err) {
+          if ((err as any)?.code === 'JOB_CANCELED') {
+            throw err;
+          }
+          failed += 1;
+          if (err instanceof Error) {
+            this.appendWarning(warnings, `product_code=${productCode}: ${err.message}`);
+          } else {
+            this.appendWarning(warnings, `product_code=${productCode}: import failed`);
+          }
         }
       }
+    };
+
+    const workerCount = Math.max(1, Math.min(this.importConcurrency, totalRows || 1));
+    const workers: Promise<void>[] = [];
+    for (let index = 0; index < workerCount; index += 1) {
+      workers.push(worker());
     }
+    await Promise.all(workers);
+
     return { imported, failed, skipped, warnings };
   }
 }

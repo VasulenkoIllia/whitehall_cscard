@@ -38,6 +38,34 @@ export function createHttpServer(appContext: AppContext) {
     return fallback;
   };
 
+  const readVerboseFlag = (req: Request): boolean => {
+    const queryValue = req.query?.verbose;
+    if (typeof queryValue === 'string') {
+      const normalized = queryValue.trim().toLowerCase();
+      return normalized === '1' || normalized === 'true' || normalized === 'yes';
+    }
+    const bodyValue = (req.body || {}).verbose;
+    if (typeof bodyValue === 'boolean') {
+      return bodyValue;
+    }
+    if (typeof bodyValue === 'string') {
+      const normalized = bodyValue.trim().toLowerCase();
+      return normalized === '1' || normalized === 'true' || normalized === 'yes';
+    }
+    return false;
+  };
+
+  const summarizeStoreImportExecution = (execution: any) => {
+    const batchRows = Array.isArray(execution?.batch?.rows) ? execution.batch.rows.length : null;
+    return {
+      previewTotal: Number(execution?.preview?.total || 0),
+      batchStore: execution?.batch?.store || null,
+      batchRows,
+      batchMeta: execution?.batch?.meta || null,
+      importResult: execution?.importResult || null
+    };
+  };
+
   app.use(express.json({ limit: '2mb' }));
   app.use(cookieParser());
   app.use(authMw.attachSession);
@@ -166,7 +194,13 @@ export function createHttpServer(appContext: AppContext) {
     const supplier = typeof req.body?.supplier === 'string' ? req.body.supplier : null;
     try {
       const result = await jobRunner.runStoreImport(supplier);
-      res.json(result);
+      if (readVerboseFlag(req)) {
+        return res.json(result);
+      }
+      return res.json({
+        jobId: result.jobId,
+        result: summarizeStoreImportExecution(result.result)
+      });
     } catch (err) {
       res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'store_import_error') });
     }
@@ -179,11 +213,36 @@ export function createHttpServer(appContext: AppContext) {
       const supplier = typeof req.body?.supplier === 'string' ? req.body.supplier : null;
       try {
         const result = await jobRunner.runUpdatePipeline(supplier);
-        res.json(result);
+        if (readVerboseFlag(req)) {
+          return res.json(result);
+        }
+        return res.json({
+          jobId: result.jobId,
+          result: {
+            importSummary: result.result.importSummary,
+            finalizeSummary: result.result.finalizeSummary,
+            storeExecution: summarizeStoreImportExecution(result.result.storeExecution)
+          }
+        });
       } catch (err) {
         res
           .status(readErrorStatus(err))
           .json({ error: readErrorMessage(err, 'update_pipeline_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/jobs/store-mirror-sync',
+    authMw.requireRole('admin'),
+    async (_req: Request, res: Response) => {
+      try {
+        const result = await jobRunner.runStoreMirrorSync();
+        res.json(result);
+      } catch (err) {
+        res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'store_mirror_sync_error') });
       }
     }
   );

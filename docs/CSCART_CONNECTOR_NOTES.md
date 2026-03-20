@@ -43,3 +43,18 @@ Auth / env для CS-Cart:
 - Рекомендований throttle: `CSCART_RATE_LIMIT_RPS` 10 (burst 20), конфігуровано; експоненційний backoff на 429/5xx.
 - Батч процесингу: логічні групи 50–100 запитів, рахувати успіх/фейл, ETA. При 10 RPS 300k оновлень ≈ 8.3 год; при 15 RPS ≈ 5.5 год — потрібен стейджинг-тест перед підняттям RPS.
 - `CSCART_ITEMS_PER_PAGE` ставити 1000 для mirror, щоб мінімізувати кількість сторінок.
+- Runtime optimization (implemented): перед імпортом збирається повний індекс каталогу `product_code -> product_id/status/price/parent_product_id`, після чого:
+  - не робляться lookup-запити для кожного SKU,
+  - незмінені SKU пропускаються,
+  - `parent_product_id` резолвиться через індекс (по `parent_product_code`).
+- Додатковий env для throughput: `CSCART_IMPORT_CONCURRENCY` (default `4`), паралелізм worker-ів імпорту поверх rate-limit токен-бакета.
+- Під час імпорту прибрано зайву копію масиву рядків (менше пікового RAM на великих партіях).
+- `store_mirror_sync` працює потоково по сторінках у БД (без накопичення повного snapshot у памʼяті).
+- Для важких запусків job API за замовчуванням повертає compact summary:
+  - `POST /admin/api/jobs/store-import`
+  - `POST /admin/api/jobs/update-pipeline`
+  - повний payload можна отримати через `verbose=true`.
+
+## Операційна стабільність логів
+- Логи проходять санітизацію і обрізання payload (`LOG_PAYLOAD_MAX_BYTES`, default `32768`).
+- Це обмежує зростання таблиці `logs` при великих результатах або помилках з великим stack/data.

@@ -12,6 +12,11 @@ export interface StoreConnectorCapabilities {
   importPreview: boolean;
 }
 
+export interface StoreImportContext {
+  jobId?: number;
+  isCanceled?: () => Promise<boolean>;
+}
+
 export interface StoreConnector<MappedRow = unknown> {
   readonly store: ActiveStore;
   readonly capabilities: StoreConnectorCapabilities;
@@ -20,5 +25,8 @@ export interface StoreConnector<MappedRow = unknown> {
 
   createImportBatch(rows: ExportPreviewRow[]): Promise<StoreImportBatch<MappedRow>>;
 
-  importBatch(batch: StoreImportBatch<MappedRow>): Promise<StoreImportResult>;
+  importBatch(
+    batch: StoreImportBatch<MappedRow>,
+    context?: StoreImportContext
+  ): Promise<StoreImportResult>;
 }

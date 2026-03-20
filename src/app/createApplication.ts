@@ -13,7 +13,7 @@ import {
   type HoroshopGateway,
   type HoroshopProductInput
 } from '../connectors/horoshop/HoroshopConnector';
-import { CsCartConnector } from '../connectors/cscart/CsCartConnector';
+import { CsCartConnector, type CsCartImportRow } from '../connectors/cscart/CsCartConnector';
 import { CsCartGateway as DefaultCsCartGateway } from '../connectors/cscart/CsCartGateway';
 import { AuthService } from './auth/authService';
 import { EnvUserStore } from './auth/envUserStore';
@@ -26,6 +26,8 @@ import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
 import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
 import { CleanupService } from '../core/jobs/CleanupService';
+import { StoreMirrorService } from '../core/jobs/StoreMirrorService';
+import type { StoreImportBatch } from '../core/domain/store';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -91,10 +93,51 @@ function createConnector(config: AppConfig): StoreConnector<unknown> {
     itemsPerPage: config.connectors.cscart.itemsPerPage,
     rateLimitRps: config.connectors.cscart.rateLimitRps,
     rateLimitBurst: config.connectors.cscart.rateLimitBurst,
-    allowCreate: config.connectors.cscart.allowCreate
+    allowCreate: config.connectors.cscart.allowCreate,
+    importConcurrency: Number(process.env.CSCART_IMPORT_CONCURRENCY || 4)
   });
 
   return new CsCartConnector(csGateway);
+}
+
+function readEnvPositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.trunc(parsed);
+}
+
+function createImportBatchOptimizer(
+  config: AppConfig,
+  storeMirrorService: StoreMirrorService,
+  env: Record<string, string | undefined>
+): ((batch: StoreImportBatch<unknown>) => Promise<StoreImportBatch<unknown>>) | undefined {
+  if (config.base.activeStore !== 'cscart') {
+    return undefined;
+  }
+  const maxMirrorAgeMinutes = readEnvPositiveInt(
+    env.CSCART_DELTA_MAX_MIRROR_AGE_MINUTES,
+    120
+  );
+
+  return async (batch: StoreImportBatch<unknown>): Promise<StoreImportBatch<unknown>> => {
+    if (batch.store !== 'cscart') {
+      return batch;
+    }
+    const rows = batch.rows as CsCartImportRow[];
+    const delta = await storeMirrorService.filterCsCartDelta(rows, maxMirrorAgeMinutes);
+    return {
+      ...batch,
+      rows: delta.rows as unknown[],
+      meta: {
+        ...batch.meta,
+        delta: delta.summary,
+        totalBeforeDelta: rows.length,
+        totalAfterDelta: delta.rows.length
+      }
+    };
+  };
 }
 
 export interface Application {
@@ -105,6 +148,7 @@ export interface Application {
   jobService: JobService;
   jobRunner: PipelineJobRunner<unknown>;
   cleanupService: CleanupService;
+  storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
   auth: AuthService;
 }
@@ -114,6 +158,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const pool = createPgPoolOrThrow(config.base.databaseUrl);
   const logService = new LogService(pool);
   const connector = createConnector(config);
+  const storeMirrorService = new StoreMirrorService(pool);
   const pipeline = new PipelineOrchestrator({
     sourceImporter: createSourceImporter(pool, logService, env.PRICE_AT_IMPORT === 'true'),
     finalizer: createFinalizer(
@@ -122,11 +167,18 @@ export function createApplication(env: Record<string, string | undefined>): Appl
       env.PRICE_AT_IMPORT === 'true'
     ),
     previewProvider: createPreviewProvider(pool),
-    connector
+    connector,
+    importBatchOptimizer: createImportBatchOptimizer(config, storeMirrorService, env)
   });
   const jobService = new JobService(pool);
   const cleanupService = new CleanupService(pool);
-  const jobRunner = new PipelineJobRunner(pipeline, jobService, logService, cleanupService);
+  const jobRunner = new PipelineJobRunner(
+    pipeline,
+    jobService,
+    logService,
+    cleanupService,
+    storeMirrorService
+  );
 
   const authStore = config.auth.strategy === 'db' ? new DbUserStore(pool) : new EnvUserStore(env);
   const auth = new AuthService(authStore, {
@@ -143,6 +195,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     jobService,
     jobRunner,
     cleanupService,
+    storeMirrorService,
     auth,
     migrationTargets: [
       `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,

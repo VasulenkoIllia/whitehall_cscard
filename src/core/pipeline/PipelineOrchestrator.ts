@@ -1,4 +1,4 @@
-import type { StoreConnector } from '../connectors/StoreConnector';
+import type { StoreConnector, StoreImportContext } from '../connectors/StoreConnector';
 import type {
   MirrorSnapshot,
   SourceImporter,
@@ -11,12 +11,21 @@ import type {
   UpdatePipelineSummary
 } from './contracts';
 import type { MirrorRow } from '../domain/store';
+import type { StoreImportBatch } from '../domain/store';
 
 export interface PipelineDependencies<MappedRow = unknown> {
   sourceImporter: SourceImporter;
   finalizer: Finalizer;
   previewProvider: ExportPreviewProvider;
   connector: StoreConnector<MappedRow>;
+  importBatchOptimizer?: (
+    batch: StoreImportBatch<MappedRow>
+  ) => Promise<StoreImportBatch<MappedRow>>;
+}
+
+export interface StoreMirrorWalkSummary {
+  fetched: number;
+  pages: number;
 }
 
 export class PipelineOrchestrator<MappedRow = unknown> {
@@ -28,68 +37,35 @@ export class PipelineOrchestrator<MappedRow = unknown> {
 
   private readonly connector: StoreConnector<MappedRow>;
 
+  private readonly importBatchOptimizer?: (
+    batch: StoreImportBatch<MappedRow>
+  ) => Promise<StoreImportBatch<MappedRow>>;
+
   constructor(dependencies: PipelineDependencies<MappedRow>) {
     this.sourceImporter = dependencies.sourceImporter;
     this.finalizer = dependencies.finalizer;
     this.previewProvider = dependencies.previewProvider;
     this.connector = dependencies.connector;
+    this.importBatchOptimizer = dependencies.importBatchOptimizer;
   }
 
-  runImportAll(jobId: number): Promise<ImportSummary> {
-    return this.sourceImporter.importAll(jobId);
+  get store() {
+    return this.connector.store;
   }
 
-  runFinalize(jobId: number): Promise<FinalizeSummary> {
-    return this.finalizer.buildFinalDataset(jobId);
-  }
-
-  async runStoreExport(jobId: number, supplier: string | null = null): Promise<StoreExportResult<MappedRow>> {
-    const preview = await this.previewProvider.buildNeutralPreview(jobId, { supplier });
-    const batch = await this.connector.createImportBatch(preview.rows);
-    return { preview, batch };
-  }
-
-  async runStoreImport(
-    jobId: number,
-    supplier: string | null = null
-  ): Promise<StoreImportExecution<MappedRow>> {
-    const exportResult = await this.runStoreExport(jobId, supplier);
-    const importResult = await this.connector.importBatch(exportResult.batch);
-    return {
-      preview: exportResult.preview,
-      batch: exportResult.batch,
-      importResult
-    };
-  }
-
-  async runUpdatePipeline(
-    jobId: number,
-    supplier: string | null = null
-  ): Promise<UpdatePipelineSummary<MappedRow>> {
-    const importSummary = await this.sourceImporter.importAll(jobId);
-    const finalizeSummary = await this.finalizer.buildFinalDataset(jobId);
-    const storeExecution = await this.runStoreImport(jobId, supplier);
-
-    return {
-      importSummary,
-      finalizeSummary,
-      storeExecution
-    };
-  }
-
-  async snapshotStoreMirror(): Promise<MirrorSnapshot> {
-    const items: MirrorRow[] = [];
+  async forEachStoreMirrorPage(
+    onPage: (items: MirrorRow[], page: number) => Promise<void> | void
+  ): Promise<StoreMirrorWalkSummary> {
     const seenCursors = new Set<string>();
     let cursor: string | null = null;
     let pages = 0;
+    let fetched = 0;
 
     while (true) {
       const page = await this.connector.fetchMirrorPage(cursor);
       pages += 1;
-
-      for (let index = 0; index < page.items.length; index += 1) {
-        items.push(page.items[index]);
-      }
+      fetched += page.items.length;
+      await onPage(page.items, pages);
 
       if (!page.nextCursor) {
         break;
@@ -103,10 +79,68 @@ export class PipelineOrchestrator<MappedRow = unknown> {
       cursor = page.nextCursor;
     }
 
+    return { fetched, pages };
+  }
+
+  runImportAll(jobId: number): Promise<ImportSummary> {
+    return this.sourceImporter.importAll(jobId);
+  }
+
+  runFinalize(jobId: number): Promise<FinalizeSummary> {
+    return this.finalizer.buildFinalDataset(jobId);
+  }
+
+  async runStoreExport(jobId: number, supplier: string | null = null): Promise<StoreExportResult<MappedRow>> {
+    const preview = await this.previewProvider.buildNeutralPreview(jobId, { supplier });
+    const preparedBatch = await this.connector.createImportBatch(preview.rows);
+    const batch = this.importBatchOptimizer
+      ? await this.importBatchOptimizer(preparedBatch)
+      : preparedBatch;
+    return { preview, batch };
+  }
+
+  async runStoreImport(
+    jobId: number,
+    supplier: string | null = null,
+    context?: StoreImportContext
+  ): Promise<StoreImportExecution<MappedRow>> {
+    const exportResult = await this.runStoreExport(jobId, supplier);
+    const importResult = await this.connector.importBatch(exportResult.batch, context);
+    return {
+      preview: exportResult.preview,
+      batch: exportResult.batch,
+      importResult
+    };
+  }
+
+  async runUpdatePipeline(
+    jobId: number,
+    supplier: string | null = null,
+    context?: StoreImportContext
+  ): Promise<UpdatePipelineSummary<MappedRow>> {
+    const importSummary = await this.sourceImporter.importAll(jobId);
+    const finalizeSummary = await this.finalizer.buildFinalDataset(jobId);
+    const storeExecution = await this.runStoreImport(jobId, supplier, context);
+
+    return {
+      importSummary,
+      finalizeSummary,
+      storeExecution
+    };
+  }
+
+  async snapshotStoreMirror(): Promise<MirrorSnapshot> {
+    const items: MirrorRow[] = [];
+    const summary = await this.forEachStoreMirrorPage((pageItems) => {
+      for (let index = 0; index < pageItems.length; index += 1) {
+        items.push(pageItems[index]);
+      }
+    });
+
     return {
       items,
-      fetched: items.length,
-      pages
+      fetched: summary.fetched,
+      pages: summary.pages
     };
   }
 }

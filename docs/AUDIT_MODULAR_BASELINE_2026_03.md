@@ -205,6 +205,87 @@ Effect:
 - declared auth strategy now matches runtime behavior
 - admin auth no longer silently falls back to env users when DB mode is selected
 
+### 8. CS-Cart import performance pass (index + delta skip)
+
+Changed files:
+- `src/connectors/cscart/CsCartGateway.ts`
+- `src/app/createApplication.ts`
+- `docs/CSCART_CONNECTOR_NOTES.md`
+
+What changed:
+- removed per-SKU lookup requests during import
+- added full catalog index load (`product_code -> product_id/state`) once per import run
+- unchanged SKUs are now skipped instead of always sending PUT
+- `parent_product_id` now resolves via catalog index by parent product code
+- added import worker parallelism env (`CSCART_IMPORT_CONCURRENCY`, default `4`)
+
+Effect:
+- significant API call reduction on large runs
+- lower CS-Cart API pressure
+- better throughput while preserving rate-limit and update-only semantics
+
+### 9. Store import cancel-awareness
+
+Changed files:
+- `src/core/connectors/StoreConnector.ts`
+- `src/core/pipeline/PipelineOrchestrator.ts`
+- `src/core/jobs/PipelineJobRunner.ts`
+- `src/connectors/cscart/CsCartConnector.ts`
+- `src/connectors/cscart/CsCartGateway.ts`
+- `src/connectors/horoshop/HoroshopConnector.ts`
+
+What changed:
+- added optional store-import context (`jobId`, `isCanceled`) through pipeline -> connector -> gateway
+- CS-Cart gateway periodically checks job cancel status during import worker loop
+- on cancel, import loop exits with `JOB_CANCELED` instead of continuing full run
+
+Effect:
+- cancel behavior for long CS-Cart import runs is now practical, not only metadata-level
+- less wasted API traffic/time after operator cancel action
+
+### 10. Persisted store mirror sync job
+
+Changed files:
+- `migrations/023_create_store_mirror.sql`
+- `src/core/jobs/StoreMirrorService.ts`
+- `src/core/jobs/PipelineJobRunner.ts`
+- `src/core/pipeline/PipelineOrchestrator.ts`
+- `src/app/createApplication.ts`
+- `src/app/http/server.ts`
+
+What changed:
+- added shared `store_mirror` table (`store + article` primary key)
+- added `store_mirror_sync` job type
+- added service to persist full mirror snapshot and prune stale rows by `seen_at`
+- added API endpoint `POST /admin/api/jobs/store-mirror-sync`
+
+Effect:
+- mirror state is now persisted in DB for observability and future persisted-delta logic
+- provides a stable base for upcoming optimization stage (DB-driven delta before connector import)
+
+### 11. Memory-safe mirror sync + bounded operational payloads
+
+Changed files:
+- `src/core/pipeline/PipelineOrchestrator.ts`
+- `src/core/jobs/StoreMirrorService.ts`
+- `src/core/jobs/PipelineJobRunner.ts`
+- `src/core/pipeline/log.ts`
+- `src/app/http/server.ts`
+- `src/connectors/cscart/CsCartGateway.ts`
+
+What changed:
+- added page iterator in orchestrator (`forEachStoreMirrorPage`) and switched mirror sync job to stream pages directly into DB
+- mirror sync now uses a shared `seenAt` marker (`createSyncMarker`) + per-page upsert (`upsertSnapshotChunk`) + final stale-row prune (`pruneSnapshot`)
+- child `update_pipeline` step logs now store summarized `store_import` payload instead of full batch bodies
+- added payload sanitization/truncation in log service (`LOG_PAYLOAD_MAX_BYTES`, default `32768`)
+- heavy job endpoints (`/admin/api/jobs/store-import`, `/admin/api/jobs/update-pipeline`) now return compact summaries by default; full payload available via `verbose=true`
+- removed extra in-memory filtered copy in CS-Cart import worker path
+
+Effect:
+- lower peak RAM during mirror sync (no full catalog snapshot accumulation for sync job)
+- lower risk of `logs` table growth and oversized API responses on large runs
+- better operational stability for 100k–500k item iterations without business-rule changes
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path
@@ -222,15 +303,14 @@ Still required:
 ### Phase 2. Reach legacy parity for core pipeline
 
 Required next:
-- port job orchestration from legacy `src/jobs/runners.js`
-- extend cancel/timeout behavior for import/store stages (not only finalize DB query termination)
+- add scheduler/cron layer equivalent to legacy `src/jobs/scheduler.js`
+- add resumable checkpoints for long store-import runs (continue after interruption)
 
 ### Phase 3. Finish CS-Cart connector for large syncs
 
 Required next:
-- mirror persistence table for CS-Cart
-- delta/import orchestration with resumable progress
-- batched execution metrics and ETA
+- auto mirror refresh policy before delta import (scheduled `store_mirror_sync`)
+- batched execution metrics and ETA in job metadata/logs
 - staging load tests for 100k / 300k / 500k items
 
 ### Phase 4. Only after CS-Cart is stable, bring Horoshop into the same contract
@@ -248,8 +328,8 @@ Rule:
 
 ## Recommended next implementation order
 
-1. Port job lifecycle from legacy into `whitehall_cscard` with explicit jobs, locks, cancel and cleanup.
-2. Add retention service for partition drop and old job/log cleanup.
-3. Persist CS-Cart mirror and run delta imports from stored mirror state.
+1. Add scheduler/cron orchestration for `update_pipeline`, `cleanup`, `store_mirror_sync`.
+2. Add resumable checkpoints for `store_import` (resume cursor/progress after cancel/failure).
+3. Add batch-level CS-Cart metrics (duration/rps/success/fail/skip/ETA) into job logs/meta.
 4. Add integration tests around import -> finalize -> preview for null/empty size, overrides and dedup priority.
-5. Revisit admin API only after pipeline parity is real.
+5. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).

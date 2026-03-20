@@ -8,8 +8,16 @@ import type {
 } from '../pipeline/contracts';
 import { JobService, type JobRecord } from './JobService';
 import type { CleanupService, CleanupSummary } from './CleanupService';
+import type { StoreMirrorService, StoreMirrorSyncSummary } from './StoreMirrorService';
 
-const BLOCKING_JOB_TYPES = ['update_pipeline', 'import_all', 'finalize', 'store_import', 'cleanup'];
+const BLOCKING_JOB_TYPES = [
+  'update_pipeline',
+  'import_all',
+  'finalize',
+  'store_import',
+  'cleanup',
+  'store_mirror_sync'
+];
 
 interface JobRunnerResult<T> {
   jobId: number;
@@ -19,6 +27,39 @@ interface JobRunnerResult<T> {
 interface ChildStepResult<T> {
   job: JobRecord;
   result: T;
+}
+
+function summarizeStoreImportResult(value: unknown): unknown {
+  const execution = value as StoreImportExecution<unknown> | null;
+  if (
+    !execution ||
+    typeof execution !== 'object' ||
+    !execution.preview ||
+    !execution.batch ||
+    !execution.importResult
+  ) {
+    return value;
+  }
+  const batchRows = Array.isArray((execution.batch as any).rows)
+    ? (execution.batch as any).rows.length
+    : null;
+  return {
+    previewTotal: execution.preview.total,
+    batchStore: execution.batch.store,
+    batchRows,
+    batchMeta: execution.batch.meta,
+    importResult: execution.importResult
+  };
+}
+
+function summarizeStepResult(
+  type: 'import_all' | 'finalize' | 'store_import' | 'cleanup' | 'store_mirror_sync',
+  value: unknown
+): unknown {
+  if (type === 'store_import') {
+    return summarizeStoreImportResult(value);
+  }
+  return value;
 }
 
 export class JobConflictError extends Error {
@@ -35,7 +76,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
     private readonly pipeline: PipelineOrchestrator<MappedRow>,
     private readonly jobs: JobService,
     private readonly logs: LogService,
-    private readonly cleanupService: CleanupService
+    private readonly cleanupService: CleanupService,
+    private readonly storeMirrorService: StoreMirrorService
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -47,8 +89,13 @@ export class PipelineJobRunner<MappedRow = unknown> {
     }
   }
 
+  private async isJobCanceled(jobId: number): Promise<boolean> {
+    const job = await this.jobs.getJob(jobId);
+    return job?.status === 'canceled';
+  }
+
   private async runStandaloneStep<T>(
-    type: 'import_all' | 'finalize' | 'store_import' | 'cleanup',
+    type: 'import_all' | 'finalize' | 'store_import' | 'cleanup' | 'store_mirror_sync',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<JobRunnerResult<T>> {
@@ -64,7 +111,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
       await this.logs.log(job.id, 'info', `${type} started`, meta);
       const result = await action(job.id);
       await this.jobs.finishJob(job.id);
-      await this.logs.log(job.id, 'info', `${type} finished`, result);
+      await this.logs.log(job.id, 'info', `${type} finished`, summarizeStepResult(type, result));
       return {
         jobId: job.id,
         result
@@ -98,7 +145,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
       await this.logs.log(job.id, 'info', `${type} started`, childMeta);
       const result = await action(job.id);
       await this.jobs.finishJob(job.id);
-      await this.logs.log(job.id, 'info', `${type} finished`, result);
+      await this.logs.log(job.id, 'info', `${type} finished`, summarizeStepResult(type, result));
       return { job, result };
     } catch (err) {
       await this.jobs.failJob(job.id, err);
@@ -123,7 +170,10 @@ export class PipelineJobRunner<MappedRow = unknown> {
   ): Promise<JobRunnerResult<StoreImportExecution<MappedRow>>> {
     const meta = supplier ? { supplier } : {};
     return this.runStandaloneStep('store_import', meta, (jobId) =>
-      this.pipeline.runStoreImport(jobId, supplier)
+      this.pipeline.runStoreImport(jobId, supplier, {
+        jobId,
+        isCanceled: () => this.isJobCanceled(jobId)
+      })
     );
   }
 
@@ -135,6 +185,29 @@ export class PipelineJobRunner<MappedRow = unknown> {
       'cleanup',
       { retentionDays: safeRetention },
       async (_jobId) => this.cleanupService.run(safeRetention)
+    );
+  }
+
+  runStoreMirrorSync(): Promise<JobRunnerResult<StoreMirrorSyncSummary & { fetched: number; pages: number }>> {
+    const store = this.pipeline.store;
+    return this.runStandaloneStep(
+      'store_mirror_sync',
+      { store },
+      async (_jobId) => {
+        const seenAt = this.storeMirrorService.createSyncMarker();
+        let upserted = 0;
+        const snapshot = await this.pipeline.forEachStoreMirrorPage(async (items) => {
+          upserted += await this.storeMirrorService.upsertSnapshotChunk(store, items, seenAt);
+        });
+        const deleted = await this.storeMirrorService.pruneSnapshot(store, seenAt);
+        return {
+          store,
+          upserted,
+          deleted,
+          fetched: snapshot.fetched,
+          pages: snapshot.pages
+        };
+      }
     );
   }
 
@@ -164,7 +237,11 @@ export class PipelineJobRunner<MappedRow = unknown> {
         parent.id,
         'store_import',
         supplier ? { supplier } : {},
-        (jobId) => this.pipeline.runStoreImport(jobId, supplier)
+        (jobId) =>
+          this.pipeline.runStoreImport(jobId, supplier, {
+            jobId,
+            isCanceled: () => this.isJobCanceled(jobId)
+          })
       );
 
       const result: UpdatePipelineSummary<MappedRow> = {
@@ -178,7 +255,11 @@ export class PipelineJobRunner<MappedRow = unknown> {
         finalizeJobId: finalizeStep.job.id,
         storeImportJobId: storeStep.job.id,
         supplier,
-        summary: result
+        summary: {
+          importSummary: result.importSummary,
+          finalizeSummary: result.finalizeSummary,
+          storeExecution: summarizeStoreImportResult(result.storeExecution)
+        }
       });
 
       return {
