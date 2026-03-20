@@ -9,14 +9,15 @@ BEGIN
       AND n.nspname = 'public'
   ) THEN
     ALTER TABLE products_raw RENAME TO products_raw_p;
-    ALTER TABLE products_raw_p SET UNLOGGED = FALSE;
-    ALTER TABLE products_raw_p SET (
-      autovacuum_vacuum_scale_factor = 0.05,
-      autovacuum_analyze_scale_factor = 0.05
-    );
+    ALTER TABLE products_raw_p SET LOGGED;
+    ALTER TABLE products_raw_p DROP CONSTRAINT IF EXISTS products_raw_p_pkey;
+    ALTER TABLE products_raw_p DROP CONSTRAINT IF EXISTS products_raw_pkey;
+    -- parent table with composite PK (id, created_at) to satisfy partitioning rule
     CREATE TABLE products_raw (
-      LIKE products_raw_p INCLUDING ALL
+      LIKE products_raw_p INCLUDING DEFAULTS INCLUDING IDENTITY INCLUDING GENERATED INCLUDING STORAGE INCLUDING COMMENTS,
+      PRIMARY KEY (id, created_at)
     ) PARTITION BY RANGE (created_at);
+    ALTER TABLE products_raw_p ADD PRIMARY KEY (id, created_at);
     -- Attach existing data as one default partition
     ALTER TABLE products_raw ATTACH PARTITION products_raw_p DEFAULT;
   END IF;

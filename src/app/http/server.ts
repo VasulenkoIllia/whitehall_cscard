@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import type { Application as AppContext } from '../createApplication';
 import type { Request, Response } from 'express';
 import { createAuthMiddleware } from './authMiddleware';
+import { renderLoginPage } from './loginPage';
 
 export function createHttpServer(appContext: AppContext) {
   const app = express();
@@ -42,12 +43,21 @@ export function createHttpServer(appContext: AppContext) {
     res.json({ ok: true });
   });
 
-  app.get('/admin/api/me', authMw.requireRole('viewer'), (req: Request, res: Response) => {
-    res.json({ role: req.userRole || null });
+  app.get('/admin/api/me', authMw.requireRole('viewer'), (req: Request, res: Response) =>
+    res.json({ role: req.userRole || null })
+  );
+
+  // Protected routes (placeholder)
+  app.get('/admin/api/protected', authMw.requireRole('admin'), (_req, res) => res.json({ ok: true }));
+
+  app.get('/admin/login', (_req, res) => {
+    res.set('Content-Type', 'text/html; charset=utf-8').send(renderLoginPage());
   });
 
-  // Placeholder protected route to validate middleware
-  app.get('/admin/api/protected', authMw.requireRole('admin'), (_req, res) => res.json({ ok: true }));
+  // Simple guard for /admin and /admin/* (SPA can live here later)
+  app.use('/admin', authMw.requireRole('viewer'), (_req, res) => {
+    res.json({ ok: true, role: 'viewer' });
+  });
 
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
 

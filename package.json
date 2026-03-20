@@ -7,7 +7,8 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "start": "node dist/index.js",
-    "seed:users": "node dist/scripts/seedUsers.js"
+    "seed:users": "node dist/scripts/seedUsers.js",
+    "migrate": "node dist/scripts/runMigrations.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
