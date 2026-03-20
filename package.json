@@ -1,0 +1,16 @@
+{
+  "name": "whitehall_cscard",
+  "version": "1.0.0",
+  "description": "Modular CS-Cart integration foundation for Whitehall",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.5.3"
+  },
+  "private": true
+}
