@@ -24,6 +24,7 @@ import { createPgPool } from '../core/db/pgClient';
 import { FinalizerDb } from '../core/pipeline/finalizerDb';
 import { ImporterDb } from '../core/pipeline/importerDb';
 import { LogService } from '../core/pipeline/log';
+import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -50,18 +51,8 @@ function createFinalizer(pool: ReturnType<typeof createPgPoolOrThrow>, finalizeD
   });
 }
 
-function createPreviewProvider(): ExportPreviewProvider {
-  return {
-    async buildNeutralPreview(
-      _jobId: number,
-      _options: { supplier: string | null }
-    ): Promise<ExportPreviewSummary> {
-      throw createMigrationError(
-        'Neutral export preview provider',
-        `${LEGACY_ROOT}/src/services/exportService.js`
-      );
-    }
-  };
+function createPreviewProvider(pool: ReturnType<typeof createPgPoolOrThrow>): ExportPreviewProvider {
+  return new ExportPreviewDb(pool);
 }
 
 function createHoroshopGateway(): HoroshopGateway {
@@ -86,7 +77,9 @@ function createConnector(config: AppConfig): StoreConnector<unknown> {
     return new HoroshopConnector({
       visibilityYes: config.base.visibilityYes,
       exportLimit: config.connectors.horoshop.exportLimit,
-      gateway: createHoroshopGateway()
+      gateway: createHoroshopGateway(),
+      rateLimitRps: Number(process.env.HOROSHOP_RATE_LIMIT_RPS || 5),
+      rateLimitBurst: Number(process.env.HOROSHOP_RATE_LIMIT_BURST || 10)
     });
   }
 
@@ -122,7 +115,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
       config.base.finalizeDeleteEnabled,
       env.PRICE_AT_IMPORT === 'true'
     ),
-    previewProvider: createPreviewProvider(),
+    previewProvider: createPreviewProvider(pool),
     connector
   });
 

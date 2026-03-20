@@ -55,6 +55,7 @@
 - Розростання `products_raw` при 5×500k/добу → партиції + drop partition замість масових DELETE.
 - CS-Cart великі прогони (100–300k товарів) → немає bulk API, оновлення поштучно з throttle; параметри `CSCART_ITEMS_PER_PAGE`, `CSCART_RATE_LIMIT_RPS` мають бути конфігуровані та протестовані на стейджингу.
 - Адмін-доступ: замінити basic-auth на сесійний логін з ролями `admin|viewer`; паролі хешовані (bcrypt), користувачі з env або таблиці `users`.
+- Horoshop API: додати throttle/backoff (env `HOROSHOP_RATE_LIMIT_RPS|BURST`) щоб уникати rate-limit і плавно обробляти великі батчі.
 
 ## Що потрібно від замовника
 - Підтвердження, що працюємо у межах цього репо на першому етапі.

@@ -32,6 +32,7 @@
 - `CSCART_STOREFRONT_ID` — опційний storefront.
 - `CSCART_ITEMS_PER_PAGE` — розмір сторінки mirror (рекомендовано 1000, виміряно на whitehall.com.ua).
 - `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST` — ліміт запитів при оновленні товарів (стартово 10 RPS, burst 20) з backoff на 429/5xx.
+- `HOROSHOP_RATE_LIMIT_RPS`, `HOROSHOP_RATE_LIMIT_BURST` — throttle для Horoshop API (стартово 5 RPS, burst 10).
 
 ## Auth/roles (просте закриття адмінки)
 - 2 ролі: `admin` (повний доступ), `viewer` (тільки перегляд).

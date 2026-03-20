@@ -26,6 +26,8 @@ export interface HoroshopConnectorOptions {
   hiddenPresenceLabel?: string;
   exportLimit: number;
   gateway: HoroshopGateway;
+  rateLimitRps?: number;
+  rateLimitBurst?: number;
 }
 
 function escapeRegExp(value: string): string {
@@ -64,11 +66,46 @@ export class HoroshopConnector implements StoreConnector<HoroshopProductInput> {
 
   private readonly gateway: HoroshopGateway;
 
+  private readonly rateLimitInterval: number;
+
+  private tokens: number;
+
+  private lastRefill: number;
+
+  private readonly rateLimitBurst: number;
+
   constructor(options: HoroshopConnectorOptions) {
     this.visibilityYes = options.visibilityYes;
     this.hiddenPresenceLabel = options.hiddenPresenceLabel || 'Немає в наявності';
     this.exportLimit = options.exportLimit;
     this.gateway = options.gateway;
+    const rps = options.rateLimitRps && options.rateLimitRps > 0 ? options.rateLimitRps : 5;
+    this.rateLimitInterval = 1000 / rps;
+    this.rateLimitBurst = options.rateLimitBurst && options.rateLimitBurst > 0 ? options.rateLimitBurst : 10;
+    this.tokens = this.rateLimitBurst;
+    this.lastRefill = Date.now();
+  }
+
+  private refillTokens(): void {
+    const now = Date.now();
+    const delta = now - this.lastRefill;
+    if (delta <= 0) return;
+    const add = Math.floor(delta / this.rateLimitInterval);
+    if (add > 0) {
+      this.tokens = Math.min(this.rateLimitBurst, this.tokens + add);
+      this.lastRefill = now;
+    }
+  }
+
+  private async throttle(): Promise<void> {
+    while (true) {
+      this.refillTokens();
+      if (this.tokens > 0) {
+        this.tokens -= 1;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.rateLimitInterval));
+    }
   }
 
   fetchMirrorPage(cursor: string | null = null): Promise<CursorPage<MirrorRow>> {
@@ -100,11 +137,12 @@ export class HoroshopConnector implements StoreConnector<HoroshopProductInput> {
     };
   }
 
-  importBatch(batch: StoreImportBatch<HoroshopProductInput>): Promise<StoreImportResult> {
+  async importBatch(batch: StoreImportBatch<HoroshopProductInput>): Promise<StoreImportResult> {
     if (batch.store !== this.store) {
       throw new Error(`Expected ${this.store} batch, received ${batch.store}`);
     }
 
+    await this.throttle();
     return this.gateway.importCatalog(batch.rows);
   }
 }
