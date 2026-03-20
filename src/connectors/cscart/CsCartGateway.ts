@@ -11,6 +11,8 @@ export interface CsCartGatewayOptions {
   itemsPerPage: number;
   rateLimitRps: number;
   rateLimitBurst: number;
+  retryLimit?: number;
+  allowCreate?: boolean;
 }
 
 interface CsCartProduct {
@@ -42,6 +44,10 @@ export class CsCartGateway {
 
   private readonly rateLimitBurst: number;
 
+  private readonly retryLimit: number;
+
+  private readonly allowCreate: boolean;
+
   constructor(private readonly options: CsCartGatewayOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.authHeader =
@@ -51,6 +57,8 @@ export class CsCartGateway {
     this.tokens = options.rateLimitBurst;
     this.rateLimitBurst = options.rateLimitBurst;
     this.lastRefill = Date.now();
+    this.retryLimit = options.retryLimit && options.retryLimit > 0 ? options.retryLimit : 5;
+    this.allowCreate = options.allowCreate === true;
   }
 
   private refillTokens(): void {
@@ -91,7 +99,7 @@ export class CsCartGateway {
 
     if (resp.status === 429 || resp.status >= 500) {
       const retry = (init.retry || 0) + 1;
-      if (retry <= 5) {
+      if (retry <= this.retryLimit) {
         const retryAfter = Number(resp.headers.get('Retry-After')) * 1000 || 15000 * retry;
         await sleep(retryAfter);
         return this.request(path, { ...init, retry });
@@ -137,15 +145,43 @@ export class CsCartGateway {
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       try {
-        await this.request('/api/products', {
-          method: 'POST',
-          body: JSON.stringify({
-            product_code: row.productCode,
-            status: row.visibility ? 'A' : 'H',
-            price: row.price ?? 0,
-            parent_product_id: row.parentProductCode || 0
-          })
-        });
+        // Try to find existing product by code to decide PUT vs POST
+        let productId: string | null = null;
+        try {
+          const lookup = await this.request(
+            `/api/products?items_per_page=1&page=1&pcode_from_q=Y&q=${encodeURIComponent(row.productCode)}`
+          );
+          const found = Array.isArray(lookup.products) ? lookup.products[0] : null;
+          if (found?.product_id) {
+            productId = String(found.product_id);
+          }
+        } catch (lookupErr) {
+          // ignore lookup errors, fallback to POST
+        }
+
+        const payload = {
+          product_code: row.productCode,
+          status: row.visibility ? 'A' : 'H',
+          price: row.price ?? 0,
+          parent_product_id: row.parentProductCode || 0
+        };
+
+        if (productId) {
+          await this.request(`/api/products/${productId}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+          });
+        } else if (this.allowCreate) {
+          await this.request('/api/products', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          });
+        } else {
+          skipped += 1;
+          warnings.push(`product_code=${row.productCode}: missing in store, skipped (update-only mode)`);
+          continue;
+        }
+
         imported += 1;
       } catch (err) {
         failed += 1;

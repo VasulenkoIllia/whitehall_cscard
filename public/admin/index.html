@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Whitehall Admin</title>
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; background:#f6f7fb; color:#111827; }
+    header { padding:16px 20px; background:#111827; color:#fff; display:flex; justify-content:space-between; align-items:center; }
+    main { padding:20px; max-width:960px; margin:0 auto; }
+    section { background:#fff; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,0.06); padding:16px 20px; margin-bottom:16px; }
+    h2 { margin:0 0 10px; font-size:18px; }
+    label { display:block; margin:8px 0 4px; font-size:14px; }
+    input, button { padding:9px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; }
+    button { background:#111827; color:#fff; border:none; cursor:pointer; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+    th, td { padding:6px 8px; border-bottom:1px solid #e5e7eb; text-align:left; }
+    .status { font-size:13px; color:#6b7280; margin-top:6px; }
+    .card-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>Whitehall Admin</div>
+    <button id="logoutBtn">Logout</button>
+  </header>
+  <main>
+    <section>
+      <h2>Preview</h2>
+      <div class="card-row">
+        <div>
+          <label>Supplier (optional)</label>
+          <input id="previewSupplier" placeholder="supplier name"/>
+        </div>
+        <div>
+          <button id="previewBtn">Fetch preview</button>
+        </div>
+      </div>
+      <div id="previewStatus" class="status"></div>
+      <table id="previewTable" style="display:none;">
+        <thead>
+          <tr><th>Article</th><th>Size</th><th>Price</th><th>Visibility</th><th>Parent</th><th>Supplier</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Store import (CS-Cart)</h2>
+      <div class="card-row">
+        <div>
+          <label>Supplier (optional)</label>
+          <input id="importSupplier" placeholder="supplier name"/>
+        </div>
+        <div>
+          <button id="importBtn">Run store import</button>
+        </div>
+      </div>
+      <div id="importStatus" class="status"></div>
+    </section>
+  </main>
+  <script>
+    const previewBtn = document.getElementById('previewBtn');
+    const previewStatus = document.getElementById('previewStatus');
+    const previewTable = document.getElementById('previewTable');
+    const previewBody = previewTable.querySelector('tbody');
+
+    previewBtn.addEventListener('click', async () => {
+      previewStatus.textContent = 'Loading preview...';
+      previewTable.style.display = 'none';
+      const supplier = document.getElementById('previewSupplier').value || '';
+      const url = '/admin/api/preview' + (supplier ? ('?supplier=' + encodeURIComponent(supplier)) : '');
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'preview_error');
+        previewStatus.textContent = `Store=${data.store}, total=${data.total}`;
+        previewBody.innerHTML = '';
+        (data.sample || []).forEach(row => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${row.article}</td><td>${row.size||''}</td><td>${row.priceFinal??''}</td><td>${row.visibility}</td><td>${row.parentArticle||''}</td><td>${row.supplier||''}</td>`;
+          previewBody.appendChild(tr);
+        });
+        previewTable.style.display = 'table';
+      } catch (err) {
+        previewStatus.textContent = err.message;
+      }
+    });
+
+    const importBtn = document.getElementById('importBtn');
+    const importStatus = document.getElementById('importStatus');
+    importBtn.addEventListener('click', async () => {
+      importStatus.textContent = 'Running store import...';
+      const supplier = document.getElementById('importSupplier').value || '';
+      try {
+        const res = await fetch('/admin/api/store-import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ supplier })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'import_error');
+        importStatus.textContent = `Imported=${data.imported}, skipped=${data.skipped}, warnings=${(data.warnings||[]).length}`;
+      } catch (err) {
+        importStatus.textContent = err.message;
+      }
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' });
+      window.location.href = '/admin/login';
+    });
+  </script>
+</body>
+</html>

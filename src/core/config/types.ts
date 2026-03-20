@@ -35,6 +35,7 @@ export interface CsCartConfig {
   itemsPerPage: number;
   rateLimitRps: number;
   rateLimitBurst: number;
+  allowCreate: boolean;
 }
 
 export interface AppConfig {

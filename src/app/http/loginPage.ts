@@ -18,8 +18,8 @@ export function renderLoginPage(): string {
   <div class="card">
     <h1>Admin Login</h1>
     <form id="loginForm">
-      <label>Email</label>
-      <input name="email" type="email" required />
+      <label>Email or username</label>
+      <input name="email" type="text" autocomplete="username" required />
       <label>Password</label>
       <input name="password" type="password" required />
       <button type="submit">Login</button>

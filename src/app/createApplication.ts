@@ -4,10 +4,7 @@ import type { StoreConnector } from '../core/connectors/StoreConnector';
 import type { CursorPage, MirrorRow, StoreImportResult } from '../core/domain/store';
 import type {
   ExportPreviewProvider,
-  ExportPreviewSummary,
-  FinalizeSummary,
   Finalizer,
-  ImportSummary,
   SourceImporter
 } from '../core/pipeline/contracts';
 import { PipelineOrchestrator } from '../core/pipeline/PipelineOrchestrator';
@@ -25,6 +22,8 @@ import { FinalizerDb } from '../core/pipeline/finalizerDb';
 import { ImporterDb } from '../core/pipeline/importerDb';
 import { LogService } from '../core/pipeline/log';
 import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
+import { JobService } from '../core/jobs/JobService';
+import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -89,7 +88,8 @@ function createConnector(config: AppConfig): StoreConnector<unknown> {
     apiKey: config.connectors.cscart.apiKey,
     itemsPerPage: config.connectors.cscart.itemsPerPage,
     rateLimitRps: config.connectors.cscart.rateLimitRps,
-    rateLimitBurst: config.connectors.cscart.rateLimitBurst
+    rateLimitBurst: config.connectors.cscart.rateLimitBurst,
+    allowCreate: config.connectors.cscart.allowCreate
   });
 
   return new CsCartConnector(csGateway);
@@ -99,6 +99,9 @@ export interface Application {
   config: AppConfig;
   connector: StoreConnector<unknown>;
   pipeline: PipelineOrchestrator<unknown>;
+  logService: LogService;
+  jobService: JobService;
+  jobRunner: PipelineJobRunner<unknown>;
   migrationTargets: string[];
   auth: AuthService;
 }
@@ -118,6 +121,8 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     previewProvider: createPreviewProvider(pool),
     connector
   });
+  const jobService = new JobService(pool);
+  const jobRunner = new PipelineJobRunner(pipeline, jobService, logService);
 
   const authStore = new EnvUserStore(env);
   const auth = new AuthService(authStore, {
@@ -130,6 +135,9 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     config,
     connector,
     pipeline,
+    logService,
+    jobService,
+    jobRunner,
     auth,
     migrationTargets: [
       `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,

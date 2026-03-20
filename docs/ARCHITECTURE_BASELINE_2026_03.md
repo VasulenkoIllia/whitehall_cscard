@@ -1,11 +1,10 @@
 # Architecture baseline after docs review
 
 ## Що закладено в `whitehall_cscard`
-- `src/core/config` — централізоване читання та валідація env (`ACTIVE_STORE`, Horoshop / CS-Cart параметри, finalize flags).
+- `src/core/config` — централізоване читання та валідація env (`ACTIVE_STORE`, CS-Cart параметри, finalize flags). Horoshop конектор буде підключено окремо при потребі.
 - `src/core/domain` — нейтральні DTO для preview/import/mirror, без прив’язки до конкретного магазину.
 - `src/core/pipeline` — orchestration-шар для кроків `import -> finalize -> export -> store import`, який працює через ін’єкцію портів.
-- `src/connectors/horoshop` — окремий адаптер Horoshop з мапінгом нейтрального preview в Horoshop payload.
-- `src/connectors/cscart` — окремий адаптер CS-Cart з власним payload-контрактом.
+- `src/connectors/cscart` — активний адаптер CS-Cart (update-only за замовчуванням, throttle/backoff).
 - `src/app` — composition root, де вибирається активний конектор і фіксуються точки переносу з legacy.
 
 ## Що це змінює відносно legacy
@@ -13,11 +12,11 @@
 - Нейтральний preview більше не мусить знати про Horoshop-поля `presence_ua` або `display_in_showcase`.
 - Перемикання магазину відбувається через `ACTIVE_STORE`, а не через жорсткі імпорти сервісів.
 
-## Наступний порядок переносу
-1. (TODO) Перенести імпорт джерел із `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/importService.js` у `src/core/pipeline`.
-2. (TODO) Перенести finalize з `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/finalizeService.js`, одразу прибравши жорсткий `DELETE` за флагом.
-3. (TODO) Винести з `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/exportService.js` нейтральний preview builder і залишити store-specific mapping лише в конекторах.
-4. (TODO) Перенести Horoshop gateway із `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/horoshopService.js` у `src/connectors/horoshop`.
+## Наступний порядок переносу (активно працюємо тільки з CS-Cart)
+1. (in progress) Імпорт Google Sheets у `src/core/pipeline/importerDb` (CS-Cart цикл).
+2. (done) Finalize UPSERT у `FinalizerDb`, індекси/партиції.
+3. (done) Нейтральний preview builder (`ExportPreviewDb`) → CsCart/Horoshop конектори.
+4. (later) Horoshop gateway і модуль буде додано окремо; наразі `ACTIVE_STORE` = cscart.
 
 ## Retention & cleanup (для 5×500k запусків/добу)
 - Партиціювання `products_raw` по дню/`created_at`; індекс партицій `(job_id, article, size)`. Видалення через drop partition за `RETENTION_DAYS`, залишаючи останні `IMPORT_RETAIN_JOBS` успішних import_all навіть якщо вони старші.
@@ -32,6 +31,7 @@
 - `CSCART_STOREFRONT_ID` — опційний storefront.
 - `CSCART_ITEMS_PER_PAGE` — розмір сторінки mirror (рекомендовано 1000, виміряно на whitehall.com.ua).
 - `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST` — ліміт запитів при оновленні товарів (стартово 10 RPS, burst 20) з backoff на 429/5xx.
+- `CSCART_ALLOW_CREATE` — дозволити POST створення нових SKU (default false). За замовчуванням тільки PUT по mirror (update-only).
 - `HOROSHOP_RATE_LIMIT_RPS`, `HOROSHOP_RATE_LIMIT_BURST` — throttle для Horoshop API (стартово 5 RPS, burst 10).
 
 ## Auth/roles (просте закриття адмінки)

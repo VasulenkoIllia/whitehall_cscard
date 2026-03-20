@@ -5,6 +5,7 @@
 - PUT `/api/products/{id}` — оновлення існуючого товару (наприклад, ціна/статус).
 - POST `/api/products` — створення нового товару (мінімум: `product_code`, `price`, `status`).
 - Статус: `A` (active/visible), `H` (hidden), `D` (disabled).
+- Режим за замовчуванням: **update-only** (PUT по існуючому product_id з mirror). POST створення вмикається лише якщо `CSCART_ALLOW_CREATE=true`.
 
 Пропонований мапінг з нейтрального preview:
 - `article` → `product_code`
@@ -38,6 +39,7 @@ Auth / env для CS-Cart:
 
 ## Оновлення 100–300k товарів
 - Масових імпортів немає: тільки POST/PUT поштучно.
+- За замовчуванням створення вимкнене (`CSCART_ALLOW_CREATE=false`), SKU без match у mirror — skip + warning.
 - Рекомендований throttle: `CSCART_RATE_LIMIT_RPS` 10 (burst 20), конфігуровано; експоненційний backoff на 429/5xx.
 - Батч процесингу: логічні групи 50–100 запитів, рахувати успіх/фейл, ETA. При 10 RPS 300k оновлень ≈ 8.3 год; при 15 RPS ≈ 5.5 год — потрібен стейджинг-тест перед підняттям RPS.
 - `CSCART_ITEMS_PER_PAGE` ставити 1000 для mirror, щоб мінімізувати кількість сторінок.

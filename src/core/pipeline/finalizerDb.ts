@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import type { FinalizeSummary, Finalizer } from './contracts';
 
-const insertFromPrecomputedSql = `
+const stageFromPrecomputedSql = `
   WITH rounded AS (
     SELECT
       pr.article,
@@ -34,18 +34,7 @@ const insertFromPrecomputedSql = `
       r.price_final ASC,
       r.supplier_id ASC
   )
-  INSERT INTO products_final (
-    job_id,
-    article,
-    size,
-    quantity,
-    price_base,
-    price_final,
-    extra,
-    supplier_id
-  )
   SELECT
-    $1,
     article,
     size,
     quantity,
@@ -53,17 +42,10 @@ const insertFromPrecomputedSql = `
     price_final,
     extra,
     supplier_id
-  FROM filtered
-  ON CONFLICT (article, size) DO UPDATE
-    SET job_id = EXCLUDED.job_id,
-        quantity = EXCLUDED.quantity,
-        price_base = EXCLUDED.price_base,
-        price_final = EXCLUDED.price_final,
-        extra = EXCLUDED.extra,
-        supplier_id = EXCLUDED.supplier_id;
+  FROM filtered;
 `;
 
-const insertWithFinalizePricingSql = `
+const stageWithFinalizePricingSql = `
   WITH base AS (
     SELECT
       pr.article,
@@ -146,6 +128,37 @@ const insertWithFinalizePricingSql = `
       r.price_final ASC,
       r.supplier_id ASC
   )
+  SELECT
+    article,
+    size,
+    quantity,
+    price_base,
+    price_final,
+    extra,
+    supplier_id
+  FROM filtered;
+`;
+
+const createFinalizeStageSql = (selectionSql: string) => `
+  CREATE TEMP TABLE finalize_stage
+  ON COMMIT DROP AS
+  ${selectionSql}
+`;
+
+const updateFinalFromStageSql = `
+  UPDATE products_final pf
+  SET job_id = $1,
+      quantity = fs.quantity,
+      price_base = fs.price_base,
+      price_final = fs.price_final,
+      extra = fs.extra,
+      supplier_id = fs.supplier_id
+  FROM finalize_stage fs
+  WHERE pf.article = fs.article
+    AND NULLIF(pf.size, '') IS NOT DISTINCT FROM NULLIF(fs.size, '');
+`;
+
+const insertMissingFinalRowsSql = `
   INSERT INTO products_final (
     job_id,
     article,
@@ -158,21 +171,25 @@ const insertWithFinalizePricingSql = `
   )
   SELECT
     $1,
-    article,
-    size,
-    quantity,
-    price_base,
-    price_final,
-    extra,
-    supplier_id
-  FROM filtered
-  ON CONFLICT (article, size) DO UPDATE
-    SET job_id = EXCLUDED.job_id,
-        quantity = EXCLUDED.quantity,
-        price_base = EXCLUDED.price_base,
-        price_final = EXCLUDED.price_final,
-        extra = EXCLUDED.extra,
-        supplier_id = EXCLUDED.supplier_id;
+    fs.article,
+    fs.size,
+    fs.quantity,
+    fs.price_base,
+    fs.price_final,
+    fs.extra,
+    fs.supplier_id
+  FROM finalize_stage fs
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM products_final pf
+    WHERE pf.article = fs.article
+      AND NULLIF(pf.size, '') IS NOT DISTINCT FROM NULLIF(fs.size, '')
+  );
+`;
+
+const deleteStaleFinalRowsSql = `
+  DELETE FROM products_final
+  WHERE job_id IS DISTINCT FROM $1;
 `;
 
 export class FinalizerDb implements Finalizer {
@@ -196,10 +213,6 @@ export class FinalizerDb implements Finalizer {
         throw new Error('No successful import_all job found');
       }
 
-      if (this.options.finalizeDeleteEnabled) {
-        await client.query('DELETE FROM products_final');
-      }
-
       const rawCountResult = await client.query(
         `SELECT
            COUNT(*) AS raw_count,
@@ -212,12 +225,27 @@ export class FinalizerDb implements Finalizer {
       const missingPrecomputed = Number(rawCountResult.rows[0].missing_precomputed_count || 0);
       const usePrecomputed = this.options.priceAtImportEnabled && rawCount > 0 && missingPrecomputed === 0;
 
-      await client.query(usePrecomputed ? insertFromPrecomputedSql : insertWithFinalizePricingSql, [
-        jobId,
-        importJobId
-      ]);
+      await client.query(
+        createFinalizeStageSql(
+          usePrecomputed ? stageFromPrecomputedSql : stageWithFinalizePricingSql
+        ),
+        [jobId, importJobId]
+      );
+      await client.query(
+        'CREATE INDEX finalize_stage_article_size_idx ON finalize_stage (article, size)'
+      );
+      await client.query('ANALYZE finalize_stage');
+      await client.query(updateFinalFromStageSql, [jobId]);
+      await client.query(insertMissingFinalRowsSql, [jobId]);
 
-      const finalCountResult = await client.query('SELECT COUNT(*) FROM products_final');
+      if (this.options.finalizeDeleteEnabled) {
+        await client.query(deleteStaleFinalRowsSql, [jobId]);
+      }
+
+      const finalCountResult = await client.query(
+        'SELECT COUNT(*) FROM products_final WHERE job_id = $1',
+        [jobId]
+      );
       finalCount = Number(finalCountResult.rows[0].count || 0);
       await client.query('COMMIT');
 

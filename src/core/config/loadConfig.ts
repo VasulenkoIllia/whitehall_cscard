@@ -101,7 +101,7 @@ function requireKeys(
 
 export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const issues: string[] = [];
-  const activeStore = readActiveStore(env, 'ACTIVE_STORE', 'horoshop', issues);
+  const activeStore = readActiveStore(env, 'ACTIVE_STORE', 'cscart', issues);
 
   const config: AppConfig = {
     base: {
@@ -134,7 +134,8 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
         storefrontId: readOptionalString(env, 'CSCART_STOREFRONT_ID'),
         itemsPerPage: readPositiveInteger(env, 'CSCART_ITEMS_PER_PAGE', 1000, issues),
         rateLimitRps: readPositiveInteger(env, 'CSCART_RATE_LIMIT_RPS', 10, issues),
-        rateLimitBurst: readPositiveInteger(env, 'CSCART_RATE_LIMIT_BURST', 20, issues)
+        rateLimitBurst: readPositiveInteger(env, 'CSCART_RATE_LIMIT_BURST', 20, issues),
+        allowCreate: env.CSCART_ALLOW_CREATE === 'true'
       }
     }
   };

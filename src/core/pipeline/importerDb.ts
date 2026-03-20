@@ -46,10 +46,36 @@ export interface InsertResult {
   skipped: number;
 }
 
+let ensuredProductsRawPartitionDate: string | null = null;
+
+async function ensureProductsRawPartition(pool: Pool): Promise<void> {
+  const functionResult = await pool.query<{ partitionDate: string | null; partitionFn: string | null }>(
+    `SELECT
+       CURRENT_DATE::text AS "partitionDate",
+       to_regprocedure('ensure_products_raw_partition(date)')::text AS "partitionFn"`
+  );
+  const partitionDate = functionResult.rows[0]?.partitionDate || null;
+  const partitionFn = functionResult.rows[0]?.partitionFn || null;
+
+  if (!partitionFn) {
+    return;
+  }
+
+  if (partitionDate && ensuredProductsRawPartitionDate === partitionDate) {
+    return;
+  }
+
+  await pool.query('SELECT ensure_products_raw_partition(CURRENT_DATE)');
+  ensuredProductsRawPartitionDate = partitionDate;
+}
+
 export async function insertRawBatch(pool: Pool, rows: ImportBatchRow[]): Promise<InsertResult> {
   if (!rows.length) {
     return { imported: 0, skipped: 0 };
   }
+
+  await ensureProductsRawPartition(pool);
+
   const values: (string | number | null)[] = [];
   const placeholders = rows.map((row, idx) => {
     const base = idx * 10;

@@ -3,6 +3,7 @@
 Цей каталог містить базову документацію, перенесену з робочого проєкту Horoshop.
 
 Основні файли:
+- `AUDIT_MODULAR_BASELINE_2026_03.md` — фактичний аудит legacy vs `whitehall_cscard`, критичні ризики, скоригований план і вже внесені стабілізаційні правки.
 - `PLAN_MODULAR_SINGLE_REPO_2026_03.md` — план модульної реархітектури в одному репозиторії з можливістю заміни конектора (Horoshop → CS-Cart).
 - `CURRENT_FUNCTIONALITY.md` — опис поточного функціоналу (імпорт, фіналізація, експорт).
 - `IMPLEMENTATION_STAGES.md` — початковий план перенесення логіки з Apps Script у Node.js/БД.
@@ -17,6 +18,12 @@
 - Основні сервіси: `src/services/importService.js`, `src/services/finalizeService.js`, `src/services/exportService.js`, `src/jobs/runners.js` у репозиторії вище.
 
 Цей репозиторій `whitehall_cscard` буде використовувати спільне ядро та окремий конектор під CS-Cart. Для заміни конектора див. план у `PLAN_MODULAR_SINGLE_REPO_2026_03.md` (етапи 1–5).
+
+Важливо: `CURRENT_FUNCTIONALITY.md` описує цільовий/legacy функціонал, а не повний фактичний стан `whitehall_cscard`. Для чесного стану поточної реалізації див. `AUDIT_MODULAR_BASELINE_2026_03.md`.
+
+Швидкий доступ / auth:
+- Стратегія зараз `AUTH_STRATEGY=env` (мінімальна), користувачі задаються в `.env` через `AUTH_USERS_JSON`.
+- За замовчуванням додано admin: логін `admin@example.com` **або** короткий `admin`, пароль `admin` (хеш — bcrypt). Логін-форма приймає email або короткий логін.
 
 ## Посилання на вихідний код бізнес-логіки (Horoshop проєкт)
 - Імпорт постачальників/джерел: `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/importService.js`
