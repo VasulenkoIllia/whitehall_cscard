@@ -24,6 +24,39 @@ export function createHttpServer(appContext: AppContext) {
     return Math.max(1, Math.min(200, Math.trunc(numeric)));
   };
 
+  const parseBoolean = (value: unknown): boolean => {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      return normalized === '1' || normalized === 'true' || normalized === 'yes';
+    }
+    return false;
+  };
+
+  const readStoreImportRunOptions = (req: Request) => {
+    const rawResumeFromJobId = req.body?.resumeFromJobId;
+    let resumeFromJobId: number | null = null;
+    if (
+      rawResumeFromJobId !== undefined &&
+      rawResumeFromJobId !== null &&
+      String(rawResumeFromJobId).trim() !== ''
+    ) {
+      const parsed = Number(rawResumeFromJobId);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        const error = new Error('resumeFromJobId must be a positive number');
+        (error as any).status = 400;
+        throw error;
+      }
+      resumeFromJobId = Math.trunc(parsed);
+    }
+    return {
+      resumeFromJobId,
+      resumeLatest: parseBoolean(req.body?.resumeLatest)
+    };
+  };
+
   const readErrorMessage = (err: unknown, fallback: string): string => {
     if (err instanceof Error && err.message) {
       return err.message;
@@ -44,15 +77,7 @@ export function createHttpServer(appContext: AppContext) {
       const normalized = queryValue.trim().toLowerCase();
       return normalized === '1' || normalized === 'true' || normalized === 'yes';
     }
-    const bodyValue = (req.body || {}).verbose;
-    if (typeof bodyValue === 'boolean') {
-      return bodyValue;
-    }
-    if (typeof bodyValue === 'string') {
-      const normalized = bodyValue.trim().toLowerCase();
-      return normalized === '1' || normalized === 'true' || normalized === 'yes';
-    }
-    return false;
+    return parseBoolean((req.body || {}).verbose);
   };
 
   const summarizeStoreImportExecution = (execution: any) => {
@@ -122,7 +147,7 @@ export function createHttpServer(appContext: AppContext) {
   app.post('/admin/api/store-import', authMw.requireRole('admin'), async (req: Request, res: Response) => {
     const supplier = typeof req.body?.supplier === 'string' ? req.body.supplier : null;
     try {
-      const execution = await jobRunner.runStoreImport(supplier);
+      const execution = await jobRunner.runStoreImport(supplier, readStoreImportRunOptions(req));
       res.json({
         jobId: execution.jobId,
         store: appContext.connector.store,
@@ -193,7 +218,7 @@ export function createHttpServer(appContext: AppContext) {
   app.post('/admin/api/jobs/store-import', authMw.requireRole('admin'), async (req: Request, res: Response) => {
     const supplier = typeof req.body?.supplier === 'string' ? req.body.supplier : null;
     try {
-      const result = await jobRunner.runStoreImport(supplier);
+      const result = await jobRunner.runStoreImport(supplier, readStoreImportRunOptions(req));
       if (readVerboseFlag(req)) {
         return res.json(result);
       }

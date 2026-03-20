@@ -25,6 +25,7 @@ export interface StoreImportProgress {
 export interface StoreImportContext {
   jobId?: number;
   isCanceled?: () => Promise<boolean>;
+  resumeProcessed?: number;
   onProgress?: (progress: StoreImportProgress) => Promise<void> | void;
 }
 

@@ -267,7 +267,12 @@ export class CsCartGateway {
       (count, row) => count + (this.normalizeProductCode(row.productCode) ? 1 : 0),
       0
     );
-    let processed = 0;
+    const requestedResumeProcessed = Number(context?.resumeProcessed || 0);
+    const effectiveResumeProcessed = Number.isFinite(requestedResumeProcessed)
+      ? Math.min(totalValidRows, Math.max(0, Math.trunc(requestedResumeProcessed)))
+      : 0;
+    let resumeRemaining = effectiveResumeProcessed;
+    let runProcessed = 0;
     let canceled = false;
     let cancelCheckCounter = 0;
     const progressReportEvery = 250;
@@ -278,6 +283,10 @@ export class CsCartGateway {
         const row = rows[cursor];
         cursor += 1;
         if (this.normalizeProductCode(row.productCode)) {
+          if (resumeRemaining > 0) {
+            resumeRemaining -= 1;
+            continue;
+          }
           return row;
         }
       }
@@ -306,6 +315,7 @@ export class CsCartGateway {
       if (!context?.onProgress) {
         return;
       }
+      const processed = effectiveResumeProcessed + runProcessed;
       if (!force && processed < nextProgressMark) {
         return;
       }
@@ -408,7 +418,7 @@ export class CsCartGateway {
             this.appendWarning(warnings, `product_code=${productCode}: import failed`);
           }
         } finally {
-          processed += 1;
+          runProcessed += 1;
           await reportProgress(false, false);
         }
       }

@@ -224,6 +224,37 @@ export class JobService {
     return result.rows;
   }
 
+  async findLatestStoreImportJob(
+    supplier: string | null,
+    statuses: JobStatus[] = ['failed', 'canceled']
+  ): Promise<JobRecord | null> {
+    if (!statuses.length) {
+      return null;
+    }
+    const normalizedSupplier = supplier ? supplier.trim().toLowerCase() : null;
+    const result = await this.pool.query<JobRecord>(
+      `SELECT
+         id::bigint::int AS id,
+         type,
+         status,
+         meta,
+         created_at::text AS "createdAt",
+         started_at::text AS "startedAt",
+         finished_at::text AS "finishedAt"
+       FROM jobs
+       WHERE type = 'store_import'
+         AND status = ANY($1::text[])
+         AND (
+           ($2::text IS NULL AND COALESCE(meta->>'supplier', '') = '')
+           OR LOWER(COALESCE(meta->>'supplier', '')) = COALESCE($2::text, '')
+         )
+       ORDER BY id DESC
+       LIMIT 1`,
+      [statuses, normalizedSupplier]
+    );
+    return result.rows[0] || null;
+  }
+
   async findRunningJobs(types: string[]): Promise<Array<{ id: number; type: string }>> {
     if (!types.length) {
       return [];

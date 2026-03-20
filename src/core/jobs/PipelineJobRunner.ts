@@ -30,6 +30,16 @@ interface ChildStepResult<T> {
   result: T;
 }
 
+export interface StoreImportRunOptions {
+  resumeFromJobId?: number | null;
+  resumeLatest?: boolean;
+}
+
+interface ResolvedStoreImportResume {
+  resumeFromJobId: number;
+  resumeProcessed: number;
+}
+
 function summarizeStoreImportResult(value: unknown): unknown {
   const execution = value as StoreImportExecution<unknown> | null;
   if (
@@ -95,12 +105,105 @@ export class PipelineJobRunner<MappedRow = unknown> {
     return job?.status === 'canceled';
   }
 
+  private normalizeSupplier(value: string | null): string | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || null;
+  }
+
+  private createBadRequest(message: string): Error {
+    const error = new Error(message);
+    (error as any).status = 400;
+    return error;
+  }
+
+  private readResumeProcessed(meta: Record<string, unknown> | null): number {
+    const snapshot =
+      meta && typeof meta.storeImportProgress === 'object' && meta.storeImportProgress
+        ? (meta.storeImportProgress as Record<string, unknown>)
+        : null;
+    if (!snapshot) {
+      return 0;
+    }
+    const processedRaw = Number(snapshot.processed || 0);
+    if (!Number.isFinite(processedRaw) || processedRaw <= 0) {
+      return 0;
+    }
+    const totalRaw = Number(snapshot.total || 0);
+    const processed = Math.max(0, Math.trunc(processedRaw));
+    if (!Number.isFinite(totalRaw) || totalRaw <= 0) {
+      return processed;
+    }
+    return Math.min(Math.max(0, Math.trunc(totalRaw)), processed);
+  }
+
+  private async resolveStoreImportResume(
+    supplier: string | null,
+    options?: StoreImportRunOptions
+  ): Promise<ResolvedStoreImportResume | null> {
+    const normalizedSupplier = this.normalizeSupplier(supplier);
+    const explicitResumeFrom = Number(options?.resumeFromJobId);
+
+    if (Number.isFinite(explicitResumeFrom) && explicitResumeFrom > 0) {
+      const sourceJob = await this.jobs.getJob(Math.trunc(explicitResumeFrom));
+      if (!sourceJob || sourceJob.type !== 'store_import') {
+        throw this.createBadRequest(`store_import job #${explicitResumeFrom} not found`);
+      }
+      if (sourceJob.status !== 'failed' && sourceJob.status !== 'canceled') {
+        throw this.createBadRequest(
+          `store_import job #${explicitResumeFrom} must be failed/canceled to resume`
+        );
+      }
+      const sourceSupplier = this.normalizeSupplier(
+        typeof sourceJob.meta?.supplier === 'string' ? sourceJob.meta.supplier : null
+      );
+      if (sourceSupplier !== normalizedSupplier) {
+        throw this.createBadRequest(
+          `store_import job #${explicitResumeFrom} has different supplier filter`
+        );
+      }
+      const resumeProcessed = this.readResumeProcessed(sourceJob.meta);
+      if (resumeProcessed <= 0) {
+        throw this.createBadRequest(
+          `store_import job #${explicitResumeFrom} has no progress checkpoint`
+        );
+      }
+      return {
+        resumeFromJobId: sourceJob.id,
+        resumeProcessed
+      };
+    }
+
+    if (options?.resumeLatest !== true) {
+      return null;
+    }
+
+    const latest = await this.jobs.findLatestStoreImportJob(supplier, ['failed', 'canceled']);
+    if (!latest) {
+      const error = new Error('No failed/canceled store_import job found for resume');
+      (error as any).status = 404;
+      throw error;
+    }
+
+    const resumeProcessed = this.readResumeProcessed(latest.meta);
+    if (resumeProcessed <= 0) {
+      throw this.createBadRequest(
+        `store_import job #${latest.id} has no progress checkpoint`
+      );
+    }
+
+    return {
+      resumeFromJobId: latest.id,
+      resumeProcessed
+    };
+  }
+
   private createStoreImportProgressReporter(
     jobId: number
   ): (progress: StoreImportProgress) => Promise<void> {
     const startedAt = Date.now();
     let lastMetaPersistAt = 0;
     let lastLoggedProcessed = 0;
+    let baselineProcessed: number | null = null;
     const metaPersistIntervalMs = 5000;
     const logStepRows = 5000;
 
@@ -108,7 +211,12 @@ export class PipelineJobRunner<MappedRow = unknown> {
       const now = Date.now();
       const elapsedMs = Math.max(1, now - startedAt);
       const processed = Math.max(0, Math.trunc(progress.processed));
-      const ratePerSecond = processed > 0 ? Number((processed / (elapsedMs / 1000)).toFixed(2)) : null;
+      if (baselineProcessed === null) {
+        baselineProcessed = processed;
+      }
+      const runProcessed = Math.max(0, processed - baselineProcessed);
+      const ratePerSecond =
+        runProcessed > 0 ? Number((runProcessed / (elapsedMs / 1000)).toFixed(2)) : null;
       const remaining = Math.max(0, Math.trunc(progress.total) - processed);
       const etaSeconds = ratePerSecond && ratePerSecond > 0 ? Math.ceil(remaining / ratePerSecond) : null;
 
@@ -202,15 +310,22 @@ export class PipelineJobRunner<MappedRow = unknown> {
     return this.runStandaloneStep('finalize', {}, (jobId) => this.pipeline.runFinalize(jobId));
   }
 
-  runStoreImport(
-    supplier: string | null
+  async runStoreImport(
+    supplier: string | null,
+    options?: StoreImportRunOptions
   ): Promise<JobRunnerResult<StoreImportExecution<MappedRow>>> {
-    const meta = supplier ? { supplier } : {};
+    const resume = await this.resolveStoreImportResume(supplier, options);
+    const meta: Record<string, unknown> = supplier ? { supplier } : {};
+    if (resume) {
+      meta.resumeFromJobId = resume.resumeFromJobId;
+      meta.resumeProcessed = resume.resumeProcessed;
+    }
     return this.runStandaloneStep('store_import', meta, async (jobId) => {
       const onProgress = this.createStoreImportProgressReporter(jobId);
       return this.pipeline.runStoreImport(jobId, supplier, {
         jobId,
         isCanceled: () => this.isJobCanceled(jobId),
+        resumeProcessed: resume?.resumeProcessed || 0,
         onProgress
       });
     });

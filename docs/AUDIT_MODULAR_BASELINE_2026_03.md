@@ -318,6 +318,7 @@ Changed files:
 - `src/connectors/cscart/CsCartGateway.ts`
 - `src/core/jobs/JobService.ts`
 - `src/core/jobs/PipelineJobRunner.ts`
+- `src/app/http/server.ts`
 - `docs/CSCART_CONNECTOR_NOTES.md`
 
 What changed:
@@ -326,10 +327,14 @@ What changed:
 - added `JobService.mergeJobMeta(...)` helper for safe JSONB metadata merge into existing job meta
 - runner persists progress snapshots to `jobs.meta.storeImportProgress` and writes periodic progress logs
 - progress snapshot includes runtime throughput and ETA (`ratePerSecond`, `etaSeconds`)
+- implemented store-import resume flow:
+  - `resumeFromJobId` (explicit failed/canceled `store_import` job)
+  - `resumeLatest` (auto-pick latest failed/canceled `store_import` for same supplier filter)
+  - gateway skips already processed checkpoint segment via `resumeProcessed`
 
 Effect:
 - operators can track long-running import state from DB/API without waiting for final job completion
-- creates practical checkpoint foundation for next stage: true resume-from-progress after cancel/failure
+- canceled/failed import can continue from checkpoint instead of always starting from zero
 - no business logic or import decision rules were changed
 
 ## Adjusted plan
@@ -349,7 +354,7 @@ Still required:
 ### Phase 2. Reach legacy parity for core pipeline
 
 Required next:
-- add resumable checkpoints for long store-import runs (continue after interruption)
+- add admin UI controls for resume (`resumeLatest` / pick job to resume)
 
 ### Phase 3. Finish CS-Cart connector for large syncs
 
@@ -373,7 +378,7 @@ Rule:
 
 ## Recommended next implementation order
 
-1. Add resumable checkpoints for `store_import` (resume cursor/progress after cancel/failure).
+1. Add admin UI controls for resume (`resumeLatest`, `resumeFromJobId`) and clear operator UX around checkpoint source.
 2. Add batch-level CS-Cart metrics (duration/rps/success/fail/skip/ETA) into job logs/meta.
 3. Add integration tests around import -> finalize -> preview for null/empty size, overrides and dedup priority.
 4. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).
