@@ -6,6 +6,7 @@ export interface BaseConfig {
   port: number;
   logLevel: LogLevel;
   activeStore: ActiveStore;
+  databaseUrl: string;
   visibilityYes: string;
   finalizeDeleteEnabled: boolean;
   finalizeLegacy: boolean;

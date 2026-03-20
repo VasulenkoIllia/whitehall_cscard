@@ -20,6 +20,9 @@ import { CsCartConnector } from '../connectors/cscart/CsCartConnector';
 import { CsCartGateway as DefaultCsCartGateway } from '../connectors/cscart/CsCartGateway';
 import { AuthService } from './auth/authService';
 import { EnvUserStore } from './auth/envUserStore';
+import { createPgPool } from '../core/db/pgClient';
+import { FinalizerDb } from '../core/pipeline/finalizerDb';
+import { ImporterPlaceholder } from '../core/pipeline/importerPlaceholder';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -28,25 +31,15 @@ function createMigrationError(target: string, legacyPath: string): Error {
 }
 
 function createSourceImporter(): SourceImporter {
-  return {
-    async importAll(): Promise<ImportSummary> {
-      throw createMigrationError(
-        'Source importer',
-        `${LEGACY_ROOT}/src/services/importService.js`
-      );
-    }
-  };
+  return new ImporterPlaceholder();
 }
 
-function createFinalizer(): Finalizer {
-  return {
-    async buildFinalDataset(): Promise<FinalizeSummary> {
-      throw createMigrationError(
-        'Finalize service',
-        `${LEGACY_ROOT}/src/services/finalizeService.js`
-      );
-    }
-  };
+function createFinalizer(databaseUrl: string, finalizeDeleteEnabled: boolean, priceAtImportEnabled: boolean): Finalizer {
+  const pool = createPgPool(databaseUrl);
+  return new FinalizerDb(pool, {
+    finalizeDeleteEnabled,
+    priceAtImportEnabled
+  });
 }
 
 function createPreviewProvider(): ExportPreviewProvider {
@@ -114,7 +107,11 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const connector = createConnector(config);
   const pipeline = new PipelineOrchestrator({
     sourceImporter: createSourceImporter(),
-    finalizer: createFinalizer(),
+    finalizer: createFinalizer(
+      config.base.databaseUrl,
+      config.base.finalizeDeleteEnabled,
+      env.PRICE_AT_IMPORT === 'true'
+    ),
     previewProvider: createPreviewProvider(),
     connector
   });

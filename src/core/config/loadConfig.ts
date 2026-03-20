@@ -108,6 +108,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
       port: readPositiveInteger(env, 'PORT', 3000, issues),
       logLevel: readLogLevel(env, 'LOG_LEVEL', 'info', issues),
       activeStore,
+      databaseUrl: readString(env, 'DATABASE_URL'),
       visibilityYes: readString(env, 'VISIBILITY_YES', 'Так') || 'Так',
       finalizeDeleteEnabled: readBoolean(env, 'FINALIZE_DELETE_ENABLED', true),
       finalizeLegacy: readBoolean(env, 'FINALIZE_LEGACY', false)
