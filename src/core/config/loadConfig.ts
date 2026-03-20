@@ -112,6 +112,10 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
       finalizeDeleteEnabled: readBoolean(env, 'FINALIZE_DELETE_ENABLED', true),
       finalizeLegacy: readBoolean(env, 'FINALIZE_LEGACY', false)
     },
+    auth: {
+      strategy: readString(env, 'AUTH_STRATEGY', 'db') === 'env' ? 'env' : 'db',
+      sessionTtlMinutes: readPositiveInteger(env, 'AUTH_SESSION_TTL_MINUTES', 720, issues)
+    },
     connectors: {
       horoshop: {
         domain: readString(env, 'HOROSHOP_DOMAIN'),
@@ -124,8 +128,12 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
       },
       cscart: {
         baseUrl: readString(env, 'CSCART_BASE_URL'),
+        apiUser: readString(env, 'CSCART_API_USER'),
         apiKey: readString(env, 'CSCART_API_KEY'),
-        storefrontId: readOptionalString(env, 'CSCART_STOREFRONT_ID')
+        storefrontId: readOptionalString(env, 'CSCART_STOREFRONT_ID'),
+        itemsPerPage: readPositiveInteger(env, 'CSCART_ITEMS_PER_PAGE', 1000, issues),
+        rateLimitRps: readPositiveInteger(env, 'CSCART_RATE_LIMIT_RPS', 10, issues),
+        rateLimitBurst: readPositiveInteger(env, 'CSCART_RATE_LIMIT_BURST', 20, issues)
       }
     }
   };
@@ -135,7 +143,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   }
 
   if (activeStore === 'cscart') {
-    requireKeys(env, ['CSCART_BASE_URL', 'CSCART_API_KEY'], issues);
+    requireKeys(env, ['CSCART_BASE_URL', 'CSCART_API_USER', 'CSCART_API_KEY'], issues);
   }
 
   if (issues.length > 0) {

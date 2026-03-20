@@ -1,28 +1,29 @@
 import { createApplication } from './app/createApplication';
+import { createHttpServer } from './app/http/server';
 
-function main(): void {
-  try {
-    const application = createApplication(process.env);
-    const summary = {
-      port: application.config.base.port,
-      activeStore: application.config.base.activeStore,
-      connector: application.connector.store,
-      modules: [
-        'src/core/config',
-        'src/core/domain',
-        'src/core/pipeline',
-        `src/connectors/${application.connector.store}`,
-        'src/app'
-      ],
-      migrationTargets: application.migrationTargets
-    };
-
-    console.log(JSON.stringify(summary, null, 2));
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown bootstrap error';
-    console.error(message);
-    throw error;
-  }
+async function main(): Promise<void> {
+  const application = createApplication(process.env);
+  const server = createHttpServer(application);
+  server.listen(application.config.base.port, () => {
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify(
+        {
+          port: application.config.base.port,
+          activeStore: application.config.base.activeStore,
+          connector: application.connector.store,
+          auth: application.config.auth.strategy,
+          migrationTargets: application.migrationTargets
+        },
+        null,
+        2
+      )
+    );
+  });
 }
 
-main();
+main().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error(err instanceof Error ? err.message : err);
+  process.exit(1);
+});

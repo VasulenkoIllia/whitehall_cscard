@@ -9,6 +9,8 @@
 - `RUNBOOK_FINALIZE_STABILITY_2026_03.md` — ранбук стабілізації етапу finalize.
 - `README_FEED_EXTENSION.md` — розширення імпорту фідів.
 - `ARCHITECTURE_BASELINE_2026_03.md` — що вже закладено в `whitehall_cscard` після рев’ю документації та як це мапиться на legacy-код.
+- `CSCART_CONNECTOR_NOTES.md` — конспект CS-Cart REST API та мапінг під наш нейтральний preview.
+- `AUTH_SIMPLE_ROLES.md` — план простої авторизації (admin/viewer) без реєстрації, з сесіями та хешованими паролями.
 
 Посилання на вихідну бізнес-логіку:
 - Кодова база Horoshop (джерело істини логіки, імпорт/фіналізація/експорт): `/Users/monstermac/WebstormProjects/whitehall.store_integration`.

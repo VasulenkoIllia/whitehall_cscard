@@ -16,11 +16,10 @@ import {
   type HoroshopGateway,
   type HoroshopProductInput
 } from '../connectors/horoshop/HoroshopConnector';
-import {
-  CsCartConnector,
-  type CsCartGateway,
-  type CsCartImportRow
-} from '../connectors/cscart/CsCartConnector';
+import { CsCartConnector } from '../connectors/cscart/CsCartConnector';
+import { CsCartGateway as DefaultCsCartGateway } from '../connectors/cscart/CsCartGateway';
+import { AuthService } from './auth/authService';
+import { EnvUserStore } from './auth/envUserStore';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -81,17 +80,6 @@ function createHoroshopGateway(): HoroshopGateway {
   };
 }
 
-function createCsCartGateway(): CsCartGateway {
-  return {
-    async fetchCatalogPage(): Promise<CursorPage<MirrorRow>> {
-      throw new Error('CS-Cart mirror gateway is not implemented yet');
-    },
-    async importProducts(_rows: CsCartImportRow[]): Promise<StoreImportResult> {
-      throw new Error('CS-Cart import gateway is not implemented yet');
-    }
-  };
-}
-
 function createConnector(config: AppConfig): StoreConnector<unknown> {
   if (config.base.activeStore === 'horoshop') {
     return new HoroshopConnector({
@@ -101,7 +89,16 @@ function createConnector(config: AppConfig): StoreConnector<unknown> {
     });
   }
 
-  return new CsCartConnector(createCsCartGateway());
+  const csGateway = new DefaultCsCartGateway({
+    baseUrl: config.connectors.cscart.baseUrl,
+    apiUser: config.connectors.cscart.apiUser,
+    apiKey: config.connectors.cscart.apiKey,
+    itemsPerPage: config.connectors.cscart.itemsPerPage,
+    rateLimitRps: config.connectors.cscart.rateLimitRps,
+    rateLimitBurst: config.connectors.cscart.rateLimitBurst
+  });
+
+  return new CsCartConnector(csGateway);
 }
 
 export interface Application {
@@ -109,6 +106,7 @@ export interface Application {
   connector: StoreConnector<unknown>;
   pipeline: PipelineOrchestrator<unknown>;
   migrationTargets: string[];
+  auth: AuthService;
 }
 
 export function createApplication(env: Record<string, string | undefined>): Application {
@@ -121,10 +119,18 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     connector
   });
 
+  const authStore = new EnvUserStore(env);
+  const auth = new AuthService(authStore, {
+    strategy: config.auth.strategy,
+    sessionSecret: env.AUTH_SESSION_SECRET || 'changeme',
+    sessionTtlMinutes: config.auth.sessionTtlMinutes
+  });
+
   return {
     config,
     connector,
     pipeline,
+    auth,
     migrationTargets: [
       `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,
       `${LEGACY_ROOT}/src/services/finalizeService.js -> src/core/pipeline`,

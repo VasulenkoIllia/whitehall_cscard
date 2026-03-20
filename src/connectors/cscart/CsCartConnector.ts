@@ -1,12 +1,5 @@
 import type { StoreConnector } from '../../core/connectors/StoreConnector';
-import type {
-  CursorPage,
-  ExportPreviewRow,
-  MirrorRow,
-  StoreImportBatch,
-  StoreImportResult
-} from '../../core/domain/store';
-
+import type { CursorPage, ExportPreviewRow, MirrorRow, StoreImportBatch, StoreImportResult } from '../../core/domain/store';
 export interface CsCartImportRow {
   productCode: string;
   size: string | null;
@@ -16,8 +9,8 @@ export interface CsCartImportRow {
   price: number | null;
 }
 
-export interface CsCartGateway {
-  fetchCatalogPage(cursor: string | null): Promise<CursorPage<MirrorRow>>;
+export interface CsCartGatewayClient {
+  fetchProductsPage(page: number): Promise<CursorPage<MirrorRow>>;
   importProducts(rows: CsCartImportRow[]): Promise<StoreImportResult>;
 }
 
@@ -29,14 +22,19 @@ export class CsCartConnector implements StoreConnector<CsCartImportRow> {
     importPreview: true
   };
 
-  private readonly gateway: CsCartGateway;
+  private readonly gateway: CsCartGatewayClient;
 
-  constructor(gateway: CsCartGateway) {
+  constructor(gateway: CsCartGatewayClient) {
     this.gateway = gateway;
   }
 
-  fetchMirrorPage(cursor: string | null = null): Promise<CursorPage<MirrorRow>> {
-    return this.gateway.fetchCatalogPage(cursor);
+  async fetchMirrorPage(cursor: string | null = null): Promise<CursorPage<MirrorRow>> {
+    const page = cursor ? Number(cursor) || 1 : 1;
+    const result = await this.gateway.fetchProductsPage(page);
+    return {
+      items: result.items,
+      nextCursor: result.nextCursor
+    };
   }
 
   async createImportBatch(rows: ExportPreviewRow[]): Promise<StoreImportBatch<CsCartImportRow>> {

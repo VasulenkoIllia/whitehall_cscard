@@ -11,6 +11,11 @@ export interface BaseConfig {
   finalizeLegacy: boolean;
 }
 
+export interface AuthEnvConfig {
+  strategy: 'db' | 'env';
+  sessionTtlMinutes: number;
+}
+
 export interface HoroshopConfig {
   domain: string;
   login: string;
@@ -23,12 +28,17 @@ export interface HoroshopConfig {
 
 export interface CsCartConfig {
   baseUrl: string;
+  apiUser: string;
   apiKey: string;
   storefrontId: string | null;
+  itemsPerPage: number;
+  rateLimitRps: number;
+  rateLimitBurst: number;
 }
 
 export interface AppConfig {
   base: BaseConfig;
+  auth: AuthEnvConfig;
   connectors: {
     horoshop: HoroshopConfig;
     cscart: CsCartConfig;
