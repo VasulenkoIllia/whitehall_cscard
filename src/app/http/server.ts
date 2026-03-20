@@ -47,9 +47,7 @@ export function createHttpServer(appContext: AppContext) {
   });
 
   // Placeholder protected route to validate middleware
-  app.get('/admin/api/protected', authMw.requireRole('admin'), (_req, res) => {
-    res.json({ ok: true });
-  });
+  app.get('/admin/api/protected', authMw.requireRole('admin'), (_req, res) => res.json({ ok: true }));
 
   app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
 

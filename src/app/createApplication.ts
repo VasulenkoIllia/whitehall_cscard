@@ -23,6 +23,7 @@ import { EnvUserStore } from './auth/envUserStore';
 import { createPgPool } from '../core/db/pgClient';
 import { FinalizerDb } from '../core/pipeline/finalizerDb';
 import { ImporterDb } from '../core/pipeline/importerDb';
+import { LogService } from '../core/pipeline/log';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -34,8 +35,12 @@ function createPgPoolOrThrow(databaseUrl: string) {
   return createPgPool(databaseUrl);
 }
 
-function createSourceImporter(pool: ReturnType<typeof createPgPoolOrThrow>): SourceImporter {
-  return new ImporterDb(pool);
+function createSourceImporter(
+  pool: ReturnType<typeof createPgPoolOrThrow>,
+  logService: LogService,
+  priceAtImportEnabled: boolean
+): SourceImporter {
+  return new ImporterDb(pool, logService, priceAtImportEnabled);
 }
 
 function createFinalizer(pool: ReturnType<typeof createPgPoolOrThrow>, finalizeDeleteEnabled: boolean, priceAtImportEnabled: boolean): Finalizer {
@@ -108,9 +113,10 @@ export interface Application {
 export function createApplication(env: Record<string, string | undefined>): Application {
   const config = loadConfig(env);
   const pool = createPgPoolOrThrow(config.base.databaseUrl);
+  const logService = new LogService(pool);
   const connector = createConnector(config);
   const pipeline = new PipelineOrchestrator({
-    sourceImporter: createSourceImporter(pool),
+    sourceImporter: createSourceImporter(pool, logService, env.PRICE_AT_IMPORT === 'true'),
     finalizer: createFinalizer(
       pool,
       config.base.finalizeDeleteEnabled,
