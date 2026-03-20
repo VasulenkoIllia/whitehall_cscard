@@ -31,3 +31,7 @@
 - Експорт і попередній перегляд для магазину: `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/exportService.js`
 - Оркестрація пайплайна/cron: `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/jobs/runners.js` та `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/jobs/scheduler.js`
 - Конфіг/оточення: `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/config.js`
+
+Scheduler у новому репозиторії:
+- Вбудований env-driven scheduler реалізовано в `src/core/jobs/JobScheduler.ts`.
+- Параметри запуску див. у `ARCHITECTURE_BASELINE_2026_03.md` (розділ `Scheduler env`).

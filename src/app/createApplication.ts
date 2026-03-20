@@ -27,6 +27,7 @@ import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
 import { CleanupService } from '../core/jobs/CleanupService';
 import { StoreMirrorService } from '../core/jobs/StoreMirrorService';
+import { JobScheduler } from '../core/jobs/JobScheduler';
 import type { StoreImportBatch } from '../core/domain/store';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
@@ -147,6 +148,7 @@ export interface Application {
   logService: LogService;
   jobService: JobService;
   jobRunner: PipelineJobRunner<unknown>;
+  scheduler: JobScheduler;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
@@ -179,6 +181,34 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     cleanupService,
     storeMirrorService
   );
+  const scheduler = new JobScheduler({
+    enabled: config.scheduler.enabled,
+    tickIntervalMs: config.scheduler.tickSeconds * 1000,
+    logService,
+    tasks: [
+      {
+        name: 'update_pipeline',
+        enabled: config.scheduler.updatePipeline.enabled,
+        intervalMs: config.scheduler.updatePipeline.intervalMinutes * 60 * 1000,
+        runOnStartup: config.scheduler.updatePipeline.runOnStartup,
+        action: () => jobRunner.runUpdatePipeline(config.scheduler.updatePipeline.supplier)
+      },
+      {
+        name: 'store_mirror_sync',
+        enabled: config.scheduler.storeMirrorSync.enabled,
+        intervalMs: config.scheduler.storeMirrorSync.intervalMinutes * 60 * 1000,
+        runOnStartup: config.scheduler.storeMirrorSync.runOnStartup,
+        action: () => jobRunner.runStoreMirrorSync()
+      },
+      {
+        name: 'cleanup',
+        enabled: config.scheduler.cleanup.enabled,
+        intervalMs: config.scheduler.cleanup.intervalMinutes * 60 * 1000,
+        runOnStartup: config.scheduler.cleanup.runOnStartup,
+        action: () => jobRunner.runCleanup(config.base.cleanupRetentionDays)
+      }
+    ]
+  });
 
   const authStore = config.auth.strategy === 'db' ? new DbUserStore(pool) : new EnvUserStore(env);
   const auth = new AuthService(authStore, {
@@ -194,6 +224,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     logService,
     jobService,
     jobRunner,
+    scheduler,
     cleanupService,
     storeMirrorService,
     auth,

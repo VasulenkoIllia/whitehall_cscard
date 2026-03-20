@@ -12,9 +12,20 @@ export interface StoreConnectorCapabilities {
   importPreview: boolean;
 }
 
+export interface StoreImportProgress {
+  total: number;
+  processed: number;
+  imported: number;
+  failed: number;
+  skipped: number;
+  finished: boolean;
+  canceled: boolean;
+}
+
 export interface StoreImportContext {
   jobId?: number;
   isCanceled?: () => Promise<boolean>;
+  onProgress?: (progress: StoreImportProgress) => Promise<void> | void;
 }
 
 export interface StoreConnector<MappedRow = unknown> {

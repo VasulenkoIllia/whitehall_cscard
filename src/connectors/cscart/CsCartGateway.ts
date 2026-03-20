@@ -1,7 +1,10 @@
 import fetch, { Response } from 'node-fetch';
 import type { RequestInit } from 'node-fetch';
 import { URL } from 'url';
-import type { StoreImportContext } from '../../core/connectors/StoreConnector';
+import type {
+  StoreImportContext,
+  StoreImportProgress
+} from '../../core/connectors/StoreConnector';
 import type { CursorPage, MirrorRow } from '../../core/domain/store';
 import type { CsCartImportRow } from './CsCartConnector';
 
@@ -260,8 +263,15 @@ export class CsCartGateway {
     const indexByCode = await this.fetchProductIndexByCode();
     let cursor = 0;
     const totalRows = rows.length;
+    const totalValidRows = rows.reduce(
+      (count, row) => count + (this.normalizeProductCode(row.productCode) ? 1 : 0),
+      0
+    );
+    let processed = 0;
     let canceled = false;
     let cancelCheckCounter = 0;
+    const progressReportEvery = 250;
+    let nextProgressMark = progressReportEvery;
 
     const takeNextRow = (): CsCartImportRow | null => {
       while (cursor < totalRows) {
@@ -291,6 +301,30 @@ export class CsCartGateway {
       (cancelError as any).code = 'JOB_CANCELED';
       throw cancelError;
     };
+
+    const reportProgress = async (force = false, finished = false): Promise<void> => {
+      if (!context?.onProgress) {
+        return;
+      }
+      if (!force && processed < nextProgressMark) {
+        return;
+      }
+      if (!force) {
+        nextProgressMark = processed + progressReportEvery;
+      }
+      const progress: StoreImportProgress = {
+        total: totalValidRows,
+        processed,
+        imported,
+        failed,
+        skipped,
+        finished,
+        canceled
+      };
+      await context.onProgress(progress);
+    };
+
+    await reportProgress(true, false);
 
     const worker = async (): Promise<void> => {
       while (true) {
@@ -373,6 +407,9 @@ export class CsCartGateway {
           } else {
             this.appendWarning(warnings, `product_code=${productCode}: import failed`);
           }
+        } finally {
+          processed += 1;
+          await reportProgress(false, false);
         }
       }
     };
@@ -382,7 +419,16 @@ export class CsCartGateway {
     for (let index = 0; index < workerCount; index += 1) {
       workers.push(worker());
     }
-    await Promise.all(workers);
+    try {
+      await Promise.all(workers);
+    } catch (err) {
+      if ((err as any)?.code === 'JOB_CANCELED') {
+        canceled = true;
+        await reportProgress(true, false);
+      }
+      throw err;
+    }
+    await reportProgress(true, true);
 
     return { imported, failed, skipped, warnings };
   }

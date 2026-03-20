@@ -9,6 +9,7 @@ import type {
 import { JobService, type JobRecord } from './JobService';
 import type { CleanupService, CleanupSummary } from './CleanupService';
 import type { StoreMirrorService, StoreMirrorSyncSummary } from './StoreMirrorService';
+import type { StoreImportProgress } from '../connectors/StoreConnector';
 
 const BLOCKING_JOB_TYPES = [
   'update_pipeline',
@@ -94,6 +95,42 @@ export class PipelineJobRunner<MappedRow = unknown> {
     return job?.status === 'canceled';
   }
 
+  private createStoreImportProgressReporter(
+    jobId: number
+  ): (progress: StoreImportProgress) => Promise<void> {
+    const startedAt = Date.now();
+    let lastMetaPersistAt = 0;
+    let lastLoggedProcessed = 0;
+    const metaPersistIntervalMs = 5000;
+    const logStepRows = 5000;
+
+    return async (progress: StoreImportProgress): Promise<void> => {
+      const now = Date.now();
+      const elapsedMs = Math.max(1, now - startedAt);
+      const processed = Math.max(0, Math.trunc(progress.processed));
+      const ratePerSecond = processed > 0 ? Number((processed / (elapsedMs / 1000)).toFixed(2)) : null;
+      const remaining = Math.max(0, Math.trunc(progress.total) - processed);
+      const etaSeconds = ratePerSecond && ratePerSecond > 0 ? Math.ceil(remaining / ratePerSecond) : null;
+
+      const snapshot = {
+        ...progress,
+        updatedAt: new Date(now).toISOString(),
+        ratePerSecond,
+        etaSeconds
+      };
+
+      if (progress.finished || progress.canceled || now - lastMetaPersistAt >= metaPersistIntervalMs) {
+        await this.jobs.mergeJobMeta(jobId, { storeImportProgress: snapshot });
+        lastMetaPersistAt = now;
+      }
+
+      if (progress.finished || progress.canceled || processed - lastLoggedProcessed >= logStepRows) {
+        await this.logs.log(jobId, 'info', 'store_import progress', snapshot);
+        lastLoggedProcessed = processed;
+      }
+    };
+  }
+
   private async runStandaloneStep<T>(
     type: 'import_all' | 'finalize' | 'store_import' | 'cleanup' | 'store_mirror_sync',
     meta: Record<string, unknown>,
@@ -169,12 +206,14 @@ export class PipelineJobRunner<MappedRow = unknown> {
     supplier: string | null
   ): Promise<JobRunnerResult<StoreImportExecution<MappedRow>>> {
     const meta = supplier ? { supplier } : {};
-    return this.runStandaloneStep('store_import', meta, (jobId) =>
-      this.pipeline.runStoreImport(jobId, supplier, {
+    return this.runStandaloneStep('store_import', meta, async (jobId) => {
+      const onProgress = this.createStoreImportProgressReporter(jobId);
+      return this.pipeline.runStoreImport(jobId, supplier, {
         jobId,
-        isCanceled: () => this.isJobCanceled(jobId)
-      })
-    );
+        isCanceled: () => this.isJobCanceled(jobId),
+        onProgress
+      });
+    });
   }
 
   runCleanup(retentionDays: number): Promise<JobRunnerResult<CleanupSummary>> {
@@ -237,11 +276,14 @@ export class PipelineJobRunner<MappedRow = unknown> {
         parent.id,
         'store_import',
         supplier ? { supplier } : {},
-        (jobId) =>
-          this.pipeline.runStoreImport(jobId, supplier, {
+        (jobId) => {
+          const onProgress = this.createStoreImportProgressReporter(jobId);
+          return this.pipeline.runStoreImport(jobId, supplier, {
             jobId,
-            isCanceled: () => this.isJobCanceled(jobId)
-          })
+            isCanceled: () => this.isJobCanceled(jobId),
+            onProgress
+          });
+        }
       );
 
       const result: UpdatePipelineSummary<MappedRow> = {

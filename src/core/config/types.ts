@@ -39,9 +39,24 @@ export interface CsCartConfig {
   allowCreate: boolean;
 }
 
+export interface SchedulerTaskConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+  runOnStartup: boolean;
+}
+
+export interface SchedulerConfig {
+  enabled: boolean;
+  tickSeconds: number;
+  updatePipeline: SchedulerTaskConfig & { supplier: string | null };
+  storeMirrorSync: SchedulerTaskConfig;
+  cleanup: SchedulerTaskConfig;
+}
+
 export interface AppConfig {
   base: BaseConfig;
   auth: AuthEnvConfig;
+  scheduler: SchedulerConfig;
   connectors: {
     horoshop: HoroshopConfig;
     cscart: CsCartConfig;

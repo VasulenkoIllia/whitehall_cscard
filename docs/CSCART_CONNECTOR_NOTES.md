@@ -58,3 +58,9 @@ Auth / env для CS-Cart:
 ## Операційна стабільність логів
 - Логи проходять санітизацію і обрізання payload (`LOG_PAYLOAD_MAX_BYTES`, default `32768`).
 - Це обмежує зростання таблиці `logs` при великих результатах або помилках з великим stack/data.
+
+## Progress checkpoints (runtime)
+- Під час `store_import` CS-Cart gateway передає прогрес (`total/processed/imported/failed/skipped`) через `StoreImportContext.onProgress`.
+- Runner зберігає checkpoint у `jobs.meta.storeImportProgress` (періодично та фінальним записом).
+- У логи пишеться агрегований прогрес із `ratePerSecond` та `etaSeconds` (без великих payload масивів).
+- Це не змінює бізнес-результат імпорту, але дає операційний контроль і базу для наступного етапу resume після cancel/failure.

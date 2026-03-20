@@ -286,6 +286,52 @@ Effect:
 - lower risk of `logs` table growth and oversized API responses on large runs
 - better operational stability for 100k–500k item iterations without business-rule changes
 
+### 12. Built-in scheduler for pipeline automation
+
+Changed files:
+- `src/core/config/types.ts`
+- `src/core/config/loadConfig.ts`
+- `src/core/jobs/JobScheduler.ts`
+- `src/app/createApplication.ts`
+- `src/index.ts`
+- `docs/ARCHITECTURE_BASELINE_2026_03.md`
+
+What changed:
+- added a modular background scheduler service with start/stop lifecycle
+- scheduler tasks run through `PipelineJobRunner` (no duplicated business logic)
+- added env-driven schedule config for:
+  - `update_pipeline` (optional supplier filter)
+  - `store_mirror_sync`
+  - `cleanup`
+- scheduler writes operational logs and handles job lock conflicts as non-fatal skip events
+- application startup now initializes scheduler after HTTP server listen; graceful stop on `SIGINT`/`SIGTERM`
+
+Effect:
+- restores legacy-level automated orchestration in the new modular repo
+- keeps lock/cancel semantics centralized in existing job runner
+- allows safe staged automation without introducing external cron dependencies
+
+### 13. Store import progress checkpoints in jobs metadata
+
+Changed files:
+- `src/core/connectors/StoreConnector.ts`
+- `src/connectors/cscart/CsCartGateway.ts`
+- `src/core/jobs/JobService.ts`
+- `src/core/jobs/PipelineJobRunner.ts`
+- `docs/CSCART_CONNECTOR_NOTES.md`
+
+What changed:
+- extended `StoreImportContext` with optional `onProgress` callback
+- CS-Cart import now reports aggregated progress during execution (`total/processed/imported/failed/skipped`)
+- added `JobService.mergeJobMeta(...)` helper for safe JSONB metadata merge into existing job meta
+- runner persists progress snapshots to `jobs.meta.storeImportProgress` and writes periodic progress logs
+- progress snapshot includes runtime throughput and ETA (`ratePerSecond`, `etaSeconds`)
+
+Effect:
+- operators can track long-running import state from DB/API without waiting for final job completion
+- creates practical checkpoint foundation for next stage: true resume-from-progress after cancel/failure
+- no business logic or import decision rules were changed
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path
@@ -303,7 +349,6 @@ Still required:
 ### Phase 2. Reach legacy parity for core pipeline
 
 Required next:
-- add scheduler/cron layer equivalent to legacy `src/jobs/scheduler.js`
 - add resumable checkpoints for long store-import runs (continue after interruption)
 
 ### Phase 3. Finish CS-Cart connector for large syncs
@@ -328,8 +373,7 @@ Rule:
 
 ## Recommended next implementation order
 
-1. Add scheduler/cron orchestration for `update_pipeline`, `cleanup`, `store_mirror_sync`.
-2. Add resumable checkpoints for `store_import` (resume cursor/progress after cancel/failure).
-3. Add batch-level CS-Cart metrics (duration/rps/success/fail/skip/ETA) into job logs/meta.
-4. Add integration tests around import -> finalize -> preview for null/empty size, overrides and dedup priority.
-5. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).
+1. Add resumable checkpoints for `store_import` (resume cursor/progress after cancel/failure).
+2. Add batch-level CS-Cart metrics (duration/rps/success/fail/skip/ETA) into job logs/meta.
+3. Add integration tests around import -> finalize -> preview for null/empty size, overrides and dedup priority.
+4. Run staged load tests (100k/300k/500k) and tune env (`CSCART_RATE_LIMIT_RPS`, `CSCART_IMPORT_CONCURRENCY`, mirror refresh cadence).

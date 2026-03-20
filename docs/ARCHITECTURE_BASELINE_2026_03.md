@@ -11,6 +11,7 @@
 - Старий зв’язок `runners.js -> exportService.js -> horoshopService.js` розбитий на pipeline + connector.
 - Нейтральний preview більше не мусить знати про Horoshop-поля `presence_ua` або `display_in_showcase`.
 - Перемикання магазину відбувається через `ACTIVE_STORE`, а не через жорсткі імпорти сервісів.
+- Додано вбудований scheduler (env-driven) для job orchestration без окремого зовнішнього cron-процесу.
 
 ## Наступний порядок переносу (активно працюємо тільки з CS-Cart)
 1. (in progress) Імпорт Google Sheets у `src/core/pipeline/importerDb` (CS-Cart цикл).
@@ -33,6 +34,20 @@
 - `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST` — ліміт запитів при оновленні товарів (стартово 10 RPS, burst 20) з backoff на 429/5xx.
 - `CSCART_ALLOW_CREATE` — дозволити POST створення нових SKU (default false). За замовчуванням тільки PUT по mirror (update-only).
 - `HOROSHOP_RATE_LIMIT_RPS`, `HOROSHOP_RATE_LIMIT_BURST` — throttle для Horoshop API (стартово 5 RPS, burst 10).
+
+## Scheduler env (pipeline automation)
+- `SCHEDULER_ENABLED` — глобально увімкнути scheduler (`true|false`, default `false`).
+- `SCHEDULER_TICK_SECONDS` — крок опитування scheduler (default `30`).
+- `SCHEDULER_UPDATE_PIPELINE_ENABLED` — запуск `update_pipeline`.
+- `SCHEDULER_UPDATE_PIPELINE_INTERVAL_MINUTES` — інтервал запуску `update_pipeline` (default `180`).
+- `SCHEDULER_UPDATE_PIPELINE_RUN_ON_STARTUP` — одноразовий запуск `update_pipeline` після старту сервера.
+- `SCHEDULER_UPDATE_PIPELINE_SUPPLIER` — фільтр supplier для `update_pipeline` (optional).
+- `SCHEDULER_STORE_MIRROR_SYNC_ENABLED` — запуск `store_mirror_sync`.
+- `SCHEDULER_STORE_MIRROR_SYNC_INTERVAL_MINUTES` — інтервал sync mirror (default `120`).
+- `SCHEDULER_STORE_MIRROR_SYNC_RUN_ON_STARTUP` — одноразовий mirror sync після старту.
+- `SCHEDULER_CLEANUP_ENABLED` — запуск `cleanup`.
+- `SCHEDULER_CLEANUP_INTERVAL_MINUTES` — інтервал cleanup (default `720`).
+- `SCHEDULER_CLEANUP_RUN_ON_STARTUP` — одноразовий cleanup після старту.
 
 ## Auth/roles (просте закриття адмінки)
 - 2 ролі: `admin` (повний доступ), `viewer` (тільки перегляд).

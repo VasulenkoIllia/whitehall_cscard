@@ -156,6 +156,19 @@ export class JobService {
     return result.rows[0] || null;
   }
 
+  async mergeJobMeta(jobId: number, patch: unknown): Promise<void> {
+    const payload = normalizeJsonPayload(patch);
+    if (!payload) {
+      return;
+    }
+    await this.pool.query(
+      `UPDATE jobs
+       SET meta = COALESCE(meta, '{}'::jsonb) || $2::jsonb
+       WHERE id = $1`,
+      [jobId, JSON.stringify(payload)]
+    );
+  }
+
   async listJobs(limit = 50): Promise<JobRecord[]> {
     const size = Number.isFinite(limit) ? Math.max(1, Math.min(200, Math.trunc(limit))) : 50;
     const result = await this.pool.query<JobRecord>(
