@@ -10,6 +10,7 @@ export interface BaseConfig {
   visibilityYes: string;
   finalizeDeleteEnabled: boolean;
   finalizeLegacy: boolean;
+  cleanupRetentionDays: number;
 }
 
 export interface AuthEnvConfig {

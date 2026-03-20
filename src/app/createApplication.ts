@@ -17,6 +17,7 @@ import { CsCartConnector } from '../connectors/cscart/CsCartConnector';
 import { CsCartGateway as DefaultCsCartGateway } from '../connectors/cscart/CsCartGateway';
 import { AuthService } from './auth/authService';
 import { EnvUserStore } from './auth/envUserStore';
+import { DbUserStore } from './auth/dbUserStore';
 import { createPgPool } from '../core/db/pgClient';
 import { FinalizerDb } from '../core/pipeline/finalizerDb';
 import { ImporterDb } from '../core/pipeline/importerDb';
@@ -24,6 +25,7 @@ import { LogService } from '../core/pipeline/log';
 import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
 import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
+import { CleanupService } from '../core/jobs/CleanupService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -102,6 +104,7 @@ export interface Application {
   logService: LogService;
   jobService: JobService;
   jobRunner: PipelineJobRunner<unknown>;
+  cleanupService: CleanupService;
   migrationTargets: string[];
   auth: AuthService;
 }
@@ -122,9 +125,10 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     connector
   });
   const jobService = new JobService(pool);
-  const jobRunner = new PipelineJobRunner(pipeline, jobService, logService);
+  const cleanupService = new CleanupService(pool);
+  const jobRunner = new PipelineJobRunner(pipeline, jobService, logService, cleanupService);
 
-  const authStore = new EnvUserStore(env);
+  const authStore = config.auth.strategy === 'db' ? new DbUserStore(pool) : new EnvUserStore(env);
   const auth = new AuthService(authStore, {
     strategy: config.auth.strategy,
     sessionSecret: env.AUTH_SESSION_SECRET || 'changeme',
@@ -138,6 +142,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     logService,
     jobService,
     jobRunner,
+    cleanupService,
     auth,
     migrationTargets: [
       `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,

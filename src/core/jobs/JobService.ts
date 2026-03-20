@@ -20,6 +20,11 @@ export interface JobLogRecord {
   createdAt: string;
 }
 
+export interface BackendTerminationRecord {
+  pid: number;
+  terminated: boolean;
+}
+
 function normalizeJsonPayload(value: unknown): Record<string, unknown> | null {
   if (value === undefined || value === null) {
     return null;
@@ -263,5 +268,48 @@ export class JobService {
          AND job_id = $2`,
       [name, jobId]
     );
+  }
+
+  async terminateJobBackend(jobId: number, type: string): Promise<BackendTerminationRecord[]> {
+    if (!jobId || !type) {
+      return [];
+    }
+
+    const appName = `whitehall:${type}:${jobId}`;
+    const byAppName = await this.pool.query<BackendTerminationRecord>(
+      `SELECT
+         pid::int AS pid,
+         pg_terminate_backend(pid) AS terminated
+       FROM pg_stat_activity
+       WHERE application_name = $1
+         AND pid <> pg_backend_pid()`,
+      [appName]
+    );
+
+    if (byAppName.rows.length > 0) {
+      return byAppName.rows;
+    }
+
+    if (type !== 'finalize') {
+      return [];
+    }
+
+    const finalizeFallback = await this.pool.query<BackendTerminationRecord>(
+      `WITH candidate AS (
+         SELECT pid
+         FROM pg_stat_activity
+         WHERE pid <> pg_backend_pid()
+           AND state = 'active'
+           AND query ILIKE '%finalize_stage%'
+         ORDER BY query_start ASC
+         LIMIT 1
+       )
+       SELECT
+         pid::int AS pid,
+         pg_terminate_backend(pid) AS terminated
+       FROM candidate`
+    );
+
+    return finalizeFallback.rows;
   }
 }

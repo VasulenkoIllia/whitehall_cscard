@@ -205,6 +205,9 @@ export class FinalizerDb implements Finalizer {
     let finalCount = 0;
     try {
       await client.query('BEGIN');
+      await client.query(`SELECT set_config('application_name', $1, true)`, [
+        `whitehall:finalize:${jobId}`
+      ]);
       const importJob = await client.query(
         `SELECT id FROM jobs WHERE type = 'import_all' AND status = 'success' ORDER BY id DESC LIMIT 1`
       );

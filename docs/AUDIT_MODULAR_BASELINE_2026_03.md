@@ -154,6 +154,57 @@ Effect:
 - step-by-step CS-Cart migration can run via explicit jobs instead of ad-hoc direct calls
 - concurrency conflicts are blocked by lock and running-job checks
 
+### 5. Retention cleanup job with partition lifecycle
+
+Changed files:
+- `src/core/jobs/CleanupService.ts`
+- `src/core/jobs/PipelineJobRunner.ts`
+- `src/app/http/server.ts`
+- `src/core/config/loadConfig.ts`
+- `src/core/config/types.ts`
+
+What changed:
+- added `cleanup` job type with retention-driven execution
+- implemented drop of old `products_raw_YYYYMMDD` partitions by cutoff
+- added fallback/raw delete for rows older than retention window
+- added cleanup of old logs, completed jobs and orphaned locks
+- added API endpoint `POST /admin/api/jobs/cleanup`
+- added config `CLEANUP_RETENTION_DAYS` (default 10)
+
+Effect:
+- retention is now operational in the modular repo
+- raw table growth is controlled by partition lifecycle + retention
+- cleanup is visible and auditable through jobs/logs
+
+### 6. Stronger cancel flow for long-running jobs
+
+Changed files:
+- `src/core/jobs/JobService.ts`
+- `src/core/pipeline/finalizerDb.ts`
+- `src/app/http/server.ts`
+
+What changed:
+- added backend termination by `application_name` (`whitehall:<type>:<jobId>`) using `pg_terminate_backend`
+- finalize now tags DB session with `whitehall:finalize:<jobId>`
+- cancel endpoint now attempts backend termination for parent and child running jobs before status cancel
+
+Effect:
+- cancel is no longer only metadata-level for heavy finalize operations
+- lower risk of stuck running SQL after UI/API cancel request
+
+### 7. Auth strategy wiring (`db` vs `env`)
+
+Changed file:
+- `src/app/createApplication.ts`
+
+What changed:
+- application now uses `DbUserStore` when `AUTH_STRATEGY=db`
+- `EnvUserStore` remains for `AUTH_STRATEGY=env`
+
+Effect:
+- declared auth strategy now matches runtime behavior
+- admin auth no longer silently falls back to env users when DB mode is selected
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path
@@ -161,9 +212,10 @@ Effect:
 Status:
 - finalize merge path fixed
 - raw partition creation activated
+- retention cleanup job implemented (partition drop + old rows/logs/jobs cleanup)
+- `AUTH_STRATEGY=db|env` runtime wiring is now aligned
 
 Still required:
-- real retention job: drop old `products_raw_*` partitions instead of deleting rows
 - keep only required successful import/finalize history
 - add DB metrics for import/finalize duration and row volumes
 
@@ -171,9 +223,7 @@ Still required:
 
 Required next:
 - port job orchestration from legacy `src/jobs/runners.js`
-- port cleanup flow
-- port cancel/timeout behavior
-- wire `AUTH_STRATEGY=db` to `DbUserStore`
+- extend cancel/timeout behavior for import/store stages (not only finalize DB query termination)
 
 ### Phase 3. Finish CS-Cart connector for large syncs
 

@@ -188,6 +188,19 @@ export function createHttpServer(appContext: AppContext) {
     }
   );
 
+  app.post('/admin/api/jobs/cleanup', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    const requested = Number(req.body?.retentionDays);
+    const retentionDays = Number.isFinite(requested)
+      ? Math.max(1, Math.trunc(requested))
+      : appContext.config.base.cleanupRetentionDays;
+    try {
+      const result = await jobRunner.runCleanup(retentionDays);
+      res.json(result);
+    } catch (err) {
+      res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'cleanup_error') });
+    }
+  });
+
   app.post(
     '/admin/api/jobs/:jobId/cancel',
     authMw.requireRole('admin'),
@@ -211,6 +224,7 @@ export function createHttpServer(appContext: AppContext) {
             : 'Canceled by user';
 
         const canceledChildren: number[] = [];
+        const terminatedChildren: Array<{ jobId: number; pids: number[] }> = [];
         if (job.type === 'update_pipeline') {
           const childJobs = await jobs.listChildJobs(jobId);
           for (let index = 0; index < childJobs.length; index += 1) {
@@ -218,24 +232,48 @@ export function createHttpServer(appContext: AppContext) {
             if (child.status !== 'running' && child.status !== 'queued') {
               continue;
             }
+            let childTerminatedPids: number[] = [];
+            if (child.status === 'running') {
+              const terminations = await jobs.terminateJobBackend(child.id, child.type);
+              childTerminatedPids = terminations
+                .filter((row) => row.terminated === true)
+                .map((row) => row.pid)
+                .filter((value) => Number.isFinite(value));
+            }
             await jobs.cancelJob(child.id, `Canceled with parent pipeline #${jobId}`);
             canceledChildren.push(child.id);
+            if (childTerminatedPids.length > 0) {
+              terminatedChildren.push({ jobId: child.id, pids: childTerminatedPids });
+            }
             await logs.log(child.id, 'error', 'Job canceled', {
               reason: `Canceled with parent pipeline #${jobId}`,
-              parentPipelineJobId: jobId
+              parentPipelineJobId: jobId,
+              terminatedPids: childTerminatedPids
             });
           }
         }
 
+        let terminatedPids: number[] = [];
+        if (job.status === 'running') {
+          const terminations = await jobs.terminateJobBackend(job.id, job.type);
+          terminatedPids = terminations
+            .filter((row) => row.terminated === true)
+            .map((row) => row.pid)
+            .filter((value) => Number.isFinite(value));
+        }
         const canceled = await jobs.cancelJob(jobId, reason);
         await logs.log(jobId, 'error', 'Job canceled', {
           reason,
-          childCanceled: canceledChildren
+          childCanceled: canceledChildren,
+          terminatedPids,
+          terminatedChildren
         });
 
         return res.json({
           job: canceled,
-          childCanceled: canceledChildren
+          childCanceled: canceledChildren,
+          terminatedPids,
+          terminatedChildren
         });
       } catch (err) {
         return res

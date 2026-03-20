@@ -7,8 +7,9 @@ import type {
   UpdatePipelineSummary
 } from '../pipeline/contracts';
 import { JobService, type JobRecord } from './JobService';
+import type { CleanupService, CleanupSummary } from './CleanupService';
 
-const BLOCKING_JOB_TYPES = ['update_pipeline', 'import_all', 'finalize', 'store_import'];
+const BLOCKING_JOB_TYPES = ['update_pipeline', 'import_all', 'finalize', 'store_import', 'cleanup'];
 
 interface JobRunnerResult<T> {
   jobId: number;
@@ -33,7 +34,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
   constructor(
     private readonly pipeline: PipelineOrchestrator<MappedRow>,
     private readonly jobs: JobService,
-    private readonly logs: LogService
+    private readonly logs: LogService,
+    private readonly cleanupService: CleanupService
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -46,7 +48,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
   }
 
   private async runStandaloneStep<T>(
-    type: 'import_all' | 'finalize' | 'store_import',
+    type: 'import_all' | 'finalize' | 'store_import' | 'cleanup',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<JobRunnerResult<T>> {
@@ -122,6 +124,17 @@ export class PipelineJobRunner<MappedRow = unknown> {
     const meta = supplier ? { supplier } : {};
     return this.runStandaloneStep('store_import', meta, (jobId) =>
       this.pipeline.runStoreImport(jobId, supplier)
+    );
+  }
+
+  runCleanup(retentionDays: number): Promise<JobRunnerResult<CleanupSummary>> {
+    const safeRetention = Number.isFinite(retentionDays)
+      ? Math.max(1, Math.trunc(retentionDays))
+      : 10;
+    return this.runStandaloneStep(
+      'cleanup',
+      { retentionDays: safeRetention },
+      async (_jobId) => this.cleanupService.run(safeRetention)
     );
   }
 

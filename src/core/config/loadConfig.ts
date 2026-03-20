@@ -111,7 +111,8 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
       databaseUrl: readString(env, 'DATABASE_URL'),
       visibilityYes: readString(env, 'VISIBILITY_YES', 'Так') || 'Так',
       finalizeDeleteEnabled: readBoolean(env, 'FINALIZE_DELETE_ENABLED', true),
-      finalizeLegacy: readBoolean(env, 'FINALIZE_LEGACY', false)
+      finalizeLegacy: readBoolean(env, 'FINALIZE_LEGACY', false),
+      cleanupRetentionDays: readPositiveInteger(env, 'CLEANUP_RETENTION_DAYS', 10, issues)
     },
     auth: {
       strategy: readString(env, 'AUTH_STRATEGY', 'db') === 'env' ? 'env' : 'db',
