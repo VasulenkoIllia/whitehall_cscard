@@ -35,7 +35,6 @@ What is already good:
 
 What is still not at legacy parity:
 - admin CRUD/data APIs are mostly covered (including supplier search/sort and mapping comment field)
-- legacy default markup semantics (`markup_settings` / `markup-rule-sets/default`) is still not fully mirrored
 - integration test coverage for critical business invariants is still missing
 - no staged load-test baseline yet for 100k/300k/500k runs
 - Horoshop is intentionally paused in current scope (separate future connector)
@@ -573,6 +572,50 @@ Effect:
 - closes requested operator features without changing business pricing/import logic
 - improves readiness for parity testing on real suppliers (`WHITE HALL`, `sevrukov`)
 - reduces manual risk during config transfer from legacy production data
+
+### 23. Default markup parity (`markup_settings` + default rule endpoint)
+
+Changed files:
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/http/server.ts`
+- `migrations/026_create_markup_settings.sql`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- added persistence table `markup_settings` (single-row global default rule set).
+- added admin API:
+  - `POST /admin/api/markup-rule-sets/default`
+- `list/create/update/apply` markup rule set responses now include `global_rule_set_id`.
+- create supplier flow now resolves default rule set from `markup_settings` (with active fallback) if rule set is not explicitly provided.
+
+Effect:
+- closes remaining parity gap around legacy global default markup semantics
+- keeps pricing behavior stable while making default assignment explicit and operational
+
+### 24. Store mirror hardening for duplicate SKU responses
+
+Changed files:
+- `src/core/jobs/StoreMirrorService.ts`
+- `src/scripts/runStoreMirrorSync.ts`
+- `package.json`
+- `src/app/createApplication.ts`
+- `src/index.ts`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+- `docs/CSCART_CONNECTOR_NOTES.md`
+
+What changed:
+- added chunk-level dedupe by `article` before `store_mirror` upsert to avoid SQL error when API page contains repeated SKU.
+- added explicit CLI mirror sync entrypoint:
+  - `npm run mirror:sync`
+- application lifecycle now exposes explicit `close()` to correctly stop scheduler and pool for CLI/background runs.
+- documentation now fixes operational rule: duplicated `product_code` in CS-Cart is a data conflict for update-only import and must be cleaned before cutover tests.
+
+Effect:
+- eliminates `ON CONFLICT ... cannot affect row a second time` failure mode during mirror sync.
+- provides repeatable backend-only snapshot refresh command for preflight checks.
+- formalizes data-quality gate (unique SKU) without changing pricing/import business logic.
 
 ## Adjusted plan
 

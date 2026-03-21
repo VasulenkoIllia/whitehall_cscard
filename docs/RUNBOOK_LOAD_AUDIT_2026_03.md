@@ -16,6 +16,8 @@
   - `LOAD_AUDIT_CONFIRM=YES`
 - За замовчуванням скрипт вимагає порожню БД (safety):
   - `LOAD_AUDIT_ALLOW_NONEMPTY_DB=false` (default)
+- Якщо БД непорожня, потрібен додатковий explicit gate:
+  - `LOAD_AUDIT_ALLOW_DESTRUCTIVE=true`
 - Cleanup synthetic даних ввімкнений за замовчуванням:
   - `LOAD_AUDIT_CLEANUP=true`
 
@@ -25,6 +27,7 @@
 - `LOAD_AUDIT_SUPPLIERS` (default: `24`)
 - `LOAD_AUDIT_MIRROR_SEED_LIMIT` (default: `20000`)
 - `LOAD_AUDIT_OUTPUT` (default: `output/load-audit-<timestamp>.json`)
+- `LOAD_AUDIT_ALLOW_DESTRUCTIVE` (default: `false`; required for non-empty DB runs)
 - `FINALIZE_DELETE_ENABLED` (default: `true`)
 - `PRICE_AT_IMPORT` (default: `false`)
 
@@ -33,6 +36,7 @@
 ```bash
 LOAD_AUDIT_CONFIRM=YES \
 LOAD_AUDIT_ALLOW_NONEMPTY_DB=false \
+LOAD_AUDIT_ALLOW_DESTRUCTIVE=false \
 LOAD_AUDIT_COUNTS=100000,300000,500000 \
 LOAD_AUDIT_SUPPLIERS=24 \
 LOAD_AUDIT_MIRROR_SEED_LIMIT=20000 \
@@ -57,3 +61,4 @@ npm run audit:load
 - Скрипт використовує synthetic suppliers/rows (`load_audit_supplier_*`).
 - Export/preview API тести у цьому runbook не гоняться через HTTP; перевіряється backend service path напряму.
 - Для production-like staging (непорожня БД) вмикати `LOAD_AUDIT_ALLOW_NONEMPTY_DB=true` тільки у контрольованому вікні.
+- Для production-like staging (непорожня БД) одночасно ставити `LOAD_AUDIT_ALLOW_DESTRUCTIVE=true` тільки на ізольованій staging БД.

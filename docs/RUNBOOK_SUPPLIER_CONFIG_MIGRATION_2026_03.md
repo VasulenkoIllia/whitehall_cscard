@@ -62,7 +62,7 @@ npm run import:legacy-config
 ## 4) Важливі нюанси
 - Під час імпорту `mapping_meta.source_id` автоматично ремапиться на нові `source_id`, щоб не зламати mapping validation.
 - Імпорт не чіпає бізнес-правила пайплайна, тільки переносить конфіг.
-- `global markup default` (`markup_settings`) у новій схемі поки не застосовується автоматично; переноситься тільки те, що явно прив’язано до suppliers.
+- `global markup default` (`markup_settings`) у новій схемі підтримується (`POST /admin/api/markup-rule-sets/default` + fallback при create supplier).
 
 ## 5) Мінімальна перевірка після імпорту
 ```sql

@@ -47,6 +47,21 @@ Auth / env для CS-Cart:
   - не робляться lookup-запити для кожного SKU,
   - незмінені SKU пропускаються,
   - `parent_product_id` резолвиться через індекс (по `parent_product_code`).
+- Scope керування оновленням (implemented, заміна legacy supplier-scope):
+  - у CS-Cart керований асортимент визначається product feature `Оновлення товару API` (`feature_id=564`).
+  - у sync потрапляють тільки SKU, де `product_features["564"].value = "Y"` (case-insensitive).
+  - SKU без цього прапорця ніколи не оновлюються з пайплайна.
+- Missing товарів (implemented): для повного `store_import` (без supplier-фільтра) перед delta-фільтром додаються рядки де:
+  - SKU є в `store_mirror`, входить у керований scope (feature `564=Y`) і має `visibility=true`,
+  - SKU відсутній у поточному `products_final` preview.
+  - Такі SKU відправляються в CS-Cart зі `status=H` (hidden), без видалення.
+  - Якщо SKU зʼявляється знову у постачальника, звичайний preview повертає `visibility=true` і товар оновлюється до `status=A`.
+- Для supplier-scoped запусків (`store-import?supplier=...`) auto-hidden missing SKU не виконується, щоб не ховати товари поза поточним partial-run.
+- Feature-flag: `CSCART_DISABLE_MISSING_ON_FULL_IMPORT` (default `true`), `false` вимикає цей крок.
+- Feature-scope env:
+  - `CSCART_API_UPDATE_FEATURE_ENABLED` (default `true`)
+  - `CSCART_API_UPDATE_FEATURE_ID` (default `564`)
+  - `CSCART_API_UPDATE_FEATURE_VALUE` (default `"Y"`)
 - Додатковий env для throughput: `CSCART_IMPORT_CONCURRENCY` (default `4`), паралелізм worker-ів імпорту поверх rate-limit токен-бакета.
 - Під час імпорту прибрано зайву копію масиву рядків (менше пікового RAM на великих партіях).
 - `store_mirror_sync` працює потоково по сторінках у БД (без накопичення повного snapshot у памʼяті).
@@ -54,6 +69,23 @@ Auth / env для CS-Cart:
   - `POST /admin/api/jobs/store-import`
   - `POST /admin/api/jobs/update-pipeline`
   - повний payload можна отримати через `verbose=true`.
+- Для операторського контролю ефективної дельти:
+  - `GET /admin/api/preview` і `POST /admin/api/store-import` повертають одночасно
+    `previewTotal` (до optimizer) і `batchTotal` (після feature-scope/missing-hide/delta),
+    а також `batchMeta` з деталями фільтрації.
+
+## Дублі `product_code` у CS-Cart (критичний контроль)
+- Якщо у магазині кілька `product_id` з однаковим `product_code`, це конфлікт даних для update-only синку.
+- Для `store_mirror` це не може бути представлено як кілька рядків, бо ключ у таблиці: `(store, article)`.
+- Поточна політика:
+  - `store_mirror_sync` дедуплікує дублікати одного `article` в межах batch upsert (стабільність SQL).
+  - Подальший `store_import` опирається на єдиний mirror-state на SKU.
+- Це не вважається модифікацією автоматично. Для модифікацій очікується зв’язок через `parent_product_id`/варіативну модель, а не дублювання одного `product_code` у кількох товарах верхнього рівня.
+- Операційна вимога перед cutover:
+  - запустити `npm run store:sku-audit` і переконатися, що `duplicate_sku_count = 0`,
+  - спочатку очистити дублікати SKU в адмінці CS-Cart (залишити один canonical товар або розвести коди),
+  - потім виконати `npm run mirror:sync`,
+  - лише після цього запускати `store_import`.
 
 ## Операційна стабільність логів
 - Логи проходять санітизацію і обрізання payload (`LOG_PAYLOAD_MAX_BYTES`, default `32768`).

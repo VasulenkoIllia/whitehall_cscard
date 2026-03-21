@@ -41,6 +41,7 @@ interface AuditReport {
     mirrorSeedLimit: number;
     cleanup: boolean;
     allowNonEmptyDb: boolean;
+    allowDestructive: boolean;
     priceAtImport: boolean;
     finalizeDeleteEnabled: boolean;
   };
@@ -91,10 +92,11 @@ function parseDbHost(databaseUrl: string): string {
   }
 }
 
-async function assertSafeExecution(pool: Pool, allowNonEmptyDb: boolean): Promise<void> {
-  if (allowNonEmptyDb) {
-    return;
-  }
+async function assertSafeExecution(
+  pool: Pool,
+  allowNonEmptyDb: boolean,
+  allowDestructive: boolean
+): Promise<void> {
   const result = await pool.query<{
     suppliers: string;
     raw_rows: string;
@@ -108,9 +110,20 @@ async function assertSafeExecution(pool: Pool, allowNonEmptyDb: boolean): Promis
   const suppliers = Number(result.rows[0]?.suppliers || '0');
   const rawRows = Number(result.rows[0]?.raw_rows || '0');
   const finalRows = Number(result.rows[0]?.final_rows || '0');
-  if (suppliers > 0 || rawRows > 0 || finalRows > 0) {
+  const isEmpty = suppliers <= 0 && rawRows <= 0 && finalRows <= 0;
+  if (isEmpty) {
+    return;
+  }
+
+  if (!allowNonEmptyDb) {
     throw new Error(
       'Database is not empty. Set LOAD_AUDIT_ALLOW_NONEMPTY_DB=true only for controlled staging runs.'
+    );
+  }
+
+  if (!allowDestructive) {
+    throw new Error(
+      'Database is non-empty and load-audit can overwrite products_final. Set LOAD_AUDIT_ALLOW_DESTRUCTIVE=true only in isolated staging DB.'
     );
   }
 }
@@ -274,12 +287,18 @@ async function seedStoreMirror(
        (store, article, supplier, parent_article, visibility, price, raw, synced_at, seen_at)
      SELECT
        'cscart',
-       pf.article,
+       CASE
+         WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
+         WHEN right(lower(pf.article), length(replace(btrim(pf.size), ',', '.'))) =
+              lower(replace(btrim(pf.size), ',', '.'))
+           THEN pf.article
+         ELSE pf.article || '-' || replace(btrim(pf.size), ',', '.')
+       END AS article,
        sp.name AS supplier,
        NULL,
        TRUE,
        COALESCE(po.price_final, pf.price_final),
-       jsonb_build_object('synthetic', TRUE, 'source', 'load_audit', 'finalizeJobId', $1),
+       jsonb_build_object('synthetic', TRUE, 'source', 'load_audit', 'finalizeJobId', $1::bigint),
        NOW(),
        NOW()
      FROM products_final pf
@@ -288,9 +307,9 @@ async function seedStoreMirror(
        ON po.article = pf.article
       AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
       AND po.is_active = TRUE
-     WHERE pf.job_id = $1
+     WHERE pf.job_id = $1::bigint
      ORDER BY pf.id ASC
-     LIMIT $2
+     LIMIT $2::int
      ON CONFLICT (store, article)
        DO UPDATE SET
          supplier = EXCLUDED.supplier,
@@ -357,51 +376,75 @@ async function runScenario(
   scenario: AuditScenario,
   options: { priceAtImport: boolean }
 ): Promise<AuditScenarioResult> {
+  const runStage = async <T>(name: string, action: () => Promise<T>): Promise<T> => {
+    try {
+      return await action();
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      err.message = `[${name}] ${err.message}`;
+      throw err;
+    }
+  };
+
   const importJobId = await createSuccessfulImportJob(pool, scenario.targetRows);
-  const rawRowsInserted = await seedRawRows(pool, {
-    jobId: importJobId,
-    targetRows: scenario.targetRows,
-    supplierCount: scenario.supplierCount,
-    articlePool: scenario.articlePool,
-    priceAtImport: options.priceAtImport
-  });
+  const rawRowsInserted = await runStage('seed_raw_rows', async () =>
+    seedRawRows(pool, {
+      jobId: importJobId,
+      targetRows: scenario.targetRows,
+      supplierCount: scenario.supplierCount,
+      articlePool: scenario.articlePool,
+      priceAtImport: options.priceAtImport
+    })
+  );
 
   const finalizeJobId = await createFinalizeJob(pool, scenario.targetRows);
   try {
     const finalizeStartedAt = process.hrtime.bigint();
-    const finalizeSummary = await services.finalizer.buildFinalDataset(finalizeJobId);
+    const finalizeSummary = await runStage('finalize', async () =>
+      services.finalizer.buildFinalDataset(finalizeJobId)
+    );
     const finalizeDurationMs = toMs(finalizeStartedAt);
-    await markJobFinished(pool, finalizeJobId, {
-      syntheticLoadAudit: true,
-      finalizeSummary
-    });
+    await runStage('mark_finalize_job_finished', async () =>
+      markJobFinished(pool, finalizeJobId, {
+        syntheticLoadAudit: true,
+        finalizeSummary
+      })
+    );
 
     const previewStartedAt = process.hrtime.bigint();
-    const preview = await services.previewProvider.buildNeutralPreview(0, { supplier: null });
+    const preview = await runStage('preview', async () =>
+      services.previewProvider.buildNeutralPreview(0, { supplier: null })
+    );
     const previewDurationMs = toMs(previewStartedAt);
 
-    const mirrorSeeded = await seedStoreMirror(pool, finalizeJobId, scenario.mirrorSeedLimit);
+    const mirrorSeeded = await runStage('seed_store_mirror', async () =>
+      seedStoreMirror(pool, finalizeJobId, scenario.mirrorSeedLimit)
+    );
 
     const compareStartedAt = process.hrtime.bigint();
-    const compare = await services.adminService.listComparePreview({
-      limit: 100,
-      offset: 0,
-      search: null,
-      supplierId: null,
-      missingOnly: false,
-      store: 'cscart'
-    });
+    const compare = await runStage('compare_preview_all', async () =>
+      services.adminService.listComparePreview({
+        limit: 100,
+        offset: 0,
+        search: null,
+        supplierId: null,
+        missingOnly: false,
+        store: 'cscart'
+      })
+    );
     const compareDurationMs = toMs(compareStartedAt);
 
     const compareMissingStartedAt = process.hrtime.bigint();
-    const compareMissing = await services.adminService.listComparePreview({
-      limit: 100,
-      offset: 0,
-      search: null,
-      supplierId: null,
-      missingOnly: true,
-      store: 'cscart'
-    });
+    const compareMissing = await runStage('compare_preview_missing_only', async () =>
+      services.adminService.listComparePreview({
+        limit: 100,
+        offset: 0,
+        search: null,
+        supplierId: null,
+        missingOnly: true,
+        store: 'cscart'
+      })
+    );
     const compareMissingDurationMs = toMs(compareMissingStartedAt);
 
     return {
@@ -441,6 +484,7 @@ async function main(): Promise<void> {
   const mirrorSeedLimit = readPositiveInt('LOAD_AUDIT_MIRROR_SEED_LIMIT', 20000);
   const cleanup = readBoolean('LOAD_AUDIT_CLEANUP', true);
   const allowNonEmptyDb = readBoolean('LOAD_AUDIT_ALLOW_NONEMPTY_DB', false);
+  const allowDestructive = readBoolean('LOAD_AUDIT_ALLOW_DESTRUCTIVE', false);
   const priceAtImport = readBoolean('PRICE_AT_IMPORT', false);
   const finalizeDeleteEnabled = readBoolean('FINALIZE_DELETE_ENABLED', true);
   const outputPath =
@@ -460,7 +504,7 @@ async function main(): Promise<void> {
   let createdSupplierIds: number[] = [];
 
   try {
-    await assertSafeExecution(pool, allowNonEmptyDb);
+    await assertSafeExecution(pool, allowNonEmptyDb, allowDestructive);
     const ensured = await ensureSyntheticSuppliers(pool, supplierCount);
     createdSupplierIds = ensured.insertedIds;
 
@@ -498,6 +542,7 @@ async function main(): Promise<void> {
         mirrorSeedLimit,
         cleanup,
         allowNonEmptyDb,
+        allowDestructive,
         priceAtImport,
         finalizeDeleteEnabled
       },
@@ -523,6 +568,6 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   // eslint-disable-next-line no-console
-  console.error(error instanceof Error ? error.message : error);
+  console.error(error instanceof Error ? error.stack || error.message : error);
   process.exit(1);
 });

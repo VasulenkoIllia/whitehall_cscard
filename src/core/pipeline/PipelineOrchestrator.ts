@@ -102,9 +102,16 @@ export class PipelineOrchestrator<MappedRow = unknown> {
   async runStoreExport(jobId: number, supplier: string | null = null): Promise<StoreExportResult<MappedRow>> {
     const preview = await this.previewProvider.buildNeutralPreview(jobId, { supplier });
     const preparedBatch = await this.connector.createImportBatch(preview.rows);
+    const batchWithMeta: StoreImportBatch<MappedRow> = {
+      ...preparedBatch,
+      meta: {
+        ...preparedBatch.meta,
+        supplier
+      }
+    };
     const batch = this.importBatchOptimizer
-      ? await this.importBatchOptimizer(preparedBatch)
-      : preparedBatch;
+      ? await this.importBatchOptimizer(batchWithMeta)
+      : batchWithMeta;
     return { preview, batch };
   }
 

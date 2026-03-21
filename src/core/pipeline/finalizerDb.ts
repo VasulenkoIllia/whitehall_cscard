@@ -15,7 +15,7 @@ const stageFromPrecomputedSql = `
     FROM products_raw pr
     JOIN suppliers s ON s.id = pr.supplier_id
     WHERE s.is_active = TRUE
-      AND pr.job_id = $2
+      AND pr.job_id = $1
   ),
   filtered AS (
     SELECT DISTINCT ON (r.article, r.size)
@@ -68,7 +68,7 @@ const stageWithFinalizePricingSql = `
       ON active_rs.id = s.markup_rule_set_id
      AND active_rs.is_active = TRUE
     WHERE s.is_active = TRUE
-      AND pr.job_id = $2
+      AND pr.job_id = $1
   ),
   computed AS (
     SELECT
@@ -232,7 +232,7 @@ export class FinalizerDb implements Finalizer {
         createFinalizeStageSql(
           usePrecomputed ? stageFromPrecomputedSql : stageWithFinalizePricingSql
         ),
-        [jobId, importJobId]
+        [importJobId]
       );
       await client.query(
         'CREATE INDEX finalize_stage_article_size_idx ON finalize_stage (article, size)'

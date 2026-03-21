@@ -5,17 +5,31 @@ async function main(): Promise<void> {
   const application = createApplication(process.env);
   const app = createHttpServer(application);
   let server: ReturnType<typeof app.listen> | null = null;
+  let shuttingDown = false;
 
   const shutdown = (signal: NodeJS.Signals): void => {
-    application.scheduler.stop();
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    const finalize = () => {
+      void application
+        .close()
+        .then(() => {
+          // eslint-disable-next-line no-console
+          console.log(JSON.stringify({ signal, shutdown: 'ok' }));
+          process.exit(0);
+        })
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error(err instanceof Error ? err.message : err);
+          process.exit(1);
+        });
+    };
     if (server) {
-      server.close(() => {
-        // eslint-disable-next-line no-console
-        console.log(JSON.stringify({ signal, shutdown: 'ok' }));
-        process.exit(0);
-      });
+      server.close(finalize);
     } else {
-      process.exit(0);
+      finalize();
     }
     setTimeout(() => {
       process.exit(0);

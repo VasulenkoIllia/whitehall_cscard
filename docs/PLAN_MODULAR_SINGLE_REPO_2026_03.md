@@ -58,7 +58,7 @@
 - `sources`: in progress (CRUD API ready)
 - `mappings`: in progress (latest get/save API ready, `comment` field support added)
 - `source-sheets/source-preview`: in progress (API ready for mapping flow)
-- `markup rule sets`: in progress (list/create/update/apply API ready)
+- `markup rule sets`: in progress (list/create/update/default/apply API ready, `markup_settings` wired)
 - `price overrides`: in progress (list/upsert/update API ready)
 - `stats/logs/read parity`: in progress (`/admin/api/logs`, `/admin/api/stats` ready)
 - `preview/export parity`: in progress (`merged/final/compare` preview + CSV export API ready)
@@ -76,6 +76,9 @@
 - підтвердити виробничу стабільність під цільовим обсягом.
 
 Обов’язково:
+- data-integrity gate перед store import:
+  - відсутність дубльованих SKU (`product_code`) у CS-Cart;
+  - контрольний `store_mirror_sync` після cleanup дублів;
 - staged load tests: 100k / 300k / 500k
 - вимірювання throughput:
   - import rows/sec
@@ -89,6 +92,8 @@
 
 Поточний статус:
 - scripted load-audit контур додано (`npm run audit:load`, `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`)
+- readiness preflight snapshot додано (`npm run backend:readiness`, `GET /admin/api/backend-readiness`)
+- SKU duplicate audit додано (`npm run store:sku-audit`)
 - лишається прогін на staging і фіксація фактичного tuning baseline
 
 ### Phase 5: Migration cutover readiness
@@ -114,7 +119,7 @@
   - warnings density.
 
 ## Короткий execution plan на найближчі кроки
-1. Закрити parity по default markup semantics (`markup-rule-sets/default` / `markup_settings` equivalent).
+1. Виконати data-integrity preflight для CS-Cart на target store: `store:sku-audit` -> cleanup дублів у магазині (якщо є) -> `mirror:sync` -> `backend:readiness`.
 2. Додати інтеграційні тести на mapping/dedup/override/resume інваріанти.
 3. Прогнати staged load tests та зафіксувати tuning-профіль у runbook.
 4. Провести тестовий перенос legacy supplier config (WHITE HALL, sevrukov) і валідацію імпорту.

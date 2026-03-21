@@ -498,6 +498,21 @@ export function createHttpServer(appContext: AppContext) {
   );
 
   app.post(
+    '/admin/api/markup-rule-sets/default',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const result = await catalogAdmin.setDefaultMarkupRuleSet(req.body || {});
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'markup_rule_set_default_error') });
+      }
+    }
+  );
+
+  app.post(
     '/admin/api/markup-rule-sets/apply',
     authMw.requireRole('admin'),
     async (req: Request, res: Response) => {
@@ -570,10 +585,14 @@ export function createHttpServer(appContext: AppContext) {
     const supplier = typeof req.query.supplier === 'string' ? req.query.supplier : null;
     try {
       const preview = await pipeline.runStoreExport(0, supplier);
+      const batchRows = Array.isArray(preview.batch.rows) ? preview.batch.rows.length : 0;
       res.json({
         store: appContext.connector.store,
         total: preview.preview.total,
+        previewTotal: preview.preview.total,
+        batchTotal: batchRows,
         supplier: preview.preview.supplier,
+        batchMeta: preview.batch.meta || null,
         sample: preview.preview.rows.slice(0, 10)
       });
     } catch (err) {
@@ -836,13 +855,19 @@ export function createHttpServer(appContext: AppContext) {
     const supplier = typeof req.body?.supplier === 'string' ? req.body.supplier : null;
     try {
       const execution = await jobRunner.runStoreImport(supplier, readStoreImportRunOptions(req));
+      const batchTotal = Array.isArray(execution.result.batch?.rows)
+        ? execution.result.batch.rows.length
+        : null;
       res.json({
         jobId: execution.jobId,
         store: appContext.connector.store,
         imported: execution.result.importResult.imported,
         skipped: execution.result.importResult.skipped,
         warnings: execution.result.importResult.warnings,
-        total: execution.result.preview.total
+        total: execution.result.preview.total,
+        previewTotal: execution.result.preview.total,
+        batchTotal,
+        batchMeta: execution.result.batch?.meta || null
       });
     } catch (err) {
       res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'store_import_error') });
@@ -877,6 +902,28 @@ export function createHttpServer(appContext: AppContext) {
       return res
         .status(readErrorStatus(err))
         .json({ error: readErrorMessage(err, 'stats_error') });
+    }
+  });
+
+  app.get('/admin/api/backend-readiness', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
+      const maxMirrorAgeMinutesRaw =
+        typeof req.query.maxMirrorAgeMinutes === 'string'
+          ? Number(req.query.maxMirrorAgeMinutes)
+          : NaN;
+      const maxMirrorAgeMinutes = Number.isFinite(maxMirrorAgeMinutesRaw)
+        ? Math.max(1, Math.trunc(maxMirrorAgeMinutesRaw))
+        : 120;
+      const result = await catalogAdmin.getBackendReadiness({
+        store,
+        maxMirrorAgeMinutes
+      });
+      return res.json(result);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'backend_readiness_error') });
     }
   });
 

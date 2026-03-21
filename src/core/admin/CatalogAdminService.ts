@@ -97,6 +97,11 @@ type ComparePreviewOptions = {
   store: string;
 };
 
+type BackendReadinessOptions = {
+  store: string;
+  maxMirrorAgeMinutes: number;
+};
+
 function createBadRequest(message: string): Error {
   const error = new Error(message);
   (error as any).status = 400;
@@ -229,6 +234,76 @@ export class CatalogAdminService {
     return jobId;
   }
 
+  private async getGlobalMarkupRuleSetId(): Promise<number | null> {
+    try {
+      const result = await this.pool.query(
+        `SELECT global_rule_set_id
+         FROM markup_settings
+         WHERE id = 1
+         LIMIT 1`
+      );
+      const parsed = Number(result.rows[0]?.global_rule_set_id || 0);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return null;
+      }
+      return Math.trunc(parsed);
+    } catch (err) {
+      if ((err as any)?.code === '42P01') {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  private async setGlobalMarkupRuleSetId(ruleSetId: number): Promise<void> {
+    try {
+      await this.pool.query(
+        `INSERT INTO markup_settings (id, global_rule_set_id, updated_at)
+         VALUES (1, $1, NOW())
+         ON CONFLICT (id) DO UPDATE
+         SET global_rule_set_id = EXCLUDED.global_rule_set_id,
+             updated_at = NOW()`,
+        [ruleSetId]
+      );
+    } catch (err) {
+      if ((err as any)?.code === '42P01') {
+        throw createBadRequest('markup_settings is not initialized, run migrations');
+      }
+      throw err;
+    }
+  }
+
+  private async resolveDefaultMarkupRuleSetId(): Promise<number | null> {
+    const globalRuleSetId = await this.getGlobalMarkupRuleSetId();
+    if (globalRuleSetId) {
+      const globalRuleSet = await this.pool.query(
+        `SELECT id
+         FROM markup_rule_sets
+         WHERE id = $1
+           AND is_active = TRUE
+         LIMIT 1`,
+        [globalRuleSetId]
+      );
+      if (globalRuleSet.rows[0]) {
+        return globalRuleSetId;
+      }
+    }
+
+    const firstActiveRuleSet = await this.pool.query(
+      `SELECT id
+       FROM markup_rule_sets
+       WHERE is_active = TRUE
+       ORDER BY id ASC
+       LIMIT 1`
+    );
+    const fallbackRuleSetId = Number(firstActiveRuleSet.rows[0]?.id || 0);
+    if (!Number.isFinite(fallbackRuleSetId) || fallbackRuleSetId <= 0) {
+      return null;
+    }
+    await this.setGlobalMarkupRuleSetId(Math.trunc(fallbackRuleSetId));
+    return Math.trunc(fallbackRuleSetId);
+  }
+
   async listSuppliers(options: SupplierListOptions): Promise<Record<string, unknown>[]> {
     const search = String(options.search || '').trim();
     const values: unknown[] = [];
@@ -303,6 +378,8 @@ export class CatalogAdminService {
         }
         markupRuleSetId = normalized;
       }
+    } else {
+      markupRuleSetId = await this.resolveDefaultMarkupRuleSetId();
     }
 
     const result = await this.pool.query(
@@ -693,7 +770,7 @@ export class CatalogAdminService {
     return result.rows[0];
   }
 
-  async listMarkupRuleSets(): Promise<{ rule_sets: Record<string, unknown>[] }> {
+  async listMarkupRuleSets(): Promise<{ rule_sets: Record<string, unknown>[]; global_rule_set_id: number | null }> {
     const [setsResult, conditionsResult] = await Promise.all([
       this.pool.query(
         `SELECT id, name, is_active, created_at
@@ -717,11 +794,13 @@ export class CatalogAdminService {
       groupedConditions.get(ruleSetId)?.push(row);
     }
 
+    const globalRuleSetId = await this.getGlobalMarkupRuleSetId();
     return {
       rule_sets: setsResult.rows.map((set) => ({
         ...set,
         conditions: groupedConditions.get(Number(set.id || 0)) || []
-      }))
+      })),
+      global_rule_set_id: globalRuleSetId
     };
   }
 
@@ -729,7 +808,7 @@ export class CatalogAdminService {
     name?: string;
     is_active?: boolean;
     conditions?: MarkupConditionInput[];
-  }): Promise<{ rule_set: Record<string, unknown> | null }> {
+  }): Promise<{ rule_set: Record<string, unknown> | null; global_rule_set_id: number | null }> {
     const name = String(payload.name || '').trim();
     if (!name) {
       throw createBadRequest('name is required');
@@ -770,7 +849,7 @@ export class CatalogAdminService {
       const payloadResult = await this.listMarkupRuleSets();
       const ruleSet =
         payloadResult.rule_sets.find((item) => Number(item.id || 0) === ruleSetId) || null;
-      return { rule_set: ruleSet };
+      return { rule_set: ruleSet, global_rule_set_id: payloadResult.global_rule_set_id };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -786,7 +865,7 @@ export class CatalogAdminService {
       is_active?: boolean;
       conditions?: MarkupConditionInput[];
     }
-  ): Promise<{ rule_set: Record<string, unknown> | null }> {
+  ): Promise<{ rule_set: Record<string, unknown> | null; global_rule_set_id: number | null }> {
     const normalizedRuleSetId = Math.trunc(Number(ruleSetId));
     if (!Number.isFinite(normalizedRuleSetId) || normalizedRuleSetId <= 0) {
       throw createBadRequest('rule set id is invalid');
@@ -842,7 +921,7 @@ export class CatalogAdminService {
       const ruleSet =
         payloadResult.rule_sets.find((item) => Number(item.id || 0) === normalizedRuleSetId) ||
         null;
-      return { rule_set: ruleSet };
+      return { rule_set: ruleSet, global_rule_set_id: payloadResult.global_rule_set_id };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -855,7 +934,7 @@ export class CatalogAdminService {
     scope?: string;
     rule_set_id?: number;
     supplier_ids?: Array<number | string>;
-  }): Promise<{ scope: string; updated_suppliers: number }> {
+  }): Promise<{ scope: string; updated_suppliers: number; global_rule_set_id: number | null }> {
     const scope = String(payload.scope || '').trim();
     if (scope !== 'suppliers' && scope !== 'all_suppliers') {
       throw createBadRequest('scope is invalid');
@@ -893,9 +972,11 @@ export class CatalogAdminService {
          RETURNING id`,
         [ruleSetId, supplierIds]
       );
+      const globalRuleSetId = await this.getGlobalMarkupRuleSetId();
       return {
         scope,
-        updated_suppliers: updated.rowCount || 0
+        updated_suppliers: updated.rowCount || 0,
+        global_rule_set_id: globalRuleSetId
       };
     }
 
@@ -905,9 +986,35 @@ export class CatalogAdminService {
        RETURNING id`,
       [ruleSetId]
     );
+    const globalRuleSetId = await this.getGlobalMarkupRuleSetId();
     return {
       scope,
-      updated_suppliers: updated.rowCount || 0
+      updated_suppliers: updated.rowCount || 0,
+      global_rule_set_id: globalRuleSetId
+    };
+  }
+
+  async setDefaultMarkupRuleSet(payload: { rule_set_id?: number }): Promise<{ global_rule_set_id: number }> {
+    const normalizedRuleSetId = Math.trunc(Number(payload.rule_set_id));
+    if (!Number.isFinite(normalizedRuleSetId) || normalizedRuleSetId <= 0) {
+      throw createBadRequest('rule_set_id is required');
+    }
+    const existingRuleSet = await this.pool.query(
+      `SELECT id, is_active
+       FROM markup_rule_sets
+       WHERE id = $1
+       LIMIT 1`,
+      [normalizedRuleSetId]
+    );
+    if (!existingRuleSet.rows[0]) {
+      throw createNotFound('rule set not found');
+    }
+    if (existingRuleSet.rows[0].is_active !== true) {
+      throw createBadRequest('rule set is inactive');
+    }
+    await this.setGlobalMarkupRuleSetId(normalizedRuleSetId);
+    return {
+      global_rule_set_id: normalizedRuleSetId
     };
   }
 
@@ -1196,6 +1303,230 @@ export class CatalogAdminService {
             duration_ms: computeDurationMs(lastImport.started_at, lastImport.finished_at)
           }
         : null
+    };
+  }
+
+  async getBackendReadiness(
+    options: BackendReadinessOptions
+  ): Promise<Record<string, unknown>> {
+    const store = String(options.store || 'cscart').trim().toLowerCase() || 'cscart';
+    const maxMirrorAgeMinutes = Number.isFinite(options.maxMirrorAgeMinutes)
+      ? Math.max(1, Math.trunc(options.maxMirrorAgeMinutes))
+      : 120;
+
+    const [
+      rawRowsResult,
+      rawJobsResult,
+      rawOldestResult,
+      finalRowsResult,
+      logsRowsResult,
+      jobsRowsResult,
+      mirrorResult,
+      coverageResult,
+      importAllResult,
+      finalizeResult,
+      mirrorSyncResult,
+      storeImportResult,
+      runningResult
+    ] = await Promise.all([
+      this.pool.query(`SELECT COUNT(*)::bigint::text AS count FROM products_raw`),
+      this.pool.query(`SELECT COUNT(DISTINCT job_id)::bigint::text AS count FROM products_raw`),
+      this.pool.query(`SELECT MIN(created_at)::text AS oldest FROM products_raw`),
+      this.pool.query(`SELECT COUNT(*)::bigint::text AS count FROM products_final`),
+      this.pool.query(`SELECT COUNT(*)::bigint::text AS count FROM logs`),
+      this.pool.query(`SELECT COUNT(*)::bigint::text AS count FROM jobs`),
+      this.pool.query(
+        `SELECT
+           COUNT(*)::bigint::text AS rows,
+           MAX(seen_at)::text AS max_seen_at,
+           EXTRACT(EPOCH FROM (NOW() - MAX(seen_at))) / 60 AS age_minutes
+         FROM store_mirror
+         WHERE store = $1`,
+        [store]
+      ),
+      this.pool.query(
+        `WITH base AS (
+           SELECT
+             CASE
+               WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
+               WHEN right(lower(pf.article), length(replace(btrim(pf.size), ',', '.'))) =
+                    lower(replace(btrim(pf.size), ',', '.'))
+                 THEN pf.article
+               ELSE pf.article || '-' || replace(btrim(pf.size), ',', '.')
+             END AS sku_article
+           FROM products_final pf
+         )
+         SELECT
+           COUNT(*)::bigint::text AS total,
+           COUNT(*) FILTER (WHERE sm.article IS NOT NULL)::bigint::text AS matched
+         FROM base b
+         LEFT JOIN store_mirror sm
+           ON sm.store = $1
+          AND sm.article = b.sku_article`,
+        [store]
+      ),
+      this.pool.query(
+        `SELECT id, status, created_at, started_at, finished_at, meta
+         FROM jobs
+         WHERE type = 'import_all'
+           AND status = 'success'
+         ORDER BY id DESC
+         LIMIT 1`
+      ),
+      this.pool.query(
+        `SELECT id, status, created_at, started_at, finished_at, meta
+         FROM jobs
+         WHERE type = 'finalize'
+           AND status = 'success'
+         ORDER BY id DESC
+         LIMIT 1`
+      ),
+      this.pool.query(
+        `SELECT id, status, created_at, started_at, finished_at, meta
+         FROM jobs
+         WHERE type = 'store_mirror_sync'
+           AND status = 'success'
+         ORDER BY id DESC
+         LIMIT 1`
+      ),
+      this.pool.query(
+        `SELECT id, status, created_at, started_at, finished_at, meta
+         FROM jobs
+         WHERE type = 'store_import'
+         ORDER BY id DESC
+         LIMIT 1`
+      ),
+      this.pool.query(
+        `SELECT id, type, created_at
+         FROM jobs
+         WHERE status = 'running'
+           AND type = ANY($1::text[])
+         ORDER BY id DESC`,
+        [['update_pipeline', 'import_all', 'import_source', 'import_supplier', 'finalize', 'store_import', 'cleanup', 'store_mirror_sync']]
+      )
+    ]);
+
+    let schedulerKnown = true;
+    let schedulerRows: Array<Record<string, unknown>> = [];
+    try {
+      const schedulerResult = await this.pool.query(
+        `SELECT
+           name,
+           is_enabled,
+           interval_minutes,
+           run_on_startup,
+           updated_at
+         FROM cron_settings
+         ORDER BY name ASC`
+      );
+      schedulerRows = schedulerResult.rows;
+    } catch (err) {
+      if ((err as any)?.code === '42P01') {
+        schedulerKnown = false;
+        schedulerRows = [];
+      } else {
+        throw err;
+      }
+    }
+
+    const rawRows = Number(rawRowsResult.rows[0]?.count || 0);
+    const rawJobs = Number(rawJobsResult.rows[0]?.count || 0);
+    const finalRows = Number(finalRowsResult.rows[0]?.count || 0);
+    const logsRows = Number(logsRowsResult.rows[0]?.count || 0);
+    const jobsRows = Number(jobsRowsResult.rows[0]?.count || 0);
+    const rawOldestCreatedAt = rawOldestResult.rows[0]?.oldest || null;
+
+    const mirrorRows = Number(mirrorResult.rows[0]?.rows || 0);
+    const mirrorMaxSeenAt = mirrorResult.rows[0]?.max_seen_at || null;
+    const mirrorAgeRaw = mirrorResult.rows[0]?.age_minutes;
+    const mirrorAgeMinutes =
+      mirrorAgeRaw === null || typeof mirrorAgeRaw === 'undefined'
+        ? null
+        : Number(mirrorAgeRaw);
+    const mirrorFresh =
+      mirrorRows > 0 &&
+      mirrorAgeMinutes !== null &&
+      Number.isFinite(mirrorAgeMinutes) &&
+      mirrorAgeMinutes <= maxMirrorAgeMinutes;
+
+    const coverageTotal = Number(coverageResult.rows[0]?.total || 0);
+    const coverageMatched = Number(coverageResult.rows[0]?.matched || 0);
+    const coverageMissing = Math.max(0, coverageTotal - coverageMatched);
+    const coverageMatchedPercent =
+      coverageTotal > 0 ? Number(((coverageMatched * 100) / coverageTotal).toFixed(2)) : 0;
+
+    const cleanupTask =
+      schedulerRows.find((row) => String(row.name || '') === 'cleanup') || null;
+    const cleanupEnabled = cleanupTask ? cleanupTask.is_enabled === true : false;
+
+    const runningBlockingJobs = runningResult.rows.map((row) => ({
+      id: Number(row.id || 0),
+      type: String(row.type || ''),
+      created_at: row.created_at
+    }));
+
+    const hasImportAll = Boolean(importAllResult.rows[0]);
+    const hasFinalize = Boolean(finalizeResult.rows[0]);
+    const hasMirror = mirrorRows > 0;
+    const noBlockingJobs = runningBlockingJobs.length === 0;
+
+    return {
+      generated_at: new Date().toISOString(),
+      store,
+      mirror: {
+        rows: mirrorRows,
+        max_seen_at: mirrorMaxSeenAt,
+        age_minutes: mirrorAgeMinutes,
+        max_allowed_age_minutes: maxMirrorAgeMinutes,
+        is_fresh: mirrorFresh
+      },
+      coverage: {
+        total_final_rows: coverageTotal,
+        matched_in_store: coverageMatched,
+        missing_in_store: coverageMissing,
+        matched_percent: coverageMatchedPercent
+      },
+      data_volume: {
+        products_raw_rows: rawRows,
+        products_raw_job_ids: rawJobs,
+        products_raw_oldest_created_at: rawOldestCreatedAt,
+        products_final_rows: finalRows,
+        logs_rows: logsRows,
+        jobs_rows: jobsRows
+      },
+      jobs: {
+        last_import_all_success: importAllResult.rows[0] || null,
+        last_finalize_success: finalizeResult.rows[0] || null,
+        last_store_mirror_sync_success: mirrorSyncResult.rows[0] || null,
+        last_store_import: storeImportResult.rows[0] || null,
+        running_blocking_jobs: runningBlockingJobs
+      },
+      scheduler: {
+        known: schedulerKnown,
+        cleanup_enabled: cleanupEnabled,
+        tasks: schedulerRows
+      },
+      gates: {
+        has_import_all_success: hasImportAll,
+        has_finalize_success: hasFinalize,
+        has_mirror_snapshot: hasMirror,
+        mirror_is_fresh: mirrorFresh,
+        cleanup_enabled: cleanupEnabled,
+        no_blocking_jobs: noBlockingJobs,
+        ready_for_store_import:
+          hasImportAll &&
+          hasFinalize &&
+          hasMirror &&
+          mirrorFresh &&
+          noBlockingJobs,
+        ready_for_continuous_runs:
+          hasImportAll &&
+          hasFinalize &&
+          hasMirror &&
+          mirrorFresh &&
+          noBlockingJobs &&
+          cleanupEnabled
+      }
     };
   }
 

@@ -10,6 +10,8 @@
 - `RUNBOOK_FINALIZE_STABILITY_2026_03.md` — ранбук стабілізації етапу finalize.
 - `RUNBOOK_LOAD_AUDIT_2026_03.md` — сценарій контрольованого load-аудиту 100k/300k/500k.
 - `RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md` — вигрузка/перенос supplier config зі старої БД у нову для тестування parity.
+- `RUNBOOK_SAFE_BACKEND_TEST_NO_STORE_WRITE_2026_03.md` — покроковий тест пайплайна без запису в магазин (тільки local DB + read-only compare).
+- `RUNBOOK_BACKEND_CUTOVER_CHECKLIST_2026_03.md` — preflight-гейти готовності backend перед production store import.
 - `README_FEED_EXTENSION.md` — розширення імпорту фідів.
 - `ARCHITECTURE_BASELINE_2026_03.md` — що вже закладено в `whitehall_cscard` після рев’ю документації та як це мапиться на legacy-код.
 - `CSCART_CONNECTOR_NOTES.md` — конспект CS-Cart REST API та мапінг під наш нейтральний preview.
@@ -26,6 +28,7 @@
 Швидкий доступ / auth:
 - Стратегія зараз `AUTH_STRATEGY=env` (мінімальна), користувачі задаються в `.env` через `AUTH_USERS_JSON`.
 - За замовчуванням додано admin: логін `admin@example.com` **або** короткий `admin`, пароль `admin` (хеш — bcrypt). Логін-форма приймає email або короткий логін.
+- Для локального запуску через `source .env` значення `AUTH_USERS_JSON` має бути в одинарних лапках (`'[...]'`), інакше shell зламає bcrypt-хеш із символом `$`.
 
 ## Посилання на вихідний код бізнес-логіки (Horoshop проєкт)
 - Імпорт постачальників/джерел: `/Users/monstermac/WebstormProjects/whitehall.store_integration/src/services/importService.js`

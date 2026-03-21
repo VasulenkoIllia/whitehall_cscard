@@ -123,20 +123,83 @@ function createImportBatchOptimizer(
     env.CSCART_DELTA_MAX_MIRROR_AGE_MINUTES,
     120
   );
+  const disableMissingOnFullImport =
+    String(env.CSCART_DISABLE_MISSING_ON_FULL_IMPORT || 'true').toLowerCase() !== 'false';
+  const featureScopeEnabled =
+    String(env.CSCART_API_UPDATE_FEATURE_ENABLED || 'true').toLowerCase() !== 'false';
+  const featureScopeId = String(readEnvPositiveInt(env.CSCART_API_UPDATE_FEATURE_ID, 564));
+  const featureScopeValue = String(env.CSCART_API_UPDATE_FEATURE_VALUE || 'Y').trim() || 'Y';
 
   return async (batch: StoreImportBatch<unknown>): Promise<StoreImportBatch<unknown>> => {
     if (batch.store !== 'cscart') {
       return batch;
     }
     const rows = batch.rows as CsCartImportRow[];
-    const delta = await storeMirrorService.filterCsCartDelta(rows, maxMirrorAgeMinutes);
+    const supplierRaw = (batch.meta as Record<string, unknown>)?.supplier;
+    const supplierFilter =
+      typeof supplierRaw === 'string' && supplierRaw.trim().length > 0 ? supplierRaw.trim() : null;
+
+    let scopedRows = rows;
+    let managedCodes: Set<string> | null = null;
+    let featureScopeSummary: unknown;
+
+    if (featureScopeEnabled) {
+      const scoped = await storeMirrorService.filterCsCartRowsByFeature(
+        rows,
+        maxMirrorAgeMinutes,
+        featureScopeId,
+        featureScopeValue
+      );
+      scopedRows = scoped.rows as CsCartImportRow[];
+      managedCodes = scoped.managedCodes;
+      featureScopeSummary = scoped.summary;
+    } else {
+      featureScopeSummary = {
+        enabled: false,
+        reason: 'disabled_by_env',
+        featureId: featureScopeId,
+        expectedValue: featureScopeValue,
+        inputTotal: rows.length,
+        matchedInput: rows.length,
+        droppedInput: 0
+      };
+    }
+
+    let rowsForDelta: CsCartImportRow[] = scopedRows;
+    let deactivateMissingSummary: unknown;
+
+    if (disableMissingOnFullImport && !supplierFilter) {
+      const deactivateMissing = await storeMirrorService.appendCsCartMissingAsHidden(
+        scopedRows,
+        maxMirrorAgeMinutes,
+        { managedCodes }
+      );
+      rowsForDelta = deactivateMissing.rows as CsCartImportRow[];
+      deactivateMissingSummary = deactivateMissing.summary;
+    } else {
+      deactivateMissingSummary = {
+        enabled: false,
+        reason: disableMissingOnFullImport ? 'supplier_filtered' : 'disabled_by_env',
+        supplier: supplierFilter,
+        inputTotal: scopedRows.length,
+        appended: 0
+      };
+    }
+
+    const delta = await storeMirrorService.filterCsCartDelta(rowsForDelta, maxMirrorAgeMinutes);
     return {
       ...batch,
       rows: delta.rows as unknown[],
       meta: {
         ...batch.meta,
+        featureScope: featureScopeSummary,
+        deactivateMissing: deactivateMissingSummary,
         delta: delta.summary,
-        totalBeforeDelta: rows.length,
+        totalBeforeFeatureScope: rows.length,
+        totalAfterFeatureScope: scopedRows.length,
+        totalBeforeDeactivateMissing: scopedRows.length,
+        totalAfterDeactivateMissing: rowsForDelta.length,
+        totalBeforeDelta: rowsForDelta.length,
         totalAfterDelta: delta.rows.length
       }
     };
@@ -157,6 +220,7 @@ export interface Application {
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
   auth: AuthService;
+  close: () => Promise<void>;
 }
 
 export function createApplication(env: Record<string, string | undefined>): Application {
@@ -243,6 +307,10 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     cleanupService,
     storeMirrorService,
     auth,
+    close: async (): Promise<void> => {
+      scheduler.stop();
+      await pool.end();
+    },
     migrationTargets: [
       `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,
       `${LEGACY_ROOT}/src/services/finalizeService.js -> src/core/pipeline`,

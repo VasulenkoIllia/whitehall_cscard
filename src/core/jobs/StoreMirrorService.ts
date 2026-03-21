@@ -27,6 +27,32 @@ export interface CsCartDeltaSummary {
   unresolvedParent: number;
 }
 
+export interface CsCartMissingDeactivationSummary {
+  enabled: boolean;
+  reason: 'ok' | 'mirror_empty' | 'mirror_stale';
+  maxMirrorAgeMinutes: number;
+  mirrorAgeMinutes: number | null;
+  inputTotal: number;
+  mirrorTotal: number;
+  activeInMirror: number;
+  missingInFinal: number;
+  appended: number;
+}
+
+export interface CsCartFeatureScopeSummary {
+  enabled: boolean;
+  reason: 'ok' | 'mirror_empty' | 'mirror_stale';
+  featureId: string;
+  expectedValue: string;
+  maxMirrorAgeMinutes: number;
+  mirrorAgeMinutes: number | null;
+  inputTotal: number;
+  mirrorTotal: number;
+  managedInMirror: number;
+  matchedInput: number;
+  droppedInput: number;
+}
+
 interface StoreMirrorRow {
   store: ActiveStore;
   article: string;
@@ -46,6 +72,11 @@ interface CsCartMirrorStateRow {
   price: string | number | null;
   parentProductId: string | null;
   productId: string | null;
+}
+
+interface CsCartMirrorFreshnessRow {
+  ageMinutes: string | null;
+  totalRows: string;
 }
 
 function normalizeArticle(value: unknown): string {
@@ -85,11 +116,39 @@ function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): Store
   };
 }
 
+function dedupeMirrorRows(rows: StoreMirrorRow[]): StoreMirrorRow[] {
+  if (!rows.length) {
+    return rows;
+  }
+  const byArticle = new Map<string, StoreMirrorRow>();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    byArticle.set(row.article, row);
+  }
+  return Array.from(byArticle.values());
+}
+
 export class StoreMirrorService {
   constructor(private readonly pool: Pool) {}
 
   createSyncMarker(now: Date = new Date()): string {
     return now.toISOString();
+  }
+
+  private async getCsCartMirrorFreshness(): Promise<{ ageMinutes: number | null; totalRows: number }> {
+    const freshnessResult = await this.pool.query<CsCartMirrorFreshnessRow>(
+      `SELECT
+         EXTRACT(EPOCH FROM (NOW() - MAX(seen_at))) / 60 AS "ageMinutes",
+         COUNT(*)::text AS "totalRows"
+       FROM store_mirror
+       WHERE store = 'cscart'`
+    );
+
+    const ageRaw = freshnessResult.rows[0]?.ageMinutes;
+    return {
+      ageMinutes: ageRaw === null ? null : Number(ageRaw),
+      totalRows: Number(freshnessResult.rows[0]?.totalRows || '0')
+    };
   }
 
   async filterCsCartDelta(
@@ -100,17 +159,9 @@ export class StoreMirrorService {
       ? Math.max(1, Math.trunc(maxMirrorAgeMinutes))
       : 120;
     const total = rows.length;
-
-    const freshnessResult = await this.pool.query<{ ageMinutes: string | null; totalRows: string }>(
-      `SELECT
-         EXTRACT(EPOCH FROM (NOW() - MAX(seen_at))) / 60 AS "ageMinutes",
-         COUNT(*)::text AS "totalRows"
-       FROM store_mirror
-       WHERE store = 'cscart'`
-    );
-    const ageRaw = freshnessResult.rows[0]?.ageMinutes;
-    const ageMinutes = ageRaw === null ? null : Number(ageRaw);
-    const mirrorRowsCount = Number(freshnessResult.rows[0]?.totalRows || '0');
+    const freshness = await this.getCsCartMirrorFreshness();
+    const ageMinutes = freshness.ageMinutes;
+    const mirrorRowsCount = freshness.totalRows;
 
     if (!mirrorRowsCount) {
       return {
@@ -244,13 +295,267 @@ export class StoreMirrorService {
     };
   }
 
+  async filterCsCartRowsByFeature(
+    rows: CsCartDeltaInputRow[],
+    maxMirrorAgeMinutes: number,
+    featureId: string,
+    expectedValue: string
+  ): Promise<{
+    rows: CsCartDeltaInputRow[];
+    managedCodes: Set<string>;
+    summary: CsCartFeatureScopeSummary;
+  }> {
+    const safeMaxAge = Number.isFinite(maxMirrorAgeMinutes)
+      ? Math.max(1, Math.trunc(maxMirrorAgeMinutes))
+      : 120;
+    const normalizedFeatureId = String(featureId || '').trim();
+    const normalizedExpected = String(expectedValue || '').trim().toLowerCase();
+    const inputTotal = rows.length;
+    const freshness = await this.getCsCartMirrorFreshness();
+    const ageMinutes = freshness.ageMinutes;
+    const mirrorRowsCount = freshness.totalRows;
+
+    if (!mirrorRowsCount) {
+      return {
+        rows: [],
+        managedCodes: new Set<string>(),
+        summary: {
+          enabled: false,
+          reason: 'mirror_empty',
+          featureId: normalizedFeatureId,
+          expectedValue,
+          maxMirrorAgeMinutes: safeMaxAge,
+          mirrorAgeMinutes: ageMinutes,
+          inputTotal,
+          mirrorTotal: mirrorRowsCount,
+          managedInMirror: 0,
+          matchedInput: 0,
+          droppedInput: inputTotal
+        }
+      };
+    }
+
+    if (ageMinutes !== null && ageMinutes > safeMaxAge) {
+      return {
+        rows: [],
+        managedCodes: new Set<string>(),
+        summary: {
+          enabled: false,
+          reason: 'mirror_stale',
+          featureId: normalizedFeatureId,
+          expectedValue,
+          maxMirrorAgeMinutes: safeMaxAge,
+          mirrorAgeMinutes: ageMinutes,
+          inputTotal,
+          mirrorTotal: mirrorRowsCount,
+          managedInMirror: 0,
+          matchedInput: 0,
+          droppedInput: inputTotal
+        }
+      };
+    }
+
+    const managedCodes = new Set<string>();
+    if (normalizedFeatureId) {
+      const mirrorResult = await this.pool.query<{ article: string; raw: unknown }>(
+        `SELECT article, raw
+         FROM store_mirror
+         WHERE store = 'cscart'`
+      );
+
+      for (let index = 0; index < mirrorResult.rows.length; index += 1) {
+        const row = mirrorResult.rows[index];
+        const article = normalizeArticle(row.article);
+        if (!article) {
+          continue;
+        }
+        const raw = row.raw as Record<string, unknown> | null;
+        const features =
+          raw && typeof raw === 'object' && !Array.isArray(raw)
+            ? (raw.product_features as Record<string, unknown> | undefined)
+            : undefined;
+        const featureRaw =
+          features && typeof features === 'object' && !Array.isArray(features)
+            ? (features[normalizedFeatureId] as Record<string, unknown> | undefined)
+            : undefined;
+        const featureValue = String(featureRaw?.value || '').trim().toLowerCase();
+        if (!featureValue) {
+          continue;
+        }
+        if (featureValue === normalizedExpected) {
+          managedCodes.add(article);
+        }
+      }
+    }
+
+    const filteredRows = rows.filter((row) => managedCodes.has(normalizeArticle(row.productCode)));
+    return {
+      rows: filteredRows,
+      managedCodes,
+      summary: {
+        enabled: true,
+        reason: 'ok',
+        featureId: normalizedFeatureId,
+        expectedValue,
+        maxMirrorAgeMinutes: safeMaxAge,
+        mirrorAgeMinutes: ageMinutes,
+        inputTotal,
+        mirrorTotal: mirrorRowsCount,
+        managedInMirror: managedCodes.size,
+        matchedInput: filteredRows.length,
+        droppedInput: Math.max(0, inputTotal - filteredRows.length)
+      }
+    };
+  }
+
+  async appendCsCartMissingAsHidden(
+    rows: CsCartDeltaInputRow[],
+    maxMirrorAgeMinutes: number,
+    options?: { managedCodes?: Set<string> | null }
+  ): Promise<{ rows: CsCartDeltaInputRow[]; summary: CsCartMissingDeactivationSummary }> {
+    const safeMaxAge = Number.isFinite(maxMirrorAgeMinutes)
+      ? Math.max(1, Math.trunc(maxMirrorAgeMinutes))
+      : 120;
+    const inputTotal = rows.length;
+    const freshness = await this.getCsCartMirrorFreshness();
+    const ageMinutes = freshness.ageMinutes;
+    const mirrorRowsCount = freshness.totalRows;
+
+    if (!mirrorRowsCount) {
+      return {
+        rows,
+        summary: {
+          enabled: false,
+          reason: 'mirror_empty',
+          maxMirrorAgeMinutes: safeMaxAge,
+          mirrorAgeMinutes: ageMinutes,
+          inputTotal,
+          mirrorTotal: mirrorRowsCount,
+          activeInMirror: 0,
+          missingInFinal: 0,
+          appended: 0
+        }
+      };
+    }
+
+    if (ageMinutes !== null && ageMinutes > safeMaxAge) {
+      return {
+        rows,
+        summary: {
+          enabled: false,
+          reason: 'mirror_stale',
+          maxMirrorAgeMinutes: safeMaxAge,
+          mirrorAgeMinutes: ageMinutes,
+          inputTotal,
+          mirrorTotal: mirrorRowsCount,
+          activeInMirror: 0,
+          missingInFinal: 0,
+          appended: 0
+        }
+      };
+    }
+
+    const sourceCodes = new Set<string>();
+    for (let index = 0; index < rows.length; index += 1) {
+      const code = normalizeArticle(rows[index].productCode);
+      if (code) {
+        sourceCodes.add(code);
+      }
+    }
+
+    const mirrorResult = await this.pool.query<CsCartMirrorStateRow>(
+      `SELECT
+         article,
+         visibility,
+         price,
+         COALESCE(NULLIF(raw->>'parent_product_id', ''), NULLIF(parent_article, '')) AS "parentProductId",
+         NULLIF(raw->>'product_id', '') AS "productId"
+       FROM store_mirror
+       WHERE store = 'cscart'`
+    );
+
+    const idToCode = new Map<string, string>();
+    const mirrorRows: Array<{
+      article: string;
+      visibility: boolean;
+      price: number | null;
+      parentProductId: string | null;
+    }> = [];
+
+    for (let index = 0; index < mirrorResult.rows.length; index += 1) {
+      const row = mirrorResult.rows[index];
+      const article = normalizeArticle(row.article);
+      if (!article) {
+        continue;
+      }
+      const productId = normalizeParentProductId(row.productId);
+      if (productId) {
+        idToCode.set(productId, article);
+      }
+      mirrorRows.push({
+        article,
+        visibility: row.visibility === true,
+        price: normalizePrice(row.price),
+        parentProductId: normalizeParentProductId(row.parentProductId)
+      });
+    }
+
+    let activeInMirror = 0;
+    let missingInFinal = 0;
+    const appendedRows: CsCartDeltaInputRow[] = [];
+    const managedCodes = options?.managedCodes || null;
+
+    for (let index = 0; index < mirrorRows.length; index += 1) {
+      const row = mirrorRows[index];
+      if (managedCodes && !managedCodes.has(row.article)) {
+        continue;
+      }
+      if (!row.visibility) {
+        continue;
+      }
+      activeInMirror += 1;
+      if (sourceCodes.has(row.article)) {
+        continue;
+      }
+
+      missingInFinal += 1;
+      const parentProductCode = row.parentProductId ? idToCode.get(row.parentProductId) || null : null;
+      appendedRows.push({
+        productCode: row.article,
+        parentProductCode,
+        visibility: false,
+        price: row.price
+      });
+    }
+
+    const mergedRows = appendedRows.length ? [...rows, ...appendedRows] : rows;
+    return {
+      rows: mergedRows,
+      summary: {
+        enabled: true,
+        reason: 'ok',
+        maxMirrorAgeMinutes: safeMaxAge,
+        mirrorAgeMinutes: ageMinutes,
+        inputTotal,
+        mirrorTotal: mirrorRowsCount,
+        activeInMirror,
+        missingInFinal,
+        appended: appendedRows.length
+      }
+    };
+  }
+
   private async upsertBatch(rows: StoreMirrorRow[]): Promise<void> {
     if (!rows.length) {
       return;
     }
+    const dedupedRows = dedupeMirrorRows(rows);
+    if (!dedupedRows.length) {
+      return;
+    }
 
     const values: Array<string | number | boolean | null> = [];
-    const placeholders = rows.map((row, index) => {
+    const placeholders = dedupedRows.map((row, index) => {
       const base = index * 8;
       values.push(
         row.store,

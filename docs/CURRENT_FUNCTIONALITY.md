@@ -18,22 +18,30 @@
   - `sources`
   - `mappings` (latest get/save per supplier/source, поле `comment`)
 - Доступні API для pricing-керування:
-  - `markup rule sets` (list/create/update/apply to suppliers)
+  - `markup rule sets` (list/create/update/default/apply to suppliers)
   - `price overrides` (list/upsert/update)
 - Доступні операційні read API:
   - `logs` (global/by job/by level)
   - `stats` (counts + last pipeline/import jobs)
+  - `backend-readiness` (gates for cutover: mirror freshness, coverage, scheduler/cleanup, blocking jobs)
 - Доступні Google Sheets helper API для джерел:
   - `source-sheets` (лист аркушів + selected)
   - `source-preview` (headers + sampleRows для mapping UI)
 - Доступні review/export API для операторського контролю:
   - `merged-preview`, `final-preview`, `compare-preview`
   - `merged-export`, `final-export`, `compare-export` (CSV)
+- `GET /admin/api/preview` і `POST /admin/api/store-import` повертають:
+  - `previewTotal` (до optimizer),
+  - `batchTotal` (після feature-scope + missing-hide + delta),
+  - `batchMeta` (деталі оптимізації).
 - `GET /admin/api/suppliers` підтримує:
   - `search=<рядок>` (пошук по `supplier.name`, case-insensitive)
   - `sort=name_asc|name_desc|id_asc` (A-Я / Я-А / дефолт по id)
 - `POST /admin/api/mappings/:supplierId` підтримує поле:
   - `comment` — операторський коментар до mapping-конфігурації
+- `POST /admin/api/markup-rule-sets/default` підтримує глобальний default rule set
+  - персистенс у `markup_settings`
+  - створення нового supplier без explicit `markup_rule_set_id` бере global default (або first active fallback)
 - Ендпоїнти винесені в `admin/api/*` і захищені ролями `viewer/admin`.
 
 ## Finalize і preview
@@ -44,9 +52,19 @@
 ## CS-Cart import
 - Імпорт у CS-Cart працює через конектор і gateway.
 - Перед імпортом збирається mirror-index каталогу (`product_code -> product_id/state/price/parent`).
+- Scope оновлення керується product feature `Оновлення товару API` (`feature_id=564`):
+  - у sync потрапляють тільки SKU з `product_features["564"].value = "Y"`.
+  - це замінює legacy-підхід оновлення “по одному постачальнику”.
 - Незаплановані/незмінені SKU пропускаються (оптимізація без зміни бізнес-логіки).
+- Для повного `store_import` (без supplier-фільтра) керовані SKU, яких немає у поточному `products_final`, автоматично переводяться у `status=H` (hidden) у CS-Cart.
+- Якщо SKU знову з’являється у постачальників, він повертається в `status=A` при наступному імпорті.
+- Для `store_import` з `supplier`-фільтром auto-hidden missing SKU не застосовується (щоб не ховати чужий асортимент).
 - Доступні progress-checkpoints у `jobs.meta.storeImportProgress`.
 - Доступний resume після failed/canceled `store_import`.
+- `store_mirror_sync` дедуплікує однаковий `article` в межах чанка перед upsert у `store_mirror` (захист від SQL conflict на дублі в API-відповіді).
+- `store_mirror` має унікальний ключ `(store, article)`, тому при дублях `product_code` у магазині зберігається один стан на SKU.
+- Дублі `product_code` у CS-Cart трактуються як конфлікт даних (не як модифікація), доки не підтверджено зворотне через `parent_product_id/variation_code`.
+- Перед production `store_import` обов’язковий preflight: перевірка дублювання SKU у магазині, після чого `mirror:sync`.
 
 ## Jobs / scheduler / операції
 - Є API запуску для:
@@ -58,6 +76,10 @@
   - `update_pipeline`
   - `store_mirror_sync`
   - `cleanup`
+- Є CLI запуск знімка магазину без UI:
+  - `npm run mirror:sync`
+- Є CLI preflight-аудит дублів SKU у CS-Cart (read-only):
+  - `npm run store:sku-audit`
 - Є скасування job (`cancel`) з terminate backend для довгих SQL-операцій.
 - Є scheduler (env-driven) для `update_pipeline`, `store_mirror_sync`, `cleanup`.
 - Є runtime API для scheduler settings:
@@ -72,6 +94,11 @@
 - Є scripted backend load-audit контур:
   - `npm run audit:load`
   - runbook: `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`
+- Є scripted readiness-зріз перед cutover:
+  - `npm run backend:readiness`
+  - `GET /admin/api/backend-readiness`
+- Є scripted SKU-audit перед cutover:
+  - `npm run store:sku-audit`
 - Є scripted перенос supplier config з legacy:
   - `npm run export:legacy-config`
   - `npm run import:legacy-config`
@@ -79,5 +106,4 @@
 
 ## Ще не закрито до повного parity
 - Інтеграційні тести на критичні інваріанти бізнес-логіки.
-- Staging load-test baseline 100k/300k/500k.
-- Legacy-семантика global default markup rule (`markup_settings` / `markup-rule-sets/default`) для 1:1 parity.
+- E2E cutover-прогін на staging/production-like даних по цільових постачальниках (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
