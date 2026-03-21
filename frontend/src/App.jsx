@@ -6,7 +6,14 @@ import {
   createEmptyMappingFields,
   parseMappingToFields
 } from './lib/mapping';
-import { Section, Tag } from './components/ui';
+import { Tag } from './components/ui';
+import { ToastViewport } from './components/toast';
+import { OverviewTab } from './tabs/OverviewTab';
+import { SuppliersTab } from './tabs/SuppliersTab';
+import { MappingTab } from './tabs/MappingTab';
+import { PricingTab } from './tabs/PricingTab';
+import { DataTab } from './tabs/DataTab';
+import { JobsTab } from './tabs/JobsTab';
 
 const TABS = [
   { id: 'overview', label: 'Огляд' },
@@ -19,6 +26,8 @@ const TABS = [
 
 const SOURCE_TYPES = ['google_sheet', 'csv', 'xml', 'json'];
 const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra'];
+const TOAST_LIMIT = 6;
+const TOAST_TTL_MS = 5500;
 
 function normalizeOptionalNumber(value) {
   if (value === null || typeof value === 'undefined') {
@@ -239,6 +248,7 @@ export default function App() {
   const [actionStatus, setActionStatus] = useState('');
   const [topStatus, setTopStatus] = useState('');
   const [lastFailedAction, setLastFailedAction] = useState(null);
+  const [toasts, setToasts] = useState([]);
 
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -354,6 +364,24 @@ export default function App() {
     [logs]
   );
 
+  const dismissToast = (id) => {
+    setToasts((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const pushToast = (tone, title, details = '') => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setToasts((prev) => [...prev, { id, tone, title, details }].slice(-TOAST_LIMIT));
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id));
+    }, TOAST_TTL_MS);
+  };
+
+  const humanizeActionLabel = (label) =>
+    String(label || 'action')
+      .replace(/_/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
   const rememberFailedAction = (label, run) => {
     setLastFailedAction({
       label,
@@ -367,14 +395,17 @@ export default function App() {
   };
 
   const runMutationWithRetryUX = async (label, run) => {
+    const actionLabel = humanizeActionLabel(label);
     try {
       const result = await run();
       setTopStatus('');
       clearFailedAction();
+      pushToast('ok', 'Операція виконана', actionLabel);
       return result;
     } catch (error) {
       rememberFailedAction(label, run);
       setTopStatus(`Failed: ${label}. Use "Retry failed".`);
+      pushToast('error', 'Операція завершилась помилкою', `${actionLabel}: ${formatError(error)}`);
       throw error;
     }
   };
@@ -384,7 +415,11 @@ export default function App() {
       .filter(Boolean)
       .join('\n');
     const answer = window.prompt(promptText);
-    return String(answer || '').trim() === keyword;
+    const confirmed = String(answer || '').trim() === keyword;
+    if (!confirmed) {
+      pushToast('warn', 'Дію скасовано', 'Підтвердження не пройдено');
+    }
+    return confirmed;
   };
 
   const retryLastFailedAction = async () => {
@@ -392,13 +427,16 @@ export default function App() {
       return;
     }
     setTopStatus(`Retry: ${lastFailedAction.label}...`);
+    pushToast('info', 'Повтор дії', humanizeActionLabel(lastFailedAction.label));
     try {
       await lastFailedAction.run();
       setTopStatus(`Retry success: ${lastFailedAction.label}`);
+      pushToast('ok', 'Повтор успішний', humanizeActionLabel(lastFailedAction.label));
       clearFailedAction();
       await refreshCore();
     } catch (error) {
       setTopStatus(`Retry failed: ${formatError(error)}`);
+      pushToast('error', 'Повтор завершився помилкою', formatError(error));
       rememberFailedAction(lastFailedAction.label, lastFailedAction.run);
     }
   };
@@ -1441,40 +1479,9 @@ export default function App() {
     void refreshMapping(selectedSupplierId, selectedSourceId);
   }, [selectedSupplierId, selectedSourceId]);
 
-  const renderPreviewTable = (rows, columns, emptyLabel) => {
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return <div className="empty-preview">{emptyLabel}</div>;
-    }
-    return (
-      <div className="preview-table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column.key}>{column.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, rowIndex) => (
-              <tr key={`row_${rowIndex}`}>
-                {columns.map((column) => (
-                  <td key={`${rowIndex}_${column.key}`}>
-                    {typeof column.render === 'function'
-                      ? column.render(row[column.key], row)
-                      : String(row[column.key] ?? '-')}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
   return (
     <div className="app">
+      <ToastViewport items={toasts} onDismiss={dismissToast} />
       <div className="topbar">
         <div className="title-block">
           <h1>Whitehall CS-Cart Admin</h1>
@@ -1513,1495 +1520,167 @@ export default function App() {
       </div>
 
       {tab === 'overview' ? (
-        <div className="grid">
-          <Section title="Readiness" subtitle="Поточні backend-гейти перед store import">
-            <pre>{toJsonString(readiness || {})}</pre>
-          </Section>
-
-          <Section title="Stats" subtitle="Операційна статистика">
-            <pre>{toJsonString(stats || {})}</pre>
-          </Section>
-
-          <Section title="Операційні сигнали" subtitle="Ключові KPI та останні error-логи">
-            <div className="kpi-grid">
-              <div className="kpi-card">
-                <div className="kpi-label">Suppliers</div>
-                <div className="kpi-value">{Number(stats?.suppliers || 0)}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Sources</div>
-                <div className="kpi-value">{Number(stats?.sources || 0)}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Raw rows</div>
-                <div className="kpi-value">{Number(stats?.products_raw || 0)}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Final rows</div>
-                <div className="kpi-value">{Number(stats?.products_final || 0)}</div>
-              </div>
-            </div>
-            <div className="status-line">
-              Running jobs: {(readiness?.jobs?.running_blocking_jobs || []).length}
-            </div>
-            <div className="status-line">
-              Mirror fresh: {readiness?.mirror?.is_fresh ? 'yes' : 'no'}
-            </div>
-            <div className="status-line">Recent errors: {recentErrorLogs.length}</div>
-            {recentErrorLogs.length > 0 ? (
-              <div className="preview-table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>time</th>
-                      <th>job</th>
-                      <th>message</th>
-                      <th>action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentErrorLogs.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.created_at || '-'}</td>
-                        <td>{item.job_id || '-'}</td>
-                        <td>{item.message || '-'}</td>
-                        <td>
-                          {item.job_id ? (
-                            <button className="btn" onClick={() => openJobDetails(item.job_id)}>
-                              Job details
-                            </button>
-                          ) : (
-                            '-'
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="empty-preview">Error logs не знайдено за поточним фільтром</div>
-            )}
-          </Section>
-
-          <Section title="Швидкі дії" subtitle="Запуск джоб без переходу по екранах">
-            <div className="form-row">
-              <div>
-                <label>sourceId</label>
-                <input
-                  value={actionForm.sourceId}
-                  onChange={(event) =>
-                    setActionForm((prev) => ({ ...prev, sourceId: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>supplierId</label>
-                <input
-                  value={actionForm.supplierId}
-                  onChange={(event) =>
-                    setActionForm((prev) => ({ ...prev, supplierId: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>store supplier (optional)</label>
-                <input
-                  value={actionForm.storeSupplier}
-                  onChange={(event) =>
-                    setActionForm((prev) => ({ ...prev, storeSupplier: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="form-row">
-              <div>
-                <label>resumeFromJobId (optional)</label>
-                <input
-                  value={actionForm.resumeFromJobId}
-                  onChange={(event) =>
-                    setActionForm((prev) => ({ ...prev, resumeFromJobId: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>retentionDays</label>
-                <input
-                  value={actionForm.retentionDays}
-                  onChange={(event) =>
-                    setActionForm((prev) => ({ ...prev, retentionDays: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>update pipeline supplier (optional)</label>
-                <input
-                  value={actionForm.updatePipelineSupplier}
-                  onChange={(event) =>
-                    setActionForm((prev) => ({
-                      ...prev,
-                      updatePipelineSupplier: event.target.value
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="actions">
-              <button
-                className="btn"
-                disabled={isReadOnly}
-                onClick={() => runJob('import_all', '/jobs/import-all')}
-              >
-                import_all
-              </button>
-              <button
-                className="btn"
-                disabled={isReadOnly || !Number.isFinite(Number(actionForm.sourceId))}
-                onClick={() =>
-                  runJob('import_source', '/jobs/import-source', {
-                    sourceId: Number(actionForm.sourceId)
-                  })
-                }
-              >
-                import_source
-              </button>
-              <button
-                className="btn"
-                disabled={isReadOnly || !Number.isFinite(Number(actionForm.supplierId))}
-                onClick={() =>
-                  runJob('import_supplier', '/jobs/import-supplier', {
-                    supplierId: Number(actionForm.supplierId)
-                  })
-                }
-              >
-                import_supplier
-              </button>
-              <button className="btn" disabled={isReadOnly} onClick={() => runJob('finalize', '/jobs/finalize')}>
-                finalize
-              </button>
-              <button className="btn" disabled={isReadOnly} onClick={() => runJob('store_mirror_sync', '/jobs/store-mirror-sync')}>
-                mirror_sync
-              </button>
-              <button className="btn primary" disabled={isReadOnly} onClick={runStoreImport}>
-                store_import
-              </button>
-              <button
-                className="btn"
-                disabled={isReadOnly}
-                onClick={() =>
-                  runJob('update_pipeline', '/jobs/update-pipeline', {
-                    supplier: actionForm.updatePipelineSupplier.trim() || undefined
-                  })
-                }
-              >
-                update_pipeline
-              </button>
-              <button
-                className="btn"
-                disabled={isReadOnly || !Number.isFinite(Number(actionForm.retentionDays))}
-                onClick={runCleanupWithPreflight}
-              >
-                cleanup
-              </button>
-            </div>
-
-            <div className="preflight-warning">
-              Preflight: `cleanup` вимагає keyword-підтвердження перед запуском.
-            </div>
-
-            <label style={{ marginTop: 10 }}>
-              <input
-                type="checkbox"
-                checked={actionForm.resumeLatest}
-                onChange={(event) =>
-                  setActionForm((prev) => ({ ...prev, resumeLatest: event.target.checked }))
-                }
-                style={{ width: 'auto', marginRight: 8 }}
-              />
-              Resume latest failed/canceled store_import
-            </label>
-
-            <div className={`status-line ${actionStatus.includes('Error') ? 'error' : ''}`}>{actionStatus}</div>
-          </Section>
-        </div>
+        <OverviewTab
+          readiness={readiness}
+          stats={stats}
+          recentErrorLogs={recentErrorLogs}
+          openJobDetails={openJobDetails}
+          actionForm={actionForm}
+          setActionForm={setActionForm}
+          isReadOnly={isReadOnly}
+          runJob={runJob}
+          runStoreImport={runStoreImport}
+          runCleanupWithPreflight={runCleanupWithPreflight}
+          actionStatus={actionStatus}
+        />
       ) : null}
 
       {tab === 'suppliers' ? (
-        <div className="grid">
-          <Section title="Постачальники" subtitle="Пошук, сортування, CRUD" extra={
-            <button className="btn" onClick={refreshSuppliers}>Оновити список</button>
-          }>
-            <div className="form-row">
-              <div>
-                <label>Пошук</label>
-                <input value={supplierSearch} onChange={(event) => setSupplierSearch(event.target.value)} />
-              </div>
-              <div>
-                <label>Сортування</label>
-                <select value={supplierSort} onChange={(event) => setSupplierSort(event.target.value)}>
-                  <option value="id_asc">ID</option>
-                  <option value="name_asc">A-Я</option>
-                  <option value="name_desc">Я-A</option>
-                </select>
-              </div>
-              <div>
-                <label>Selected IDs</label>
-                <input value={selectedSupplierIds.join(',')} readOnly />
-              </div>
-            </div>
-
-            <table>
-              <thead>
-                <tr>
-                  <th>Select</th>
-                  <th>ID</th>
-                  <th>Назва</th>
-                  <th>Active</th>
-                  <th>Priority</th>
-                  <th>Markup %</th>
-                  <th>Rule set</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suppliers.map((supplier) => (
-                  <tr key={supplier.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedSupplierIds.includes(String(supplier.id))}
-                        onChange={(event) => {
-                          setSelectedSupplierIds((prev) => {
-                            const id = String(supplier.id);
-                            if (event.target.checked) {
-                              return prev.includes(id) ? prev : [...prev, id];
-                            }
-                            return prev.filter((value) => value !== id);
-                          });
-                        }}
-                      />
-                    </td>
-                    <td>{supplier.id}</td>
-                    <td>{supplier.name}</td>
-                    <td>{supplier.is_active ? 'true' : 'false'}</td>
-                    <td>{supplier.priority}</td>
-                    <td>{supplier.markup_percent}</td>
-                    <td>{supplier.markup_rule_set_name || '-'}</td>
-                    <td>
-                      <div className="actions">
-                        <button
-                          className="btn"
-                          onClick={() => {
-                            setEditingSupplierId(String(supplier.id));
-                            setSupplierDraft(toSupplierDraft(supplier));
-                            setSupplierErrors({});
-                            setSelectedSupplierId(String(supplier.id));
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn danger"
-                          disabled={isReadOnly}
-                          onClick={() => deleteSupplier(supplier.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="status-line">{suppliersStatus}</div>
-          </Section>
-
-          <Section title={editingSupplierId ? `Редагування #${editingSupplierId}` : 'Новий постачальник'}>
-            <div className="form-row">
-              <div>
-                <label>Назва</label>
-                <input
-                  value={supplierDraft.name}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, name: event.target.value }))
-                  }
-                />
-                {supplierErrors.name ? <div className="field-error">{supplierErrors.name}</div> : null}
-              </div>
-              <div>
-                <label>Priority</label>
-                <input
-                  value={supplierDraft.priority}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, priority: event.target.value }))
-                  }
-                />
-                {supplierErrors.priority ? <div className="field-error">{supplierErrors.priority}</div> : null}
-              </div>
-              <div>
-                <label>Markup %</label>
-                <input
-                  value={supplierDraft.markup_percent}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, markup_percent: event.target.value }))
-                  }
-                />
-                {supplierErrors.markup_percent ? <div className="field-error">{supplierErrors.markup_percent}</div> : null}
-              </div>
-            </div>
-            <div className="form-row">
-              <div>
-                <label>Min profit amount</label>
-                <input
-                  value={supplierDraft.min_profit_amount}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, min_profit_amount: event.target.value }))
-                  }
-                />
-                {supplierErrors.min_profit_amount ? <div className="field-error">{supplierErrors.min_profit_amount}</div> : null}
-              </div>
-              <div>
-                <label>Markup rule set id</label>
-                <input
-                  value={supplierDraft.markup_rule_set_id}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, markup_rule_set_id: event.target.value }))
-                  }
-                />
-                {supplierErrors.markup_rule_set_id ? <div className="field-error">{supplierErrors.markup_rule_set_id}</div> : null}
-              </div>
-            </div>
-            <div className="checkbox-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={supplierDraft.min_profit_enabled}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, min_profit_enabled: event.target.checked }))
-                  }
-                />
-                min_profit_enabled
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={supplierDraft.is_active}
-                  onChange={(event) =>
-                    setSupplierDraft((prev) => ({ ...prev, is_active: event.target.checked }))
-                  }
-                />
-                is_active
-              </label>
-            </div>
-            <div className="actions" style={{ marginTop: 8 }}>
-              <button className="btn primary" disabled={isReadOnly} onClick={saveSupplier}>
-                {editingSupplierId ? 'Save supplier' : 'Create supplier'}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setEditingSupplierId('');
-                  setSupplierDraft(toSupplierDraft(null));
-                  setSupplierErrors({});
-                }}
-              >
-                Reset form
-              </button>
-            </div>
-            <div className="status-line">{supplierFormStatus}</div>
-          </Section>
-
-          <Section title="Bulk update suppliers" subtitle="Без зміни бізнес-логіки, лише масове оновлення полів">
-            <div className="form-row">
-              <div>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={bulkDraft.apply_markup_percent}
-                    onChange={(event) =>
-                      setBulkDraft((prev) => ({ ...prev, apply_markup_percent: event.target.checked }))
-                    }
-                    style={{ width: 'auto', marginRight: 8 }}
-                  />
-                  Apply markup_percent
-                </label>
-                <input
-                  value={bulkDraft.markup_percent}
-                  onChange={(event) =>
-                    setBulkDraft((prev) => ({ ...prev, markup_percent: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={bulkDraft.apply_min_profit}
-                    onChange={(event) =>
-                      setBulkDraft((prev) => ({ ...prev, apply_min_profit: event.target.checked }))
-                    }
-                    style={{ width: 'auto', marginRight: 8 }}
-                  />
-                  Apply min_profit
-                </label>
-                <input
-                  value={bulkDraft.min_profit_amount}
-                  onChange={(event) =>
-                    setBulkDraft((prev) => ({ ...prev, min_profit_amount: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-            <label style={{ marginTop: 8 }}>
-              <input
-                type="checkbox"
-                checked={bulkDraft.min_profit_enabled}
-                onChange={(event) =>
-                  setBulkDraft((prev) => ({ ...prev, min_profit_enabled: event.target.checked }))
-                }
-                style={{ width: 'auto', marginRight: 8 }}
-              />
-              min_profit_enabled
-            </label>
-            <div className="actions" style={{ marginTop: 8 }}>
-              <button className="btn primary" disabled={isReadOnly} onClick={saveSupplierBulk}>
-                Run bulk update
-              </button>
-              <button className="btn" onClick={() => setSelectedSupplierIds([])}>
-                Clear selection
-              </button>
-            </div>
-            <div className="status-line">{bulkStatus}</div>
-          </Section>
-        </div>
+        <SuppliersTab
+          refreshSuppliers={refreshSuppliers}
+          supplierSearch={supplierSearch}
+          setSupplierSearch={setSupplierSearch}
+          supplierSort={supplierSort}
+          setSupplierSort={setSupplierSort}
+          selectedSupplierIds={selectedSupplierIds}
+          setSelectedSupplierIds={setSelectedSupplierIds}
+          suppliers={suppliers}
+          setEditingSupplierId={setEditingSupplierId}
+          setSupplierDraft={setSupplierDraft}
+          setSupplierErrors={setSupplierErrors}
+          setSelectedSupplierId={setSelectedSupplierId}
+          toSupplierDraft={toSupplierDraft}
+          deleteSupplier={deleteSupplier}
+          isReadOnly={isReadOnly}
+          suppliersStatus={suppliersStatus}
+          editingSupplierId={editingSupplierId}
+          supplierDraft={supplierDraft}
+          supplierErrors={supplierErrors}
+          setBulkDraft={setBulkDraft}
+          bulkDraft={bulkDraft}
+          supplierFormStatus={supplierFormStatus}
+          saveSupplier={saveSupplier}
+          bulkStatus={bulkStatus}
+          saveSupplierBulk={saveSupplierBulk}
+        />
       ) : null}
 
       {tab === 'mapping' ? (
-        <div className="grid">
-          <Section title="Джерела" subtitle="Source CRUD + sheet preview">
-            <div className="form-row">
-              <div>
-                <label>Постачальник</label>
-                <select
-                  value={selectedSupplierId}
-                  onChange={(event) => setSelectedSupplierId(event.target.value)}
-                >
-                  <option value="">-- оберіть --</option>
-                  {suppliers.map((supplier) => (
-                    <option key={supplier.id} value={supplier.id}>
-                      {supplier.id} - {supplier.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label>Джерело</label>
-                <select
-                  value={selectedSourceId}
-                  onChange={(event) => setSelectedSourceId(event.target.value)}
-                >
-                  <option value="">-- оберіть --</option>
-                  {sources.map((source) => (
-                    <option key={source.id} value={source.id}>
-                      {source.id} - {source.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <button className="btn" onClick={() => refreshSources(selectedSupplierId)}>
-                  Оновити джерела
-                </button>
-              </div>
-            </div>
-
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Active</th>
-                  <th>Sheet</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((source) => (
-                  <tr key={source.id}>
-                    <td>{source.id}</td>
-                    <td>{source.name}</td>
-                    <td>{source.source_type}</td>
-                    <td>{source.is_active ? 'true' : 'false'}</td>
-                    <td>{source.sheet_name || '-'}</td>
-                    <td>
-                      <div className="actions">
-                        <button
-                          className="btn"
-                          onClick={() => {
-                            setEditingSourceId(String(source.id));
-                            setSelectedSourceId(String(source.id));
-                            setSourceDraft(toSourceDraft(source));
-                            setSourceErrors({});
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn danger"
-                          disabled={isReadOnly}
-                          onClick={() => deleteSource(source.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="status-line">{sourcesStatus}</div>
-          </Section>
-
-          <Section title={editingSourceId ? `Редагування source #${editingSourceId}` : 'Нове джерело'}>
-            <div className="form-row">
-              <div>
-                <label>Name</label>
-                <input
-                  value={sourceDraft.name}
-                  onChange={(event) =>
-                    setSourceDraft((prev) => ({ ...prev, name: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>source_type</label>
-                <select
-                  value={sourceDraft.source_type}
-                  onChange={(event) =>
-                    setSourceDraft((prev) => ({ ...prev, source_type: event.target.value }))
-                  }
-                >
-                  {SOURCE_TYPES.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-                {sourceErrors.source_type ? <div className="field-error">{sourceErrors.source_type}</div> : null}
-              </div>
-            </div>
-            <div className="form-row">
-              <div>
-                <label>source_url</label>
-                <input
-                  value={sourceDraft.source_url}
-                  onChange={(event) =>
-                    setSourceDraft((prev) => ({ ...prev, source_url: event.target.value }))
-                  }
-                />
-                {sourceErrors.source_url ? <div className="field-error">{sourceErrors.source_url}</div> : null}
-                <div className="hint">detected: {parseSourceUrlHint(sourceDraft.source_url) || '-'}</div>
-              </div>
-              <div>
-                <label>sheet_name</label>
-                <input
-                  value={sourceDraft.sheet_name}
-                  onChange={(event) =>
-                    setSourceDraft((prev) => ({ ...prev, sheet_name: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-            <label>
-              <input
-                type="checkbox"
-                checked={sourceDraft.is_active}
-                onChange={(event) =>
-                  setSourceDraft((prev) => ({ ...prev, is_active: event.target.checked }))
-                }
-                style={{ width: 'auto', marginRight: 8 }}
-              />
-              is_active
-            </label>
-            <div className="actions" style={{ marginTop: 8 }}>
-              <button className="btn primary" disabled={isReadOnly} onClick={saveSource}>
-                {editingSourceId ? 'Save source' : 'Create source'}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setEditingSourceId('');
-                  setSourceDraft(toSourceDraft(null));
-                  setSourceErrors({});
-                }}
-              >
-                Reset form
-              </button>
-            </div>
-            <div className="status-line">{sourceFormStatus}</div>
-          </Section>
-
-          <Section title="Google Sheets preview" subtitle="Лоад аркушів + headers/sample rows">
-            <div className="form-row">
-              <div>
-                <label>Sheet name</label>
-                <select
-                  value={selectedSheetName}
-                  onChange={(event) => setSelectedSheetName(event.target.value)}
-                >
-                  <option value="">-- auto --</option>
-                  {sourceSheets.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label>Header row</label>
-                <input
-                  value={mappingHeaderRow}
-                  onChange={(event) => setMappingHeaderRow(event.target.value)}
-                />
-              </div>
-            </div>
-            <div className="actions">
-              <button className="btn" onClick={loadSourceSheets}>Load sheets</button>
-              <button className="btn" onClick={loadSourcePreview}>Load preview</button>
-            </div>
-            <div className="status-line">{sourceSheetsStatus}</div>
-            <div className={`status-line ${sourcePreview.status.includes('error') ? 'error' : ''}`}>
-              {sourcePreview.status}
-            </div>
-            <pre>{toJsonString({
-              sheet: sourcePreview.sheetName || selectedSheetName || null,
-              headerRow: sourcePreview.headerRow,
-              headers: sourcePreview.headers
-            })}</pre>
-            {sourcePreview.sampleRows.length > 0 ? (
-              <div className="preview-table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      {sourcePreview.headers.map((header, index) => (
-                        <th key={index}>
-                          {columnLetter(index + 1)} / {index + 1}
-                          <br />
-                          {header || '[blank]'}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sourcePreview.sampleRows.map((row, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {sourcePreview.headers.map((_, colIndex) => (
-                          <td key={`${rowIndex}_${colIndex}`}>{row[colIndex] || ''}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </Section>
-
-          <Section title="Мапінг" subtitle="Builder + JSON + Коментар">
-            <div className="mapping-builder">
-              {MAPPING_KEYS.map((key) => {
-                const entry = mappingFields[key];
-                return (
-                  <div className="mapping-row" key={key}>
-                    <div className="mapping-key">{key}</div>
-                    <select
-                      value={entry.mode}
-                      onChange={(event) => {
-                        const mode = event.target.value;
-                        if (mode === 'static') {
-                          updateMappingField(key, {
-                            mode: 'static',
-                            value: entry.value === null ? '' : String(entry.value)
-                          });
-                        } else {
-                          updateMappingField(key, {
-                            mode: 'column',
-                            value:
-                              Number.isFinite(Number(entry.value)) && Number(entry.value) > 0
-                                ? Number(entry.value)
-                                : null
-                          });
-                        }
-                      }}
-                    >
-                      <option value="column">column</option>
-                      <option value="static">static</option>
-                    </select>
-                    {entry.mode === 'column' ? (
-                      <select
-                        value={entry.value === null ? '' : String(entry.value)}
-                        onChange={(event) =>
-                          updateMappingField(key, {
-                            value: event.target.value ? Number(event.target.value) : null
-                          })
-                        }
-                      >
-                        <option value="">-- not set --</option>
-                        {mappingColumnOptions.map((option) => (
-                          <option key={`${key}_${option.value}`} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        value={String(entry.value ?? '')}
-                        onChange={(event) =>
-                          updateMappingField(key, {
-                            value: event.target.value
-                          })
-                        }
-                      />
-                    )}
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={entry.allowEmpty === true}
-                        onChange={(event) =>
-                          updateMappingField(key, { allowEmpty: event.target.checked })
-                        }
-                        style={{ width: 'auto', marginRight: 6 }}
-                      />
-                      allow empty
-                    </label>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="actions" style={{ marginTop: 8 }}>
-              <button className="btn" onClick={applyBuilderToJson}>
-                Builder to JSON
-              </button>
-              <button className="btn" onClick={() => refreshMapping(selectedSupplierId, selectedSourceId)}>
-                Reload mapping
-              </button>
-            </div>
-
-            <div className="form-row">
-              <div>
-                <label>Header row</label>
-                <input
-                  value={mappingHeaderRow}
-                  onChange={(event) => setMappingHeaderRow(event.target.value)}
-                />
-                {mappingErrors.header_row ? <div className="field-error">{mappingErrors.header_row}</div> : null}
-              </div>
-              <div>
-                <label>Коментар</label>
-                <input
-                  value={mappingComment}
-                  onChange={(event) => setMappingComment(event.target.value)}
-                />
-              </div>
-            </div>
-            <label>Mapping JSON</label>
-            <textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} />
-            {mappingErrors.mapping ? <div className="field-error">{mappingErrors.mapping}</div> : null}
-            <div className="actions" style={{ marginTop: 8 }}>
-              <button className="btn primary" disabled={isReadOnly} onClick={saveMapping}>
-                Save mapping
-              </button>
-            </div>
-            <div className={`status-line ${mappingStatus.includes('помилка') || mappingStatus.includes('error') ? 'error' : ''}`}>
-              {mappingStatus}
-            </div>
-          </Section>
-        </div>
+        <MappingTab
+          selectedSupplierId={selectedSupplierId}
+          setSelectedSupplierId={setSelectedSupplierId}
+          suppliers={suppliers}
+          selectedSourceId={selectedSourceId}
+          setSelectedSourceId={setSelectedSourceId}
+          sources={sources}
+          refreshSources={refreshSources}
+          setEditingSourceId={setEditingSourceId}
+          setSourceDraft={setSourceDraft}
+          setSourceErrors={setSourceErrors}
+          toSourceDraft={toSourceDraft}
+          deleteSource={deleteSource}
+          isReadOnly={isReadOnly}
+          sourcesStatus={sourcesStatus}
+          editingSourceId={editingSourceId}
+          sourceDraft={sourceDraft}
+          sourceTypes={SOURCE_TYPES}
+          sourceErrors={sourceErrors}
+          parseSourceUrlHint={parseSourceUrlHint}
+          saveSource={saveSource}
+          sourceFormStatus={sourceFormStatus}
+          sourceSheets={sourceSheets}
+          selectedSheetName={selectedSheetName}
+          setSelectedSheetName={setSelectedSheetName}
+          mappingHeaderRow={mappingHeaderRow}
+          setMappingHeaderRow={setMappingHeaderRow}
+          loadSourceSheets={loadSourceSheets}
+          loadSourcePreview={loadSourcePreview}
+          sourceSheetsStatus={sourceSheetsStatus}
+          sourcePreview={sourcePreview}
+          mappingKeys={MAPPING_KEYS}
+          mappingFields={mappingFields}
+          updateMappingField={updateMappingField}
+          mappingColumnOptions={mappingColumnOptions}
+          applyBuilderToJson={applyBuilderToJson}
+          refreshMapping={refreshMapping}
+          mappingErrors={mappingErrors}
+          mappingComment={mappingComment}
+          setMappingComment={setMappingComment}
+          mappingText={mappingText}
+          setMappingText={setMappingText}
+          saveMapping={saveMapping}
+          mappingStatus={mappingStatus}
+        />
       ) : null}
 
       {tab === 'pricing' ? (
-        <div className="grid">
-          <Section
-            title="Markup Rule Sets"
-            subtitle="Огляд, default, apply по suppliers/all suppliers"
-            extra={<button className="btn" onClick={refreshMarkupRuleSets}>Reload</button>}
-          >
-            <div className="form-row">
-              <div>
-                <label>Rule set</label>
-                <select
-                  value={pricingApplyRuleSetId}
-                  onChange={(event) => setPricingApplyRuleSetId(event.target.value)}
-                >
-                  <option value="">-- оберіть --</option>
-                  {markupRuleSets.map((ruleSet) => (
-                    <option key={ruleSet.id} value={ruleSet.id}>
-                      #{ruleSet.id} {ruleSet.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label>Scope</label>
-                <select
-                  value={pricingApplyScope}
-                  onChange={(event) => setPricingApplyScope(event.target.value)}
-                >
-                  <option value="suppliers">suppliers (selected)</option>
-                  <option value="all_suppliers">all_suppliers</option>
-                </select>
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <div className="actions">
-                  <button className="btn" disabled={isReadOnly} onClick={applyMarkupRuleSet}>Apply</button>
-                  <button
-                    className="btn"
-                    disabled={isReadOnly || !pricingApplyRuleSetId}
-                    onClick={() => setDefaultMarkupRuleSet(pricingApplyRuleSetId)}
-                  >
-                    Set default
-                  </button>
-                  <button className="btn" onClick={startCreateRuleSet}>New rule set</button>
-                </div>
-              </div>
-            </div>
-            <div className="status-line">global_rule_set_id: {globalRuleSetId || '-'}</div>
-            {pricingApplyScope === 'all_suppliers' ? (
-              <div className="preflight-warning">
-                Scope `all_suppliers` запускає preflight keyword-підтвердження.
-              </div>
-            ) : null}
-            <div className="status-line">{pricingStatus}</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Name</th>
-                  <th>Active</th>
-                  <th>Conditions</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {markupRuleSets.map((ruleSet) => (
-                  <tr key={ruleSet.id}>
-                    <td>{ruleSet.id}</td>
-                    <td>
-                      {ruleSet.name}
-                      {Number(globalRuleSetId || 0) === Number(ruleSet.id) ? (
-                        <span className="chip">default</span>
-                      ) : null}
-                    </td>
-                    <td>{ruleSet.is_active ? 'true' : 'false'}</td>
-                    <td>
-                      {Array.isArray(ruleSet.conditions) ? ruleSet.conditions.length : 0}
-                    </td>
-                    <td>
-                      <div className="actions">
-                        <button className="btn" onClick={() => startEditRuleSet(ruleSet.id)}>
-                          Edit in form
-                        </button>
-                        <button
-                          className="btn"
-                          onClick={() => setPricingApplyRuleSetId(String(ruleSet.id))}
-                        >
-                          Select
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-
-          <Section
-            title={ruleSetDraft.id ? `Rule Set #${ruleSetDraft.id}` : 'Створення Rule Set'}
-            subtitle="Повний editor conditions для create/update"
-          >
-            <div className="form-row">
-              <div>
-                <label>Name</label>
-                <input
-                  value={ruleSetDraft.name}
-                  onChange={(event) =>
-                    setRuleSetDraft((prev) => ({ ...prev, name: event.target.value }))
-                  }
-                />
-                {ruleSetErrors.base ? <div className="field-error">{ruleSetErrors.base}</div> : null}
-              </div>
-              <div>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={ruleSetDraft.is_active}
-                    onChange={(event) =>
-                      setRuleSetDraft((prev) => ({ ...prev, is_active: event.target.checked }))
-                    }
-                    style={{ width: 'auto', marginRight: 8 }}
-                  />
-                  is_active
-                </label>
-              </div>
-            </div>
-
-            <div className="conditions-list">
-              {ruleSetDraft.conditions.map((condition, index) => (
-                <div className="condition-card" key={`condition_${index}`}>
-                  <div className="condition-title">Condition #{index + 1}</div>
-                  {ruleSetErrors[`condition_${index}`] ? (
-                    <div className="field-error">{ruleSetErrors[`condition_${index}`]}</div>
-                  ) : null}
-                  <div className="form-row">
-                    <div>
-                      <label>priority</label>
-                      <input
-                        value={condition.priority}
-                        onChange={(event) =>
-                          updateRuleCondition(index, { priority: event.target.value })
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label>price_from</label>
-                      <input
-                        value={condition.price_from}
-                        onChange={(event) =>
-                          updateRuleCondition(index, { price_from: event.target.value })
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label>price_to (optional)</label>
-                      <input
-                        value={condition.price_to}
-                        onChange={(event) =>
-                          updateRuleCondition(index, { price_to: event.target.value })
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label>action_type</label>
-                      <select
-                        value={condition.action_type}
-                        onChange={(event) =>
-                          updateRuleCondition(index, { action_type: event.target.value })
-                        }
-                      >
-                        <option value="percent">percent</option>
-                        <option value="fixed_add">fixed_add</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label>action_value</label>
-                      <input
-                        value={condition.action_value}
-                        onChange={(event) =>
-                          updateRuleCondition(index, { action_value: event.target.value })
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div className="actions">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={condition.is_active}
-                        onChange={(event) =>
-                          updateRuleCondition(index, { is_active: event.target.checked })
-                        }
-                        style={{ width: 'auto', marginRight: 8 }}
-                      />
-                      is_active
-                    </label>
-                    <button
-                      className="btn danger"
-                      disabled={ruleSetDraft.conditions.length <= 1}
-                      onClick={() => removeRuleCondition(index)}
-                    >
-                      Remove condition
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="actions" style={{ marginTop: 10 }}>
-              <button className="btn" onClick={addRuleCondition}>Add condition</button>
-              <button className="btn primary" disabled={isReadOnly} onClick={saveRuleSet}>
-                {ruleSetDraft.id ? 'Update rule set' : 'Create rule set'}
-              </button>
-              <button className="btn" onClick={startCreateRuleSet}>Reset editor</button>
-            </div>
-            <div className={`status-line ${ruleSetStatus.includes('invalid') ? 'error' : ''}`}>
-              {ruleSetStatus}
-            </div>
-          </Section>
-
-          <Section title="Price Overrides" subtitle="Upsert/update для фінальної ціни">
-            <div className="form-row">
-              <div>
-                <label>search</label>
-                <input
-                  value={priceOverrideFilters.search}
-                  onChange={(event) =>
-                    setPriceOverrideFilters((prev) => ({ ...prev, search: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>limit</label>
-                <input
-                  value={priceOverrideFilters.limit}
-                  onChange={(event) =>
-                    setPriceOverrideFilters((prev) => ({ ...prev, limit: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>offset</label>
-                <input
-                  value={priceOverrideFilters.offset}
-                  onChange={(event) =>
-                    setPriceOverrideFilters((prev) => ({ ...prev, offset: event.target.value }))
-                  }
-                />
-              </div>
-            </div>
-            <div className="actions">
-              <button className="btn" onClick={refreshPriceOverrides}>Reload overrides</button>
-            </div>
-
-            <div className="form-row" style={{ marginTop: 10 }}>
-              <div>
-                <label>article</label>
-                <input
-                  value={priceOverrideDraft.article}
-                  onChange={(event) =>
-                    setPriceOverrideDraft((prev) => ({ ...prev, article: event.target.value }))
-                  }
-                  disabled={Boolean(priceOverrideDraft.id)}
-                />
-                {priceOverrideErrors.article ? <div className="field-error">{priceOverrideErrors.article}</div> : null}
-              </div>
-              <div>
-                <label>size</label>
-                <input
-                  value={priceOverrideDraft.size}
-                  onChange={(event) =>
-                    setPriceOverrideDraft((prev) => ({ ...prev, size: event.target.value }))
-                  }
-                  disabled={Boolean(priceOverrideDraft.id)}
-                />
-              </div>
-              <div>
-                <label>price_final</label>
-                <input
-                  value={priceOverrideDraft.price_final}
-                  onChange={(event) =>
-                    setPriceOverrideDraft((prev) => ({ ...prev, price_final: event.target.value }))
-                  }
-                />
-                {priceOverrideErrors.price_final ? <div className="field-error">{priceOverrideErrors.price_final}</div> : null}
-              </div>
-            </div>
-            <div className="form-row">
-              <div>
-                <label>notes</label>
-                <input
-                  value={priceOverrideDraft.notes}
-                  onChange={(event) =>
-                    setPriceOverrideDraft((prev) => ({ ...prev, notes: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={priceOverrideDraft.is_active}
-                    onChange={(event) =>
-                      setPriceOverrideDraft((prev) => ({ ...prev, is_active: event.target.checked }))
-                    }
-                    style={{ width: 'auto', marginRight: 8 }}
-                  />
-                  is_active
-                </label>
-              </div>
-            </div>
-            <div className="actions">
-              <button className="btn primary" disabled={isReadOnly} onClick={savePriceOverride}>
-                {priceOverrideDraft.id ? 'Update override' : 'Upsert override'}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setPriceOverrideDraft(toPriceOverrideDraft(null));
-                  setPriceOverrideErrors({});
-                }}
-              >
-                Reset override form
-              </button>
-            </div>
-
-            <div className="status-line">{priceOverrideStatus}</div>
-            <div className="status-line">{priceOverrides.status}</div>
-
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Article</th>
-                  <th>Size</th>
-                  <th>Price final</th>
-                  <th>Active</th>
-                  <th>Notes</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {priceOverrides.rows.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.id}</td>
-                    <td>{row.article}</td>
-                    <td>{row.size || '-'}</td>
-                    <td>{row.price_final}</td>
-                    <td>{row.is_active ? 'true' : 'false'}</td>
-                    <td>{row.notes || '-'}</td>
-                    <td>
-                      <button
-                        className="btn"
-                        onClick={() => {
-                          setPriceOverrideDraft(toPriceOverrideDraft(row));
-                          setPriceOverrideErrors({});
-                        }}
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-        </div>
+        <PricingTab
+          refreshMarkupRuleSets={refreshMarkupRuleSets}
+          pricingApplyRuleSetId={pricingApplyRuleSetId}
+          setPricingApplyRuleSetId={setPricingApplyRuleSetId}
+          markupRuleSets={markupRuleSets}
+          pricingApplyScope={pricingApplyScope}
+          setPricingApplyScope={setPricingApplyScope}
+          isReadOnly={isReadOnly}
+          applyMarkupRuleSet={applyMarkupRuleSet}
+          setDefaultMarkupRuleSet={setDefaultMarkupRuleSet}
+          startCreateRuleSet={startCreateRuleSet}
+          globalRuleSetId={globalRuleSetId}
+          pricingStatus={pricingStatus}
+          startEditRuleSet={startEditRuleSet}
+          ruleSetDraft={ruleSetDraft}
+          setRuleSetDraft={setRuleSetDraft}
+          ruleSetErrors={ruleSetErrors}
+          updateRuleCondition={updateRuleCondition}
+          removeRuleCondition={removeRuleCondition}
+          addRuleCondition={addRuleCondition}
+          saveRuleSet={saveRuleSet}
+          ruleSetStatus={ruleSetStatus}
+          priceOverrideFilters={priceOverrideFilters}
+          setPriceOverrideFilters={setPriceOverrideFilters}
+          refreshPriceOverrides={refreshPriceOverrides}
+          priceOverrideDraft={priceOverrideDraft}
+          setPriceOverrideDraft={setPriceOverrideDraft}
+          priceOverrideErrors={priceOverrideErrors}
+          savePriceOverride={savePriceOverride}
+          toPriceOverrideDraft={toPriceOverrideDraft}
+          priceOverrideStatus={priceOverrideStatus}
+          priceOverrides={priceOverrides}
+        />
       ) : null}
 
       {tab === 'data' ? (
-        <div className="data-grid">
-          <Section title="Фільтри" subtitle="Параметри серверної вибірки та сортування">
-            <div className="form-row">
-              <div>
-                <label>limit</label>
-                <input
-                  value={dataFilters.limit}
-                  onChange={(event) => setDataFilters((prev) => ({ ...prev, limit: event.target.value }))}
-                />
-              </div>
-              <div>
-                <label>offset</label>
-                <input
-                  value={dataFilters.offset}
-                  onChange={(event) => setDataFilters((prev) => ({ ...prev, offset: event.target.value }))}
-                />
-              </div>
-              <div>
-                <label>search</label>
-                <input
-                  value={dataFilters.search}
-                  onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value }))}
-                />
-              </div>
-              <div>
-                <label>supplierId (final/compare)</label>
-                <input
-                  value={dataFilters.supplierId}
-                  onChange={(event) => setDataFilters((prev) => ({ ...prev, supplierId: event.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="form-row">
-              <div>
-                <label>Merged sort</label>
-                <select
-                  value={dataFilters.mergedSort}
-                  onChange={(event) =>
-                    setDataFilters((prev) => ({ ...prev, mergedSort: event.target.value }))
-                  }
-                >
-                  <option value="article_asc">article asc</option>
-                  <option value="article_desc">article desc</option>
-                  <option value="created_desc">created desc</option>
-                </select>
-              </div>
-              <div>
-                <label>Final sort</label>
-                <select
-                  value={dataFilters.finalSort}
-                  onChange={(event) =>
-                    setDataFilters((prev) => ({ ...prev, finalSort: event.target.value }))
-                  }
-                >
-                  <option value="article_asc">article asc</option>
-                  <option value="article_desc">article desc</option>
-                  <option value="created_desc">created desc</option>
-                </select>
-              </div>
-            </div>
-            <div className="actions">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={dataFilters.missingOnly}
-                  onChange={(event) =>
-                    setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))
-                  }
-                  style={{ width: 'auto', marginRight: 8 }}
-                />
-                compare missingOnly
-              </label>
-              <button
-                className="btn"
-                onClick={() => {
-                  if (activeDataView === 'merged') {
-                    void loadMerged();
-                  } else if (activeDataView === 'final') {
-                    void loadFinal();
-                  } else {
-                    void loadCompare();
-                  }
-                }}
-              >
-                Load active view
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  void loadMerged();
-                  void loadFinal();
-                  void loadCompare();
-                }}
-              >
-                Load all
-              </button>
-              <button className="btn" onClick={() => shiftDataOffset(-1)}>Prev page</button>
-              <button className="btn" onClick={() => shiftDataOffset(1)}>Next page</button>
-            </div>
-          </Section>
-
-          <div className="mini-tabs">
-            <button
-              className={`tab ${activeDataView === 'merged' ? 'active' : ''}`}
-              onClick={() => setActiveDataView('merged')}
-            >
-              merged
-            </button>
-            <button
-              className={`tab ${activeDataView === 'final' ? 'active' : ''}`}
-              onClick={() => setActiveDataView('final')}
-            >
-              final
-            </button>
-            <button
-              className={`tab ${activeDataView === 'compare' ? 'active' : ''}`}
-              onClick={() => setActiveDataView('compare')}
-            >
-              compare
-            </button>
-          </div>
-
-          {activeDataView === 'merged' ? (
-            <Section title="Merged preview" extra={<button className="btn" onClick={loadMerged}>Load</button>}>
-              <div className="actions" style={{ marginBottom: 8 }}>
-                <a className="btn" href="/admin/api/merged-export">Export CSV</a>
-                <span className="chip">total: {mergedState.total}</span>
-                <span className="chip">offset: {dataFilters.offset}</span>
-              </div>
-              <div className="status-line">{mergedState.status}</div>
-              {renderPreviewTable(
-                mergedState.rows,
-                [
-                  { key: 'article', label: 'article' },
-                  { key: 'size', label: 'size' },
-                  { key: 'quantity', label: 'qty' },
-                  { key: 'price', label: 'price' },
-                  { key: 'supplier_name', label: 'supplier' },
-                  { key: 'extra', label: 'extra' }
-                ],
-                'Merged preview is empty'
-              )}
-            </Section>
-          ) : null}
-
-          {activeDataView === 'final' ? (
-            <Section title="Final preview" extra={<button className="btn" onClick={loadFinal}>Load</button>}>
-              <div className="actions" style={{ marginBottom: 8 }}>
-                <a className="btn" href="/admin/api/final-export">Export CSV</a>
-                <span className="chip">total: {finalState.total}</span>
-                <span className="chip">offset: {dataFilters.offset}</span>
-              </div>
-              <div className="status-line">{finalState.status}</div>
-              {renderPreviewTable(
-                finalState.rows,
-                [
-                  { key: 'article', label: 'article' },
-                  { key: 'size', label: 'size' },
-                  { key: 'quantity', label: 'qty' },
-                  { key: 'price_base', label: 'base' },
-                  { key: 'price_final', label: 'final' },
-                  { key: 'supplier_name', label: 'supplier' }
-                ],
-                'Final preview is empty'
-              )}
-            </Section>
-          ) : null}
-
-          {activeDataView === 'compare' ? (
-            <Section title="Compare preview (CS-Cart)" extra={<button className="btn" onClick={loadCompare}>Load</button>}>
-              <div className="actions" style={{ marginBottom: 8 }}>
-                <a className="btn" href="/admin/api/compare-export?store=cscart">Export CSV</a>
-                <span className="chip">total: {compareState.total}</span>
-                <span className="chip">offset: {dataFilters.offset}</span>
-              </div>
-              <div className="status-line">{compareState.status}</div>
-              {renderPreviewTable(
-                compareState.rows,
-                [
-                  { key: 'article', label: 'article' },
-                  { key: 'size', label: 'size' },
-                  { key: 'price_final', label: 'final' },
-                  { key: 'sku_article', label: 'sku_article' },
-                  { key: 'store_sku', label: 'store_sku' },
-                  { key: 'store_visibility', label: 'visibility' }
-                ],
-                'Compare preview is empty'
-              )}
-            </Section>
-          ) : null}
-        </div>
+        <DataTab
+          dataFilters={dataFilters}
+          setDataFilters={setDataFilters}
+          activeDataView={activeDataView}
+          setActiveDataView={setActiveDataView}
+          loadMerged={loadMerged}
+          loadFinal={loadFinal}
+          loadCompare={loadCompare}
+          shiftDataOffset={shiftDataOffset}
+          mergedState={mergedState}
+          finalState={finalState}
+          compareState={compareState}
+        />
       ) : null}
 
       {tab === 'jobs' ? (
-        <div className="grid">
-          <Section
-            title="Jobs"
-            extra={<button className="btn" onClick={refreshCore}>Reload</button>}
-          >
-            <div className="status-line">{jobsStatus}</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => (
-                  <tr key={job.id}>
-                    <td>{job.id}</td>
-                    <td>{job.type}</td>
-                    <td>{job.status}</td>
-                    <td>{job.created_at || '-'}</td>
-                    <td>
-                      <div className="actions">
-                        <button className="btn" onClick={() => openJobDetails(job.id)}>
-                          Details
-                        </button>
-                        {job.status === 'running' || job.status === 'queued' ? (
-                          <button className="btn danger" disabled={isReadOnly} onClick={() => cancelJob(job.id)}>
-                            Cancel
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-
-          <Section
-            title="Logs"
-            subtitle="Операційний потік помилок і попереджень"
-            extra={
-              <div className="actions">
-                <select value={logsLevel} onChange={(event) => setLogsLevel(event.target.value)}>
-                  <option value="">all</option>
-                  <option value="error">error</option>
-                  <option value="warning">warning</option>
-                  <option value="info">info</option>
-                </select>
-                <input
-                  value={logsJobId}
-                  onChange={(event) => setLogsJobId(event.target.value)}
-                  placeholder="jobId"
-                  style={{ width: 110 }}
-                />
-                <button className="btn" onClick={refreshCore}>Reload</button>
-                <button
-                  className="btn"
-                  onClick={() => {
-                    setLogsLevel('');
-                    setLogsJobId('');
-                    void refreshCore();
-                  }}
-                >
-                  Reset
-                </button>
-              </div>
-            }
-          >
-            <pre>{toJsonString(logs.slice(0, 120))}</pre>
-          </Section>
-
-          {jobDetails.jobId ? (
-            <Section
-              title={`Job details #${jobDetails.jobId}`}
-              extra={
-                <div className="actions">
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      if (jobDetails.jobId) {
-                        void openJobDetails(jobDetails.jobId);
-                      }
-                    }}
-                  >
-                    Reload details
-                  </button>
-                  <button className="btn" onClick={closeJobDetails}>Close</button>
-                </div>
-              }
-            >
-              {jobDetails.loading ? <div className="status-line">Loading...</div> : null}
-              {jobDetails.error ? <div className="status-line error">{jobDetails.error}</div> : null}
-              {jobDetails.payload ? (
-                <div className="grid">
-                  <div>
-                    <h4 className="block-title">Job</h4>
-                    <pre>{toJsonString(jobDetails.payload.job || {})}</pre>
-                  </div>
-                  <div>
-                    <h4 className="block-title">Children</h4>
-                    <pre>{toJsonString(jobDetails.payload.children || [])}</pre>
-                  </div>
-                  <div>
-                    <h4 className="block-title">Logs (latest)</h4>
-                    <pre>{toJsonString((jobDetails.payload.logs || []).slice(0, 200))}</pre>
-                  </div>
-                </div>
-              ) : null}
-            </Section>
-          ) : null}
-        </div>
+        <JobsTab
+          refreshCore={refreshCore}
+          jobsStatus={jobsStatus}
+          jobs={jobs}
+          openJobDetails={openJobDetails}
+          isReadOnly={isReadOnly}
+          cancelJob={cancelJob}
+          logsLevel={logsLevel}
+          setLogsLevel={setLogsLevel}
+          logsJobId={logsJobId}
+          setLogsJobId={setLogsJobId}
+          logs={logs}
+          jobDetails={jobDetails}
+          closeJobDetails={closeJobDetails}
+        />
       ) : null}
     </div>
   );

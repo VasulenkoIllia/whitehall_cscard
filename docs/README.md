@@ -1,15 +1,16 @@
 # Документація whitehall_cscard
 
-Цей каталог містить базову документацію, перенесену з робочого проєкту Horoshop.
+Цей каталог містить актуальну документацію по модульному CS-Cart пайплайну і архівні матеріали з legacy-переносу.
 
 Основні файли:
 - `AUDIT_MODULAR_BASELINE_2026_03.md` — фактичний аудит legacy vs `whitehall_cscard`, критичні ризики, скоригований план і вже внесені стабілізаційні правки.
 - `PLAN_MODULAR_SINGLE_REPO_2026_03.md` — план модульної реархітектури в одному репозиторії з можливістю заміни конектора (Horoshop → CS-Cart).
 - `CURRENT_FUNCTIONALITY.md` — опис поточного функціоналу (імпорт, фіналізація, експорт).
-- `IMPLEMENTATION_STAGES.md` — початковий план перенесення логіки з Apps Script у Node.js/БД.
+- `IMPLEMENTATION_STAGES.md` — архівний початковий план (historical context, не source of truth).
 - `RUNBOOK_FINALIZE_STABILITY_2026_03.md` — ранбук стабілізації етапу finalize.
 - `RUNBOOK_LOAD_AUDIT_2026_03.md` — сценарій контрольованого load-аудиту 100k/300k/500k.
 - `RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md` — stress-аудит backend (multi-iteration, dry-run store batch, без запису в сайт).
+- `RUNBOOK_INVARIANT_INTEGRATION_TESTS_2026_03.md` — інтеграційний suite критичних інваріантів (mapping/dedup/override/resume guards).
 - `RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md` — вигрузка/перенос supplier config зі старої БД у нову для тестування parity.
 - `RUNBOOK_SAFE_BACKEND_TEST_NO_STORE_WRITE_2026_03.md` — покроковий тест пайплайна без запису в магазин (тільки local DB + read-only compare).
 - `RUNBOOK_BACKEND_CUTOVER_CHECKLIST_2026_03.md` — preflight-гейти готовності backend перед production store import.
@@ -25,7 +26,7 @@
 
 Цей репозиторій `whitehall_cscard` буде використовувати спільне ядро та окремий конектор під CS-Cart. Для заміни конектора див. план у `PLAN_MODULAR_SINGLE_REPO_2026_03.md` (етапи 1–5).
 
-Важливо: `CURRENT_FUNCTIONALITY.md` описує цільовий/legacy функціонал, а не повний фактичний стан `whitehall_cscard`. Для чесного стану поточної реалізації див. `AUDIT_MODULAR_BASELINE_2026_03.md`.
+Важливо: `CURRENT_FUNCTIONALITY.md` — головне джерело фактичного стану реалізації. `AUDIT_MODULAR_BASELINE_2026_03.md` та `IMPLEMENTATION_STAGES.md` зберігаються як історичний контекст.
 
 Швидкий доступ / auth:
 - Стратегія зараз `AUTH_STRATEGY=env` (мінімальна), користувачі задаються в `.env` через `AUTH_USERS_JSON`.

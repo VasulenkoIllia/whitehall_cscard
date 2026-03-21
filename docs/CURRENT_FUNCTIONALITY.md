@@ -3,7 +3,7 @@
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
 - `Horoshop` тимчасово винесено за межі поточного етапу.
-- Frontend перенесення на React розпочато (див. `docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md`).
+- Frontend перенесення на React закрито по плану (див. `docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md`, Phase 5).
 - У React-адмінці вже реалізовано ключові операторські екрани:
   - `Огляд` (jobs/readiness/actions),
   - `Постачальники` (search/sort + CRUD + bulk update),
@@ -14,6 +14,8 @@
   - додано form-level валідації і inline помилки для операторських форм.
   - додано preflight-підтвердження для destructive дій (`cleanup`, `delete supplier/source`, `apply all_suppliers`).
   - додано retry UX для критичних mutating API дій (збереження/апдейти/джоби).
+  - додано глобальну toast/notification систему для операторських дій і помилок.
+  - фронтенд-структура модульна: вкладки винесені у `frontend/src/tabs/*`, `App.jsx` виконує роль контейнера стану.
 
 ## Імпорт даних
 - Імпорт Google Sheets у `products_raw` з перевіркою mapping і skip-логікою.
@@ -111,17 +113,23 @@
 - Є scripted backend stress-аудит контур:
   - `npm run audit:stress`
   - runbook: `docs/RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md`
+- Є scripted integration-invariants контур:
+  - `npm run test:invariants`
+  - runbook: `docs/RUNBOOK_INVARIANT_INTEGRATION_TESTS_2026_03.md`
 - Є scripted readiness-зріз перед cutover:
   - `npm run backend:readiness`
   - `GET /admin/api/backend-readiness`
 - Є scripted SKU-audit перед cutover:
   - `npm run store:sku-audit`
+- Preflight sign-off контур (`store:sku-audit -> mirror:sync -> backend:readiness`) успішно прогнано на локальному середовищі 2026-03-21:
+  - `duplicate_sku_count = 0`
+  - `gates.ready_for_store_import = true`
+  - `gates.ready_for_continuous_runs = true`
 - Є scripted перенос supplier config з legacy:
   - `npm run export:legacy-config`
   - `npm run import:legacy-config`
   - runbook: `docs/RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md`
 
 ## Ще не закрито до повного parity
-- Інтеграційні тести на критичні інваріанти бізнес-логіки.
 - E2E cutover-прогін на staging/production-like даних по цільових постачальниках (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
-- Дотиснути UX parity React адмінки до 100% legacy-флоу (детальний CRUD/редагування markup rule sets із conditions прямо у UI).
+- Зафіксувати staging tuning baseline для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST`, `CSCART_IMPORT_CONCURRENCY`.

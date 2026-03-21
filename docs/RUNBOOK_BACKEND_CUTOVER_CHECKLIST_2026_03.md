@@ -4,6 +4,16 @@
 - Дати один повторюваний preflight перед production `store_import`.
 - Не змінювати бізнес-логіку, тільки перевірити готовність backend-інфраструктури.
 
+## 0) Invariant integration suite
+```bash
+cd /Users/monstermac/WebstormProjects/whitehall_cscard
+set -a; source .env; set +a
+npm run test:invariants
+```
+
+Очікування:
+- JSON результат із `"ok": true`.
+
 ## 1) SKU duplicate audit (read-only)
 ```bash
 cd /Users/monstermac/WebstormProjects/whitehall_cscard
@@ -48,3 +58,8 @@ curl -sS -b /tmp/wh_safe.cookies \
 - `data_volume.products_raw_rows` + `products_raw_oldest_created_at` — контроль росту raw.
 - `scheduler.cleanup_enabled` — чи увімкнений auto-retention.
 - Для безпечного тестового контуру тримати `update_pipeline` scheduler вимкненим, щоб уникнути автоматичного `store_import`.
+
+## Latest local snapshot (2026-03-21)
+- `store:sku-audit`: `duplicate_sku_count = 0`
+- `mirror:sync`: `upserted = 660`, `deleted = 0`
+- `backend:readiness`: `gates.ready_for_store_import = true`, `gates.ready_for_continuous_runs = true`

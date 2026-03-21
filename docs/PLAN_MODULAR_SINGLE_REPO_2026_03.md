@@ -25,7 +25,7 @@
 
 ## Етапи повного паритету
 
-### Phase 1 (in progress): Import parity + orchestration parity
+### Phase 1 (done): Import parity + orchestration parity
 Ціль:
 - повний контроль імпорту по сценаріях legacy: all/source/supplier;
 - однакова lock/конкурентна семантика.
@@ -39,7 +39,7 @@
   - `POST /admin/api/jobs/import-source`
   - `POST /admin/api/jobs/import-supplier`
 
-### Phase 2 (next): Admin/data-management parity (без зміни правил)
+### Phase 2 (done): Admin/data-management parity (без зміни правил)
 Ціль:
 - перенести CRUD і операційні API з legacy в модульну структуру:
   - suppliers
@@ -54,24 +54,27 @@
 - виділяти read/write сервіси per-domain для прогнозованої підтримки.
 
 Поточний статус:
-- `suppliers`: in progress (CRUD + bulk update + search + A-Я sort API ready)
-- `sources`: in progress (CRUD API ready)
-- `mappings`: in progress (latest get/save API ready, `comment` field support added)
-- `source-sheets/source-preview`: in progress (API ready for mapping flow)
-- `markup rule sets`: in progress (list/create/update/default/apply API ready, `markup_settings` wired)
-- `price overrides`: in progress (list/upsert/update API ready)
-- `stats/logs/read parity`: in progress (`/admin/api/logs`, `/admin/api/stats` ready)
-- `preview/export parity`: in progress (`merged/final/compare` preview + CSV export API ready)
-- `cron/scheduler settings parity`: in progress (`/admin/api/cron-settings` + DB persistence + runtime apply ready)
+- `suppliers`: done (CRUD + bulk update + search + A-Я sort API)
+- `sources`: done (CRUD API)
+- `mappings`: done (latest get/save API, `comment` field support)
+- `source-sheets/source-preview`: done (API for mapping flow)
+- `markup rule sets`: done (list/create/update/default/apply API, `markup_settings` wired)
+- `price overrides`: done (list/upsert/update API)
+- `stats/logs/read parity`: done (`/admin/api/logs`, `/admin/api/stats`)
+- `preview/export parity`: done (`merged/final/compare` preview + CSV export API)
+- `cron/scheduler settings parity`: done (`/admin/api/cron-settings` + DB persistence + runtime apply)
 
-### Phase 3: Export/preview parity для CS-Cart
+### Phase 3 (done): Export/preview parity для CS-Cart
 Ціль:
 - довести preview/export контролі до parity з legacy для оператора:
   - final preview/export
   - compare preview/export
   - стабільні bounded payload responses для великих вибірок.
 
-### Phase 4: Високе навантаження і стабільність
+Статус:
+- `final/compare` preview/export працюють у backend API і React admin UI.
+
+### Phase 4 (in progress): Високе навантаження і стабільність
 Ціль:
 - підтвердити виробничу стабільність під цільовим обсягом.
 
@@ -93,11 +96,12 @@
 Поточний статус:
 - scripted load-audit контур додано (`npm run audit:load`, `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`)
 - scripted stress-аудит контур додано (`npm run audit:stress`, `docs/RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md`)
+- scripted invariant integration suite додано (`npm run test:invariants`, `docs/RUNBOOK_INVARIANT_INTEGRATION_TESTS_2026_03.md`)
 - readiness preflight snapshot додано (`npm run backend:readiness`, `GET /admin/api/backend-readiness`)
 - SKU duplicate audit додано (`npm run store:sku-audit`)
-- лишається прогін на staging і фіксація фактичного tuning baseline
+- лишається staging-прогін і фіксація фактичного tuning baseline для target store
 
-### Phase 5: Migration cutover readiness
+### Phase 5 (in progress): Migration cutover readiness
 Ціль:
 - закрити ризики production cutover.
 
@@ -107,12 +111,13 @@
 - retention і recovery runbook перевірені на staging.
 - є керований шлях переносу supplier config зі старої БД (`export/import legacy-config` runbook).
 
+## Що залишилось закрити (фактичний backlog)
+- E2E cutover-прогін на staging/production-like даних (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
+- Фіксація tuning baseline на staging для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST`, `CSCART_IMPORT_CONCURRENCY`.
+
 ## Пропозиції для прискорення без зміни бізнес-логіки
-- Додати lightweight integration tests на критичні інваріанти:
-  - mapping validation
-  - dedup winner selection
-  - price override precedence
-  - resume mismatch guards.
+- Підтримувати регулярний прогін інваріантного інтеграційного suite:
+  - `npm run test:invariants` (mapping validation, dedup winner selection, price override precedence, resume mismatch guards).
 - Винести важкі SQL (stats/export) у окремі query-модулі з контрольованими timeout.
 - Додати явні operational метрики в jobs meta:
   - rows imported/finalized/exported
@@ -120,7 +125,6 @@
   - warnings density.
 
 ## Короткий execution plan на найближчі кроки
-1. Виконати data-integrity preflight для CS-Cart на target store: `store:sku-audit` -> cleanup дублів у магазині (якщо є) -> `mirror:sync` -> `backend:readiness`.
-2. Додати інтеграційні тести на mapping/dedup/override/resume інваріанти.
-3. Прогнати staged load tests та зафіксувати tuning-профіль у runbook.
-4. Провести тестовий перенос legacy supplier config (WHITE HALL, sevrukov) і валідацію імпорту.
+1. Прогнати staging E2E (`import_supplier -> finalize -> store_import`) і зафіксувати tuning-профіль у runbook.
+2. Зафіксувати параметри `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST`, `CSCART_IMPORT_CONCURRENCY` для target store.
+3. Перед production запуском пройти preflight: `store:sku-audit` -> cleanup дублів (якщо є) -> `mirror:sync` -> `backend:readiness`.

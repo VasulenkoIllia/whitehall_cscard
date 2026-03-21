@@ -14,11 +14,12 @@
 - Перемикання магазину відбувається через `ACTIVE_STORE`, а не через жорсткі імпорти сервісів.
 - Додано вбудований scheduler (env-driven) для job orchestration без окремого зовнішнього cron-процесу.
 
-## Наступний порядок переносу (активно працюємо тільки з CS-Cart)
-1. (in progress) Імпорт Google Sheets у `src/core/pipeline/importerDb` (CS-Cart цикл).
-2. (done) Finalize UPSERT у `FinalizerDb`, індекси/партиції.
-3. (done) Нейтральний preview builder (`ExportPreviewDb`) → CsCart/Horoshop конектори.
-4. (later) Horoshop gateway і модуль буде додано окремо; наразі `ACTIVE_STORE` = cscart.
+## Статус переносу (активно працюємо тільки з CS-Cart)
+1. (done) Імпорт Google Sheets у `src/core/pipeline/importerDb` (сценарії `import_all/import_source/import_supplier`).
+2. (done) Finalize staged merge path у `FinalizerDb`, індекси/партиції.
+3. (done) Нейтральний preview builder (`ExportPreviewDb`) + CS-Cart connector/gateway.
+4. (in progress) Cutover hardening: інтеграційні тести інваріантів + staging E2E/tuning baseline.
+5. (later) Horoshop gateway і модуль буде додано окремо; наразі `ACTIVE_STORE=cscart`.
 
 ## Retention & cleanup (для 5×500k запусків/добу)
 - Партиціювання `products_raw` по дню/`created_at`; індекс партицій `(job_id, article, size)`. Видалення через drop partition за `RETENTION_DAYS`, залишаючи останні `IMPORT_RETAIN_JOBS` успішних import_all навіть якщо вони старші.
@@ -34,7 +35,7 @@
 - `CSCART_ITEMS_PER_PAGE` — розмір сторінки mirror (рекомендовано 1000, виміряно на whitehall.com.ua).
 - `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST` — ліміт запитів при оновленні товарів (стартово 10 RPS, burst 20) з backoff на 429/5xx.
 - `CSCART_ALLOW_CREATE` — дозволити POST створення нових SKU (default false). За замовчуванням тільки PUT по mirror (update-only).
-- `HOROSHOP_RATE_LIMIT_RPS`, `HOROSHOP_RATE_LIMIT_BURST` — throttle для Horoshop API (стартово 5 RPS, burst 10).
+- `HOROSHOP_RATE_LIMIT_RPS`, `HOROSHOP_RATE_LIMIT_BURST` — зарезервовано для майбутнього Horoshop-конектора (у поточному CS-Cart scope не використовується).
 
 ## Scheduler env (pipeline automation)
 - `SCHEDULER_ENABLED` — глобально увімкнути scheduler (`true|false`, default `false`).
@@ -55,7 +56,7 @@
 - Стратегія за замовчуванням: cookie-сесії + таблиця `users` або env-список (bcrypt-хеші), без реєстрацій.
 - Мінімальні env: `AUTH_STRATEGY=db|env`, `AUTH_SESSION_SECRET`, для env-варіанту `AUTH_USERS_JSON=[{email, password_hash, role}]`.
 - Усі `/admin` і `/admin/api` захищені middleware; GET-доступ для viewer, mutating — тільки admin.
-- Статус: middleware + login/logout API реалізовано, таблиця `users` додана (міграція 020); інтеграція з реальними маршрутизаторами admin-ui — TODO.
+- Статус: middleware + login/logout API реалізовано, таблиця `users` додана (міграція 020), `/admin` і `/admin/api` закриті role-gates (`viewer/admin`), login/logout інтегровано у React admin UI.
 
 ## Alerts env (optional)
 - `TELEGRAM_BOT_TOKEN` — токен Telegram bot.

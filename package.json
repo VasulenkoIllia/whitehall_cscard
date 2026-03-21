@@ -16,6 +16,7 @@
     "backend:readiness": "node dist/scripts/runBackendReadiness.js",
     "audit:load": "node dist/scripts/runLoadAudit.js",
     "audit:stress": "node dist/scripts/runStressAudit.js",
+    "test:invariants": "node dist/scripts/runInvariantIntegrationTests.js",
     "export:legacy-config": "node dist/scripts/exportLegacySupplierConfig.js",
     "import:legacy-config": "node dist/scripts/importSupplierConfigSnapshot.js"
   },
