@@ -53,6 +53,15 @@
 - правила ціноутворення/дедупу не змінювати;
 - виділяти read/write сервіси per-domain для прогнозованої підтримки.
 
+Поточний статус:
+- `suppliers`: in progress (CRUD + bulk update API ready)
+- `sources`: in progress (CRUD API ready)
+- `mappings`: in progress (latest get/save API ready)
+- `source-sheets/source-preview`: in progress (API ready for mapping flow)
+- `markup rule sets`: in progress (list/create/update/apply API ready)
+- `price overrides`: in progress (list/upsert/update API ready)
+- `stats/logs/read parity`: in progress (`/admin/api/logs`, `/admin/api/stats` ready)
+
 ### Phase 3: Export/preview parity для CS-Cart
 Ціль:
 - довести preview/export контролі до parity з legacy для оператора:

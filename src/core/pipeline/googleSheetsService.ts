@@ -119,6 +119,14 @@ export interface SheetInfo {
   columnCount: number | null;
 }
 
+export interface SheetPreviewResult {
+  spreadsheetId: string;
+  sheetName: string;
+  headerRow: number;
+  hasHeader: boolean;
+  rows: string[][];
+}
+
 export async function getSheetInfo(url: string, sheetName?: string | null): Promise<SheetInfo> {
   try {
     const spreadsheetId = parseSheetId(url);
@@ -196,6 +204,63 @@ export async function getSheetRowChunk(
         currentEnd = limits.maxRows;
       }
     }
+  } catch (err) {
+    throw normalizeGoogleSheetsError(err);
+  }
+}
+
+export async function getSheetPreview(
+  url: string,
+  sheetName: string | null = null,
+  headerRow = 1,
+  sampleRows = 5
+): Promise<SheetPreviewResult> {
+  try {
+    const { sheets, spreadsheetId, sheetName: targetSheetName, rowCount } = await getSheetInfo(
+      url,
+      sheetName
+    );
+
+    const rawHeaderRow = Number(headerRow);
+    const hasHeader = Number.isFinite(rawHeaderRow) && rawHeaderRow > 0;
+    const startRow = hasHeader ? rawHeaderRow : 1;
+    const sampleCount = Math.max(Number(sampleRows) || 0, 0);
+    let endRow = hasHeader ? startRow + sampleCount : startRow + Math.max(sampleCount - 1, 0);
+
+    if (rowCount && startRow > rowCount) {
+      throw new Error('Header row out of range');
+    }
+
+    if (rowCount) {
+      endRow = Math.min(endRow, rowCount);
+    }
+
+    const rows = await getSheetRowChunk(sheets, spreadsheetId, targetSheetName, startRow, endRow);
+    return {
+      spreadsheetId,
+      sheetName: targetSheetName,
+      headerRow: hasHeader ? startRow : 0,
+      hasHeader,
+      rows
+    };
+  } catch (err) {
+    throw normalizeGoogleSheetsError(err);
+  }
+}
+
+export async function listSheetNames(url: string): Promise<string[]> {
+  try {
+    const auth = buildJwtClient();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = parseSheetId(url);
+    if (!spreadsheetId) {
+      throw new Error('Invalid Google Sheets URL');
+    }
+    const meta = await requestWithRetry<any>(() => sheets.spreadsheets.get({ spreadsheetId }));
+    return (meta.data.sheets || [])
+      .map((sheet: any) => sheet.properties?.title)
+      .filter((value: unknown) => Boolean(value))
+      .map((value: string) => String(value));
   } catch (err) {
     throw normalizeGoogleSheetsError(err);
   }

@@ -29,6 +29,7 @@ import { CleanupService } from '../core/jobs/CleanupService';
 import { StoreMirrorService } from '../core/jobs/StoreMirrorService';
 import { JobScheduler } from '../core/jobs/JobScheduler';
 import type { StoreImportBatch } from '../core/domain/store';
+import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -149,6 +150,7 @@ export interface Application {
   jobService: JobService;
   jobRunner: PipelineJobRunner<unknown>;
   scheduler: JobScheduler;
+  catalogAdminService: CatalogAdminService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
@@ -161,6 +163,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const logService = new LogService(pool);
   const connector = createConnector(config);
   const storeMirrorService = new StoreMirrorService(pool);
+  const catalogAdminService = new CatalogAdminService(pool);
   const pipeline = new PipelineOrchestrator({
     sourceImporter: createSourceImporter(pool, logService, env.PRICE_AT_IMPORT === 'true'),
     finalizer: createFinalizer(
@@ -225,6 +228,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     jobService,
     jobRunner,
     scheduler,
+    catalogAdminService,
     cleanupService,
     storeMirrorService,
     auth,

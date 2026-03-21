@@ -12,6 +12,22 @@
   - `import_supplier`
 - Всі сценарії виконуються через jobs-layer з lock-контролем.
 
+## Catalog admin API (backend)
+- Доступні CRUD-операції для:
+  - `suppliers` (включно з bulk update)
+  - `sources`
+  - `mappings` (latest get/save per supplier/source)
+- Доступні API для pricing-керування:
+  - `markup rule sets` (list/create/update/apply to suppliers)
+  - `price overrides` (list/upsert/update)
+- Доступні операційні read API:
+  - `logs` (global/by job/by level)
+  - `stats` (counts + last pipeline/import jobs)
+- Доступні Google Sheets helper API для джерел:
+  - `source-sheets` (лист аркушів + selected)
+  - `source-preview` (headers + sampleRows для mapping UI)
+- Ендпоїнти винесені в `admin/api/*` і захищені ролями `viewer/admin`.
+
 ## Finalize і preview
 - Finalize формує `products_final` через staged merge path.
 - Застосовується поточна бізнес-логіка пріоритетів/цін/дедупу без зміни правил.

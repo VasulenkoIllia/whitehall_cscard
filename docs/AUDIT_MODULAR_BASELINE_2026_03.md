@@ -369,6 +369,106 @@ Effect:
 - keeps single lock/runner model and same concurrency safety guarantees
 - improves recoverability: operators can rerun smaller scopes instead of full import when needed
 
+### 15. Catalog admin backend API parity (suppliers/sources/mappings)
+
+Changed files:
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/createApplication.ts`
+- `src/app/http/server.ts`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- introduced dedicated catalog admin service for DB operations (modularized backend path)
+- added API parity for core catalog entities:
+  - `GET/POST/PUT/DELETE /admin/api/suppliers`
+  - `PUT /admin/api/suppliers/bulk`
+  - `GET/POST/PUT/DELETE /admin/api/sources`
+  - `GET/POST /admin/api/mappings/:supplierId`
+- added server-level validations for numeric IDs and required payload fields
+- retained existing auth role model (`viewer` for reads, `admin` for writes)
+
+Effect:
+- closes a major backend parity gap versus legacy admin routes
+- moves data-management logic out of monolithic route handler into reusable service
+- prepares next phase (`markup_rule_sets`, `price_overrides`, stats/read parity) without changing business logic
+
+### 16. Pricing admin parity (markup rules + price overrides)
+
+Changed files:
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/http/server.ts`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- added markup-rule-set backend APIs:
+  - `GET /admin/api/markup-rule-sets`
+  - `POST /admin/api/markup-rule-sets`
+  - `PUT /admin/api/markup-rule-sets/:id`
+  - `POST /admin/api/markup-rule-sets/apply`
+- added price-override backend APIs:
+  - `GET /admin/api/price-overrides`
+  - `POST /admin/api/price-overrides`
+  - `PUT /admin/api/price-overrides/:id`
+- preserved legacy behavior for override impact:
+  - active override writes `price_final` to matching `products_final`
+  - override deactivation triggers recompute from supplier markup/rule conditions
+
+Effect:
+- closes another high-impact parity gap in pricing management backend
+- keeps business rules centralized and auditable in service layer
+- reduces risk of manual DB edits during operations
+
+### 17. Operational read APIs parity (logs + stats)
+
+Changed files:
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/http/server.ts`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- added `GET /admin/api/logs` with filters:
+  - `jobId`
+  - `level`
+  - `limit`
+- added `GET /admin/api/stats` with core counters and latest job summaries:
+  - suppliers/sources/raw/final counts
+  - latest job
+  - latest `update_pipeline`
+  - latest `store_import`
+
+Effect:
+- restores operational observability paths needed for backend-only rollout
+- lets operators audit runtime health without direct DB access
+- keeps analytics queries in backend service layer, not in route handlers
+
+### 18. Source inspection parity for mapping flow (Google Sheets)
+
+Changed files:
+- `src/core/pipeline/googleSheetsService.ts`
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/http/server.ts`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- added Google Sheets utility methods:
+  - `listSheetNames(url)`
+  - `getSheetPreview(url, sheetName, headerRow, sampleRows)`
+- added source lookup helpers in catalog admin service:
+  - `getSourceById`
+  - `getActiveImportSourceById`
+- added API endpoints:
+  - `GET /admin/api/source-sheets`
+  - `GET /admin/api/source-preview`
+
+Effect:
+- restores legacy source-inspection backend capability needed before frontend mapping screens
+- reduces operator risk when configuring mapping/header row
+- keeps source-preview logic in backend, ready for future frontend integration
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path

@@ -5,6 +5,7 @@ import type { Application as AppContext } from '../createApplication';
 import type { Request, Response } from 'express';
 import { createAuthMiddleware } from './authMiddleware';
 import { renderLoginPage } from './loginPage';
+import { getSheetPreview, listSheetNames } from '../../core/pipeline/googleSheetsService';
 
 export function createHttpServer(appContext: AppContext) {
   const app = express();
@@ -13,6 +14,7 @@ export function createHttpServer(appContext: AppContext) {
   const pipeline = appContext.pipeline;
   const jobs = appContext.jobService;
   const jobRunner = appContext.jobRunner;
+  const catalogAdmin = appContext.catalogAdminService;
   const logs = appContext.logService;
   const adminStaticPath = path.join(__dirname, '..', '..', 'public', 'admin');
 
@@ -138,6 +140,359 @@ export function createHttpServer(appContext: AppContext) {
     res.json({ role: req.userRole || null })
   );
 
+  app.get('/admin/api/suppliers', authMw.requireRole('viewer'), async (_req: Request, res: Response) => {
+    try {
+      const items = await catalogAdmin.listSuppliers();
+      return res.json(items);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'suppliers_list_error') });
+    }
+  });
+
+  app.post('/admin/api/suppliers', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const created = await catalogAdmin.createSupplier(req.body || {});
+      return res.json(created);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'supplier_create_error') });
+    }
+  });
+
+  app.put('/admin/api/suppliers/bulk', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const result = await catalogAdmin.bulkUpdateSuppliers(req.body || {});
+      return res.json(result);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'supplier_bulk_update_error') });
+    }
+  });
+
+  app.put('/admin/api/suppliers/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const supplierId = parseRequiredPositiveInt(req.params.id, 'supplier id');
+      const updated = await catalogAdmin.updateSupplier(supplierId, req.body || {});
+      return res.json(updated);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'supplier_update_error') });
+    }
+  });
+
+  app.delete('/admin/api/suppliers/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const supplierId = parseRequiredPositiveInt(req.params.id, 'supplier id');
+      const deleted = await catalogAdmin.deleteSupplier(supplierId);
+      if (!deleted) {
+        return res.status(404).json({ error: 'supplier not found' });
+      }
+      return res.json(deleted);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'supplier_delete_error') });
+    }
+  });
+
+  app.get('/admin/api/sources', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const supplierIdRaw = typeof req.query.supplierId === 'string' ? Number(req.query.supplierId) : null;
+      const supplierId =
+        supplierIdRaw !== null && Number.isFinite(supplierIdRaw) && supplierIdRaw > 0
+          ? Math.trunc(supplierIdRaw)
+          : null;
+      const items = await catalogAdmin.listSources(supplierId);
+      return res.json(items);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'sources_list_error') });
+    }
+  });
+
+  app.post('/admin/api/sources', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const created = await catalogAdmin.createSource(req.body || {});
+      return res.json(created);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'source_create_error') });
+    }
+  });
+
+  app.put('/admin/api/sources/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const sourceId = parseRequiredPositiveInt(req.params.id, 'source id');
+      const updated = await catalogAdmin.updateSource(sourceId, req.body || {});
+      return res.json(updated);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'source_update_error') });
+    }
+  });
+
+  app.delete('/admin/api/sources/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const sourceId = parseRequiredPositiveInt(req.params.id, 'source id');
+      const deleted = await catalogAdmin.deleteSource(sourceId);
+      if (!deleted) {
+        return res.status(404).json({ error: 'source not found' });
+      }
+      return res.json(deleted);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'source_delete_error') });
+    }
+  });
+
+  app.get('/admin/api/source-sheets', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const sourceId = parseRequiredPositiveInt(req.query.sourceId, 'sourceId');
+      const source = await catalogAdmin.getSourceById(sourceId);
+      if (!source) {
+        return res.status(404).json({ error: 'source not found' });
+      }
+      if (source.source_type !== 'google_sheet') {
+        return res.status(400).json({ error: 'unsupported source type' });
+      }
+
+      const sheets = await listSheetNames(String(source.source_url || ''));
+      let selectedSheetName =
+        typeof source.sheet_name === 'string' && source.sheet_name.trim()
+          ? source.sheet_name.trim()
+          : null;
+      if (selectedSheetName && sheets.indexOf(selectedSheetName) === -1) {
+        selectedSheetName = null;
+      }
+      if (!selectedSheetName) {
+        selectedSheetName = sheets[0] || null;
+      }
+
+      return res.json({
+        sourceId: source.id,
+        sheets,
+        selectedSheetName
+      });
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'source_sheets_error') });
+    }
+  });
+
+  app.get('/admin/api/source-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const sourceId = parseRequiredPositiveInt(req.query.sourceId, 'sourceId');
+      const headerRowParam = req.query.headerRow;
+      const headerRow =
+        typeof headerRowParam === 'undefined' ? 1 : Number(headerRowParam);
+      const sheetName =
+        typeof req.query.sheetName === 'string' && req.query.sheetName.trim()
+          ? req.query.sheetName.trim()
+          : null;
+
+      const source = await catalogAdmin.getActiveImportSourceById(sourceId);
+      if (!source) {
+        return res.status(404).json({ error: 'source not found' });
+      }
+      if (source.source_type !== 'google_sheet') {
+        return res.status(400).json({ error: 'unsupported source type' });
+      }
+
+      const preview = await getSheetPreview(
+        String(source.source_url || ''),
+        sheetName || (source.sheet_name ? String(source.sheet_name) : null),
+        headerRow,
+        5
+      );
+
+      const hasHeader = preview.headerRow > 0;
+      let headers: string[] = [];
+      let sampleRows: string[][] = [];
+      if (hasHeader) {
+        headers = preview.rows[0] || [];
+        sampleRows = preview.rows.slice(1);
+      } else {
+        const maxColumns = preview.rows.reduce(
+          (max, row) => Math.max(max, row.length),
+          0
+        );
+        headers = Array.from({ length: maxColumns }, () => '');
+        sampleRows = preview.rows;
+      }
+
+      return res.json({
+        sourceId: source.id,
+        sheetName: preview.sheetName,
+        headerRow: preview.headerRow,
+        headers,
+        sampleRows
+      });
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'source_preview_error') });
+    }
+  });
+
+  app.get(
+    '/admin/api/mappings/:supplierId',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const supplierId = parseRequiredPositiveInt(req.params.supplierId, 'supplierId');
+        const sourceId =
+          typeof req.query.sourceId === 'string' ? Number(req.query.sourceId) : null;
+        const mapping = await catalogAdmin.getLatestMapping(supplierId, sourceId);
+        return res.json(mapping);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'mapping_get_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/mappings/:supplierId',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const supplierId = parseRequiredPositiveInt(req.params.supplierId, 'supplierId');
+        const mapping = await catalogAdmin.saveMapping(supplierId, req.body || {});
+        return res.json(mapping);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'mapping_save_error') });
+      }
+    }
+  );
+
+  app.get(
+    '/admin/api/markup-rule-sets',
+    authMw.requireRole('viewer'),
+    async (_req: Request, res: Response) => {
+      try {
+        const payload = await catalogAdmin.listMarkupRuleSets();
+        return res.json(payload);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'markup_rule_sets_list_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/markup-rule-sets',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const result = await catalogAdmin.createMarkupRuleSet(req.body || {});
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'markup_rule_set_create_error') });
+      }
+    }
+  );
+
+  app.put(
+    '/admin/api/markup-rule-sets/:id',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const ruleSetId = parseRequiredPositiveInt(req.params.id, 'rule set id');
+        const result = await catalogAdmin.updateMarkupRuleSet(ruleSetId, req.body || {});
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'markup_rule_set_update_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/markup-rule-sets/apply',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const result = await catalogAdmin.applyMarkupRuleSet(req.body || {});
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'markup_rule_set_apply_error') });
+      }
+    }
+  );
+
+  app.get(
+    '/admin/api/price-overrides',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const limit = parseLimit(req.query.limit, 100);
+        const offsetRaw = Number(req.query.offset);
+        const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.trunc(offsetRaw)) : 0;
+        const search = typeof req.query.search === 'string' ? req.query.search : null;
+        const result = await catalogAdmin.listPriceOverrides({
+          limit,
+          offset,
+          search
+        });
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'price_overrides_list_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/price-overrides',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const result = await catalogAdmin.upsertPriceOverride(req.body || {});
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'price_override_save_error') });
+      }
+    }
+  );
+
+  app.put(
+    '/admin/api/price-overrides/:id',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const overrideId = parseRequiredPositiveInt(req.params.id, 'override id');
+        const result = await catalogAdmin.updatePriceOverride(overrideId, req.body || {});
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'price_override_update_error') });
+      }
+    }
+  );
+
   app.get('/admin/api/preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
     const supplier = typeof req.query.supplier === 'string' ? req.query.supplier : null;
     try {
@@ -168,6 +523,37 @@ export function createHttpServer(appContext: AppContext) {
       });
     } catch (err) {
       res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'store_import_error') });
+    }
+  });
+
+  app.get('/admin/api/logs', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = parseLimit(req.query.limit, 200);
+      const jobIdRaw = typeof req.query.jobId === 'string' ? Number(req.query.jobId) : null;
+      const jobId =
+        jobIdRaw !== null && Number.isFinite(jobIdRaw) && jobIdRaw > 0 ? Math.trunc(jobIdRaw) : null;
+      const level = typeof req.query.level === 'string' ? req.query.level : null;
+      const items = await catalogAdmin.listLogs({
+        jobId,
+        level,
+        limit
+      });
+      return res.json(items);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'logs_list_error') });
+    }
+  });
+
+  app.get('/admin/api/stats', authMw.requireRole('viewer'), async (_req: Request, res: Response) => {
+    try {
+      const stats = await catalogAdmin.getStats();
+      return res.json(stats);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'stats_error') });
     }
   });
 
