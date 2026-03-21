@@ -94,6 +94,9 @@
 - Є scripted backend load-audit контур:
   - `npm run audit:load`
   - runbook: `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`
+- Є scripted backend stress-аудит контур:
+  - `npm run audit:stress`
+  - runbook: `docs/RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md`
 - Є scripted readiness-зріз перед cutover:
   - `npm run backend:readiness`
   - `GET /admin/api/backend-readiness`

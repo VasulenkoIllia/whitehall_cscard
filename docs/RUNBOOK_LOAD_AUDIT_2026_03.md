@@ -1,5 +1,8 @@
 # Runbook: Backend Load Audit (100k / 300k / 500k)
 
+Для multi-iteration stress з dry-run store batch див.
+`docs/RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md` (`npm run audit:stress`).
+
 ## Goal
 - Провести відтворюваний backend-only аудит продуктивності без зміни бізнес-логіки.
 - Зафіксувати метрики для етапів:

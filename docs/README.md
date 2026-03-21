@@ -9,6 +9,7 @@
 - `IMPLEMENTATION_STAGES.md` — початковий план перенесення логіки з Apps Script у Node.js/БД.
 - `RUNBOOK_FINALIZE_STABILITY_2026_03.md` — ранбук стабілізації етапу finalize.
 - `RUNBOOK_LOAD_AUDIT_2026_03.md` — сценарій контрольованого load-аудиту 100k/300k/500k.
+- `RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md` — stress-аудит backend (multi-iteration, dry-run store batch, без запису в сайт).
 - `RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md` — вигрузка/перенос supplier config зі старої БД у нову для тестування parity.
 - `RUNBOOK_SAFE_BACKEND_TEST_NO_STORE_WRITE_2026_03.md` — покроковий тест пайплайна без запису в магазин (тільки local DB + read-only compare).
 - `RUNBOOK_BACKEND_CUTOVER_CHECKLIST_2026_03.md` — preflight-гейти готовності backend перед production store import.

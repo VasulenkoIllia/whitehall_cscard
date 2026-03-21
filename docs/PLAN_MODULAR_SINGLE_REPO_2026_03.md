@@ -92,6 +92,7 @@
 
 Поточний статус:
 - scripted load-audit контур додано (`npm run audit:load`, `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`)
+- scripted stress-аудит контур додано (`npm run audit:stress`, `docs/RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md`)
 - readiness preflight snapshot додано (`npm run backend:readiness`, `GET /admin/api/backend-readiness`)
 - SKU duplicate audit додано (`npm run store:sku-audit`)
 - лишається прогін на staging і фіксація фактичного tuning baseline
