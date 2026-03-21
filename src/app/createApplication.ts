@@ -22,6 +22,7 @@ import { createPgPool } from '../core/db/pgClient';
 import { FinalizerDb } from '../core/pipeline/finalizerDb';
 import { ImporterDb } from '../core/pipeline/importerDb';
 import { LogService } from '../core/pipeline/log';
+import { createTelegramAlertServiceFromEnv } from '../core/alerts/TelegramAlertService';
 import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
 import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
@@ -226,7 +227,10 @@ export interface Application {
 export function createApplication(env: Record<string, string | undefined>): Application {
   const config = loadConfig(env);
   const pool = createPgPoolOrThrow(config.base.databaseUrl);
-  const logService = new LogService(pool);
+  const telegramAlertService = createTelegramAlertServiceFromEnv(env);
+  const logService = new LogService(pool, {
+    errorAlertSink: telegramAlertService
+  });
   const connector = createConnector(config);
   const storeMirrorService = new StoreMirrorService(pool);
   const catalogAdminService = new CatalogAdminService(pool);

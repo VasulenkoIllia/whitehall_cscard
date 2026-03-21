@@ -3,6 +3,14 @@
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
 - `Horoshop` тимчасово винесено за межі поточного етапу.
+- Frontend перенесення на React розпочато (див. `docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md`).
+- У React-адмінці вже реалізовано ключові операторські екрани:
+  - `Огляд` (jobs/readiness/actions),
+  - `Постачальники` (search/sort + CRUD + bulk update),
+  - `Джерела та мапінг` (source CRUD + source sheets/preview + mapping builder + JSON),
+  - `Націнки та override` (markup rule sets: list/default/apply, price overrides: list/upsert/update),
+  - `Дані` (merged/final/compare preview + export),
+  - `Джоби та логи`.
 
 ## Імпорт даних
 - Імпорт Google Sheets у `products_raw` з перевіркою mapping і skip-логікою.
@@ -91,6 +99,9 @@
 - Runtime-активація daily partition для `products_raw`.
 - Cleanup job чистить старі partition/рядки/логи/завершені jobs.
 - Логи мають payload truncation (`LOG_PAYLOAD_MAX_BYTES`) для контролю росту таблиці `logs`.
+- Error-рівень логів має окремий alert-sink у Telegram (`src/core/alerts/TelegramAlertService.ts`):
+  - env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, optional `TELEGRAM_APP_NAME`, `TELEGRAM_TIMEOUT_MS`.
+  - помилка відправки в Telegram не зупиняє основний pipeline/job flow.
 - Є scripted backend load-audit контур:
   - `npm run audit:load`
   - runbook: `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`
@@ -110,3 +121,4 @@
 ## Ще не закрито до повного parity
 - Інтеграційні тести на критичні інваріанти бізнес-логіки.
 - E2E cutover-прогін на staging/production-like даних по цільових постачальниках (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
+- Дотиснути UX parity React адмінки до 100% legacy-флоу (детальний CRUD/редагування markup rule sets із conditions прямо у UI).

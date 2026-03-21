@@ -1,6 +1,11 @@
 import type { Pool } from 'pg';
+import type { ErrorAlertSink } from '../alerts/TelegramAlertService';
 
 export type LogLevel = 'info' | 'warning' | 'error';
+
+type LogServiceOptions = {
+  errorAlertSink?: ErrorAlertSink | null;
+};
 
 const LOG_PAYLOAD_MAX_BYTES = (() => {
   const parsed = Number(process.env.LOG_PAYLOAD_MAX_BYTES || 32768);
@@ -98,7 +103,11 @@ function normalizeLogPayload(data: unknown): unknown {
 }
 
 export class LogService {
-  constructor(private readonly pool: Pool) {}
+  private readonly errorAlertSink: ErrorAlertSink | null;
+
+  constructor(private readonly pool: Pool, options?: LogServiceOptions) {
+    this.errorAlertSink = options?.errorAlertSink || null;
+  }
 
   async log(jobId: number | null, level: LogLevel, message: string, data?: unknown): Promise<void> {
     const payload = normalizeLogPayload(data);
@@ -106,5 +115,14 @@ export class LogService {
       'INSERT INTO logs (job_id, level, message, data) VALUES ($1, $2, $3, $4)',
       [jobId || null, level, message, payload]
     );
+
+    if (level === 'error' && this.errorAlertSink) {
+      await this.errorAlertSink.notifyError({
+        jobId: jobId || null,
+        level,
+        message,
+        data: payload
+      });
+    }
   }
 }

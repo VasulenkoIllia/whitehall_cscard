@@ -1,5 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import fs from 'fs';
 import path from 'path';
 import type { Application as AppContext } from '../createApplication';
 import type { Request, Response } from 'express';
@@ -17,7 +18,9 @@ export function createHttpServer(appContext: AppContext) {
   const catalogAdmin = appContext.catalogAdminService;
   const schedulerSettings = appContext.schedulerSettingsService;
   const logs = appContext.logService;
-  const adminStaticPath = path.join(__dirname, '..', '..', 'public', 'admin');
+  const bundledAdminPath = path.join(__dirname, '..', '..', 'public', 'admin');
+  const workspaceAdminPath = path.join(process.cwd(), 'public', 'admin');
+  const adminStaticPath = fs.existsSync(bundledAdminPath) ? bundledAdminPath : workspaceAdminPath;
 
   const parseLimit = (value: unknown, fallback: number): number => {
     const numeric = Number(value);

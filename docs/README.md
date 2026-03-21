@@ -13,6 +13,7 @@
 - `RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md` — вигрузка/перенос supplier config зі старої БД у нову для тестування parity.
 - `RUNBOOK_SAFE_BACKEND_TEST_NO_STORE_WRITE_2026_03.md` — покроковий тест пайплайна без запису в магазин (тільки local DB + read-only compare).
 - `RUNBOOK_BACKEND_CUTOVER_CHECKLIST_2026_03.md` — preflight-гейти готовності backend перед production store import.
+- `PLAN_FRONTEND_REACT_MIGRATION_2026_03.md` — план повного переносу frontend на React з покроковим покриттям legacy UX.
 - `README_FEED_EXTENSION.md` — розширення імпорту фідів.
 - `ARCHITECTURE_BASELINE_2026_03.md` — що вже закладено в `whitehall_cscard` після рев’ю документації та як це мапиться на legacy-код.
 - `CSCART_CONNECTOR_NOTES.md` — конспект CS-Cart REST API та мапінг під наш нейтральний preview.
@@ -41,3 +42,12 @@
 Scheduler у новому репозиторії:
 - Вбудований env-driven scheduler реалізовано в `src/core/jobs/JobScheduler.ts`.
 - Параметри запуску див. у `ARCHITECTURE_BASELINE_2026_03.md` (розділ `Scheduler env`).
+
+Frontend (React admin):
+- Dev: `npm run frontend:dev`
+- Build: `npm run frontend:build`
+- Build output: `public/admin` (сервер віддає `dist/public/admin` або fallback на `public/admin`).
+
+Telegram alerts (optional):
+- Реалізовано окремим модулем `src/core/alerts/TelegramAlertService.ts`.
+- Env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, optional `TELEGRAM_APP_NAME`, `TELEGRAM_TIMEOUT_MS`.

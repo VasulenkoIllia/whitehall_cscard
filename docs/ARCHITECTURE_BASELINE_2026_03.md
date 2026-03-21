@@ -4,6 +4,7 @@
 - `src/core/config` — централізоване читання та валідація env (`ACTIVE_STORE`, CS-Cart параметри, finalize flags). Horoshop конектор буде підключено окремо при потребі.
 - `src/core/domain` — нейтральні DTO для preview/import/mirror, без прив’язки до конкретного магазину.
 - `src/core/pipeline` — orchestration-шар для кроків `import -> finalize -> export -> store import`, який працює через ін’єкцію портів.
+- `src/core/alerts` — окремий модуль error-alert sink (Telegram), підключений до `LogService` без впливу на бізнес-флоу.
 - `src/connectors/cscart` — активний адаптер CS-Cart (update-only за замовчуванням, throttle/backoff).
 - `src/app` — composition root, де вибирається активний конектор і фіксуються точки переносу з legacy.
 
@@ -55,3 +56,9 @@
 - Мінімальні env: `AUTH_STRATEGY=db|env`, `AUTH_SESSION_SECRET`, для env-варіанту `AUTH_USERS_JSON=[{email, password_hash, role}]`.
 - Усі `/admin` і `/admin/api` захищені middleware; GET-доступ для viewer, mutating — тільки admin.
 - Статус: middleware + login/logout API реалізовано, таблиця `users` додана (міграція 020); інтеграція з реальними маршрутизаторами admin-ui — TODO.
+
+## Alerts env (optional)
+- `TELEGRAM_BOT_TOKEN` — токен Telegram bot.
+- `TELEGRAM_CHAT_ID` — chat/channel id для алертів.
+- `TELEGRAM_APP_NAME` — optional префікс у повідомленні.
+- `TELEGRAM_TIMEOUT_MS` — timeout запиту до Telegram API (default `7000`).
