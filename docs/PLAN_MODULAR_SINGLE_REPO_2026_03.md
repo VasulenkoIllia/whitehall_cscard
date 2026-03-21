@@ -62,6 +62,7 @@
 - `price overrides`: in progress (list/upsert/update API ready)
 - `stats/logs/read parity`: in progress (`/admin/api/logs`, `/admin/api/stats` ready)
 - `preview/export parity`: in progress (`merged/final/compare` preview + CSV export API ready)
+- `cron/scheduler settings parity`: in progress (`/admin/api/cron-settings` + DB persistence + runtime apply ready)
 
 ### Phase 3: Export/preview parity для CS-Cart
 Ціль:

@@ -10,6 +10,20 @@ export interface SchedulerTask {
   action: () => Promise<{ jobId?: number } | void>;
 }
 
+export interface SchedulerTaskSnapshot {
+  name: SchedulerTaskName;
+  enabled: boolean;
+  intervalMinutes: number;
+  runOnStartup: boolean;
+}
+
+export interface SchedulerTaskUpdate {
+  name: SchedulerTaskName;
+  enabled?: boolean;
+  intervalMinutes?: number;
+  runOnStartup?: boolean;
+}
+
 export interface JobSchedulerOptions {
   enabled: boolean;
   tickIntervalMs: number;
@@ -173,6 +187,72 @@ export class JobScheduler {
       this.runningTasks.delete(task.name);
       this.nextRunByTask.set(task.name, Date.now() + task.intervalMs);
     }
+  }
+
+  getTaskSnapshots(): SchedulerTaskSnapshot[] {
+    return this.tasks.map((task) => ({
+      name: task.name,
+      enabled: task.enabled,
+      intervalMinutes: Math.max(1, Math.trunc(task.intervalMs / 60000)),
+      runOnStartup: task.runOnStartup
+    }));
+  }
+
+  async updateTasks(updates: SchedulerTaskUpdate[]): Promise<SchedulerTaskSnapshot[]> {
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return this.getTaskSnapshots();
+    }
+
+    const byName = new Map<SchedulerTaskName, SchedulerTask>();
+    for (let index = 0; index < this.tasks.length; index += 1) {
+      const task = this.tasks[index];
+      byName.set(task.name, task);
+    }
+
+    const changed: string[] = [];
+    for (let index = 0; index < updates.length; index += 1) {
+      const update = updates[index];
+      const task = byName.get(update.name);
+      if (!task) {
+        continue;
+      }
+
+      if (typeof update.enabled === 'boolean') {
+        task.enabled = update.enabled;
+      }
+      if (
+        Number.isFinite(update.intervalMinutes) &&
+        Number(update.intervalMinutes) > 0
+      ) {
+        task.intervalMs = Math.max(60000, Math.trunc(Number(update.intervalMinutes) * 60000));
+      }
+      if (typeof update.runOnStartup === 'boolean') {
+        task.runOnStartup = update.runOnStartup;
+      }
+
+      changed.push(task.name);
+    }
+
+    if (this.started) {
+      const now = Date.now();
+      for (let index = 0; index < this.tasks.length; index += 1) {
+        const task = this.tasks[index];
+        if (!task.enabled) {
+          this.nextRunByTask.delete(task.name);
+          continue;
+        }
+        this.nextRunByTask.set(task.name, now + task.intervalMs);
+      }
+    }
+
+    if (changed.length > 0) {
+      await this.safeLog('info', 'Scheduler tasks updated', {
+        changed,
+        snapshots: this.getTaskSnapshots()
+      });
+    }
+
+    return this.getTaskSnapshots();
   }
 
   private async safeLog(level: LogLevel, message: string, data?: unknown): Promise<void> {

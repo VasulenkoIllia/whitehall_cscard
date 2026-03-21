@@ -26,25 +26,32 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
 
   server = app.listen(application.config.base.port, () => {
-    application.scheduler.start();
-    // eslint-disable-next-line no-console
-    console.log(
-      JSON.stringify(
-        {
-          port: application.config.base.port,
-          activeStore: application.config.base.activeStore,
-          connector: application.connector.store,
-          auth: application.config.auth.strategy,
-          scheduler: {
-            enabled: application.config.scheduler.enabled,
-            tickSeconds: application.config.scheduler.tickSeconds
+    void (async () => {
+      await application.schedulerSettingsService.initialize();
+      application.scheduler.start();
+      // eslint-disable-next-line no-console
+      console.log(
+        JSON.stringify(
+          {
+            port: application.config.base.port,
+            activeStore: application.config.base.activeStore,
+            connector: application.connector.store,
+            auth: application.config.auth.strategy,
+            scheduler: {
+              enabled: application.config.scheduler.enabled,
+              tickSeconds: application.config.scheduler.tickSeconds
+            },
+            migrationTargets: application.migrationTargets
           },
-          migrationTargets: application.migrationTargets
-        },
-        null,
-        2
-      )
-    );
+          null,
+          2
+        )
+      );
+    })().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(err instanceof Error ? err.message : err);
+      process.exit(1);
+    });
   });
 }
 

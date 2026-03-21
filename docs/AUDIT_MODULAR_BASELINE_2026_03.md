@@ -493,6 +493,35 @@ Effect:
 - enables backend-only validation flow before frontend migration
 - avoids extra memory pressure by streaming export rows in chunks
 
+### 20. Scheduler settings parity with DB persistence and runtime reload
+
+Changed files:
+- `src/core/jobs/JobScheduler.ts`
+- `src/core/jobs/SchedulerSettingsService.ts`
+- `src/app/createApplication.ts`
+- `src/app/http/server.ts`
+- `src/index.ts`
+- `migrations/024_create_cron_settings.sql`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- extended scheduler with task snapshots and runtime task updates (enabled/interval/runOnStartup).
+- added scheduler settings service with:
+  - `cron_settings` table initialization/compat columns
+  - default seeding from current scheduler config
+  - settings apply to running scheduler without restart
+  - update_pipeline supplier override via `meta.supplier`
+- added API endpoints:
+  - `GET /admin/api/cron-settings`
+  - `PUT /admin/api/cron-settings`
+- startup now initializes scheduler settings before scheduler start.
+
+Effect:
+- closes backend parity gap for cron/scheduler settings management
+- enables operational tuning of schedule cadence in production without redeploy
+- keeps scheduler behavior aligned with persisted admin settings
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path

@@ -55,6 +55,10 @@
   - `cleanup`
 - Є скасування job (`cancel`) з terminate backend для довгих SQL-операцій.
 - Є scheduler (env-driven) для `update_pipeline`, `store_mirror_sync`, `cleanup`.
+- Є runtime API для scheduler settings:
+  - `GET /admin/api/cron-settings`
+  - `PUT /admin/api/cron-settings`
+  - з персистенсом у таблиці `cron_settings` і застосуванням без рестарту процесу.
 
 ## Стабільність і контроль об’єму
 - Runtime-активація daily partition для `products_raw`.

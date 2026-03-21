@@ -15,6 +15,7 @@ export function createHttpServer(appContext: AppContext) {
   const jobs = appContext.jobService;
   const jobRunner = appContext.jobRunner;
   const catalogAdmin = appContext.catalogAdminService;
+  const schedulerSettings = appContext.schedulerSettingsService;
   const logs = appContext.logService;
   const adminStaticPath = path.join(__dirname, '..', '..', 'public', 'admin');
 
@@ -847,6 +848,28 @@ export function createHttpServer(appContext: AppContext) {
       return res
         .status(readErrorStatus(err))
         .json({ error: readErrorMessage(err, 'stats_error') });
+    }
+  });
+
+  app.get('/admin/api/cron-settings', authMw.requireRole('viewer'), async (_req: Request, res: Response) => {
+    try {
+      const settings = await schedulerSettings.listSettings();
+      return res.json(settings);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'cron_settings_error') });
+    }
+  });
+
+  app.put('/admin/api/cron-settings', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const settings = await schedulerSettings.updateSettings(req.body?.settings);
+      return res.json(settings);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'cron_settings_update_error') });
     }
   });
 

@@ -28,6 +28,7 @@ import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
 import { CleanupService } from '../core/jobs/CleanupService';
 import { StoreMirrorService } from '../core/jobs/StoreMirrorService';
 import { JobScheduler } from '../core/jobs/JobScheduler';
+import { SchedulerSettingsService } from '../core/jobs/SchedulerSettingsService';
 import type { StoreImportBatch } from '../core/domain/store';
 import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 
@@ -150,6 +151,7 @@ export interface Application {
   jobService: JobService;
   jobRunner: PipelineJobRunner<unknown>;
   scheduler: JobScheduler;
+  schedulerSettingsService: SchedulerSettingsService;
   catalogAdminService: CatalogAdminService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
@@ -164,6 +166,9 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const connector = createConnector(config);
   const storeMirrorService = new StoreMirrorService(pool);
   const catalogAdminService = new CatalogAdminService(pool);
+  const schedulerRuntimeState = {
+    updatePipelineSupplier: config.scheduler.updatePipeline.supplier
+  };
   const pipeline = new PipelineOrchestrator({
     sourceImporter: createSourceImporter(pool, logService, env.PRICE_AT_IMPORT === 'true'),
     finalizer: createFinalizer(
@@ -194,7 +199,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         enabled: config.scheduler.updatePipeline.enabled,
         intervalMs: config.scheduler.updatePipeline.intervalMinutes * 60 * 1000,
         runOnStartup: config.scheduler.updatePipeline.runOnStartup,
-        action: () => jobRunner.runUpdatePipeline(config.scheduler.updatePipeline.supplier)
+        action: () => jobRunner.runUpdatePipeline(schedulerRuntimeState.updatePipelineSupplier)
       },
       {
         name: 'store_mirror_sync',
@@ -212,6 +217,11 @@ export function createApplication(env: Record<string, string | undefined>): Appl
       }
     ]
   });
+  const schedulerSettingsService = new SchedulerSettingsService(
+    pool,
+    scheduler,
+    schedulerRuntimeState
+  );
 
   const authStore = config.auth.strategy === 'db' ? new DbUserStore(pool) : new EnvUserStore(env);
   const auth = new AuthService(authStore, {
@@ -228,6 +238,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     jobService,
     jobRunner,
     scheduler,
+    schedulerSettingsService,
     catalogAdminService,
     cleanupService,
     storeMirrorService,
