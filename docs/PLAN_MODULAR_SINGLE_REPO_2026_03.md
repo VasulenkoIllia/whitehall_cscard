@@ -61,6 +61,7 @@
 - `markup rule sets`: in progress (list/create/update/apply API ready)
 - `price overrides`: in progress (list/upsert/update API ready)
 - `stats/logs/read parity`: in progress (`/admin/api/logs`, `/admin/api/stats` ready)
+- `preview/export parity`: in progress (`merged/final/compare` preview + CSV export API ready)
 
 ### Phase 3: Export/preview parity для CS-Cart
 Ціль:

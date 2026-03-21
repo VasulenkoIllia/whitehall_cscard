@@ -47,6 +47,49 @@ export function createHttpServer(appContext: AppContext) {
     return Math.trunc(parsed);
   };
 
+  const parseOptionalPositiveInt = (value: unknown): number | null => {
+    if (value === null || typeof value === 'undefined' || String(value).trim() === '') {
+      return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return null;
+    }
+    return Math.trunc(parsed);
+  };
+
+  const parseOffset = (value: unknown): number => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return 0;
+    }
+    return Math.trunc(numeric);
+  };
+
+  const toCsvCell = (value: unknown): string => {
+    if (value === null || typeof value === 'undefined') {
+      return '';
+    }
+    const text = String(value);
+    if (/[",\n\r]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const writeCsvRow = (res: Response, values: unknown[]): void => {
+    res.write(`${values.map((value) => toCsvCell(value)).join(',')}\n`);
+  };
+
+  const startCsvDownload = (res: Response, filenamePrefix: string): void => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filenamePrefix}_${Date.now()}.csv"`
+    );
+    res.write('\uFEFF');
+  };
+
   const readStoreImportRunOptions = (req: Request) => {
     const rawResumeFromJobId = req.body?.resumeFromJobId;
     let resumeFromJobId: number | null = null;
@@ -506,6 +549,256 @@ export function createHttpServer(appContext: AppContext) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'preview_error';
       res.status(500).json({ error: msg });
+    }
+  });
+
+  app.get('/admin/api/merged-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = parseLimit(req.query.limit, 100);
+      const offset = parseOffset(req.query.offset);
+      const jobId = parseOptionalPositiveInt(req.query.jobId);
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const sort = typeof req.query.sort === 'string' ? req.query.sort : null;
+      const result = await catalogAdmin.listMergedPreview({
+        limit,
+        offset,
+        jobId,
+        search,
+        sort
+      });
+      return res.json(result);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'merged_preview_error') });
+    }
+  });
+
+  app.get('/admin/api/final-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = parseLimit(req.query.limit, 100);
+      const offset = parseOffset(req.query.offset);
+      const jobId = parseOptionalPositiveInt(req.query.jobId);
+      const supplierId = parseOptionalPositiveInt(req.query.supplierId);
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const sort = typeof req.query.sort === 'string' ? req.query.sort : null;
+      const result = await catalogAdmin.listFinalPreview({
+        limit,
+        offset,
+        jobId,
+        supplierId,
+        search,
+        sort
+      });
+      return res.json(result);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'final_preview_error') });
+    }
+  });
+
+  app.get('/admin/api/compare-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = parseLimit(req.query.limit, 100);
+      const offset = parseOffset(req.query.offset);
+      const supplierId = parseOptionalPositiveInt(req.query.supplierId);
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const missingOnly =
+        typeof req.query.missingOnly === 'string'
+          ? req.query.missingOnly === '1' || req.query.missingOnly.toLowerCase() === 'true'
+          : false;
+      const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
+      const result = await catalogAdmin.listComparePreview({
+        limit,
+        offset,
+        supplierId,
+        search,
+        missingOnly,
+        store
+      });
+      return res.json(result);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'compare_preview_error') });
+    }
+  });
+
+  app.get('/admin/api/merged-export', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const pageSize = 5000;
+      const sort = typeof req.query.sort === 'string' ? req.query.sort : null;
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      let jobId = parseOptionalPositiveInt(req.query.jobId);
+      let offset = 0;
+
+      startCsvDownload(res, 'merged_export');
+      writeCsvRow(res, ['article', 'size', 'quantity', 'price', 'extra', 'supplier', 'created_at']);
+
+      while (true) {
+        // eslint-disable-next-line no-await-in-loop
+        const chunk = await catalogAdmin.listMergedPreview({
+          limit: pageSize,
+          offset,
+          jobId,
+          search,
+          sort
+        });
+        if (!jobId && chunk.jobId) {
+          jobId = Number(chunk.jobId);
+        }
+
+        for (let index = 0; index < chunk.rows.length; index += 1) {
+          const row = chunk.rows[index] as Record<string, unknown>;
+          writeCsvRow(res, [
+            row.article,
+            row.size,
+            row.quantity,
+            row.price,
+            row.extra,
+            row.supplier_name,
+            row.created_at
+          ]);
+        }
+
+        if (chunk.rows.length < pageSize) {
+          break;
+        }
+        offset += pageSize;
+      }
+
+      res.end();
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'merged_export_error') });
+    }
+  });
+
+  app.get('/admin/api/final-export', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const pageSize = 5000;
+      const sort = typeof req.query.sort === 'string' ? req.query.sort : null;
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const supplierId = parseOptionalPositiveInt(req.query.supplierId);
+      let jobId = parseOptionalPositiveInt(req.query.jobId);
+      let offset = 0;
+
+      startCsvDownload(res, 'final_export');
+      writeCsvRow(res, ['article', 'size', 'quantity', 'price_base', 'price_final', 'extra', 'supplier']);
+
+      while (true) {
+        // eslint-disable-next-line no-await-in-loop
+        const chunk = await catalogAdmin.listFinalPreview({
+          limit: pageSize,
+          offset,
+          jobId,
+          supplierId,
+          search,
+          sort
+        });
+        if (!jobId && chunk.jobId) {
+          jobId = Number(chunk.jobId);
+        }
+
+        for (let index = 0; index < chunk.rows.length; index += 1) {
+          const row = chunk.rows[index] as Record<string, unknown>;
+          writeCsvRow(res, [
+            row.article,
+            row.size,
+            row.quantity,
+            row.price_base,
+            row.price_final,
+            row.extra,
+            row.supplier_name
+          ]);
+        }
+
+        if (chunk.rows.length < pageSize) {
+          break;
+        }
+        offset += pageSize;
+      }
+
+      res.end();
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'final_export_error') });
+    }
+  });
+
+  app.get('/admin/api/compare-export', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const pageSize = 5000;
+      const supplierId = parseOptionalPositiveInt(req.query.supplierId);
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const missingOnly =
+        typeof req.query.missingOnly === 'string'
+          ? req.query.missingOnly === '1' || req.query.missingOnly.toLowerCase() === 'true'
+          : false;
+      const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
+      let offset = 0;
+
+      startCsvDownload(res, 'compare_export');
+      writeCsvRow(res, [
+        'article',
+        'size',
+        'quantity',
+        'price_base',
+        'price_final',
+        'extra',
+        'supplier',
+        'sku_article',
+        'store_article',
+        'store_sku',
+        'store_visibility',
+        'store_price',
+        'store_supplier'
+      ]);
+
+      while (true) {
+        // eslint-disable-next-line no-await-in-loop
+        const chunk = await catalogAdmin.listComparePreview({
+          limit: pageSize,
+          offset,
+          supplierId,
+          search,
+          missingOnly,
+          store
+        });
+
+        for (let index = 0; index < chunk.rows.length; index += 1) {
+          const row = chunk.rows[index] as Record<string, unknown>;
+          writeCsvRow(res, [
+            row.article,
+            row.size,
+            row.quantity,
+            row.price_base,
+            row.price_final,
+            row.extra,
+            row.supplier_name,
+            row.sku_article,
+            row.store_article,
+            row.store_sku,
+            row.store_visibility,
+            row.store_price,
+            row.store_supplier
+          ]);
+        }
+
+        if (chunk.rows.length < pageSize) {
+          break;
+        }
+        offset += pageSize;
+      }
+
+      res.end();
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'compare_export_error') });
     }
   });
 

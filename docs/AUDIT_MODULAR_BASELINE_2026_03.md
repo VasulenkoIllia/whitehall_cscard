@@ -469,6 +469,30 @@ Effect:
 - reduces operator risk when configuring mapping/header row
 - keeps source-preview logic in backend, ready for future frontend integration
 
+### 19. Data review/export parity for operator workflows
+
+Changed files:
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/http/server.ts`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- added preview read APIs:
+  - `GET /admin/api/merged-preview`
+  - `GET /admin/api/final-preview`
+  - `GET /admin/api/compare-preview`
+- added export APIs:
+  - `GET /admin/api/merged-export`
+  - `GET /admin/api/final-export`
+  - `GET /admin/api/compare-export`
+- export format implemented as CSV stream (bounded chunk reads), not XLSX, to keep backend dependency-light and stable at large volume.
+
+Effect:
+- restores core operator backend capabilities for raw/final/compare dataset inspection
+- enables backend-only validation flow before frontend migration
+- avoids extra memory pressure by streaming export rows in chunks
+
 ## Adjusted plan
 
 ### Phase 1. Stabilize core DB path

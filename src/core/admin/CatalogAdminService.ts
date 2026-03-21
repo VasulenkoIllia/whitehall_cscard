@@ -64,6 +64,31 @@ type PriceOverrideUpdatePayload = {
   is_active?: boolean;
 };
 
+type ListPreviewOptions = {
+  limit: number;
+  offset: number;
+  search: string | null;
+  sort: string | null;
+};
+
+type MergedPreviewOptions = ListPreviewOptions & {
+  jobId: number | null;
+};
+
+type FinalPreviewOptions = ListPreviewOptions & {
+  jobId: number | null;
+  supplierId: number | null;
+};
+
+type ComparePreviewOptions = {
+  limit: number;
+  offset: number;
+  search: string | null;
+  supplierId: number | null;
+  missingOnly: boolean;
+  store: string;
+};
+
 function createBadRequest(message: string): Error {
   const error = new Error(message);
   (error as any).status = 400;
@@ -163,8 +188,38 @@ function computeDurationMs(startedAt: unknown, finishedAt: unknown): number | nu
   return Math.max(0, end - start);
 }
 
+function normalizeSort(sort: string | null, fallback: string): string {
+  const value = String(sort || '').trim().toLowerCase();
+  return value || fallback;
+}
+
+function normalizePagination(limit: number, offset: number): { limit: number; offset: number } {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.trunc(limit))) : 100;
+  const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
+  return {
+    limit: safeLimit,
+    offset: safeOffset
+  };
+}
+
 export class CatalogAdminService {
   constructor(private readonly pool: Pool) {}
+
+  private async getLatestJobId(type: string): Promise<number | null> {
+    const result = await this.pool.query(
+      `SELECT id
+       FROM jobs
+       WHERE type = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [type]
+    );
+    const jobId = Number(result.rows[0]?.id || 0);
+    if (!Number.isFinite(jobId) || jobId <= 0) {
+      return null;
+    }
+    return jobId;
+  }
 
   async listSuppliers(): Promise<Record<string, unknown>[]> {
     const result = await this.pool.query(
@@ -1106,5 +1161,216 @@ export class CatalogAdminService {
           }
         : null
     };
+  }
+
+  async listMergedPreview(
+    options: MergedPreviewOptions
+  ): Promise<{ jobId: number | null; total: number; rows: Record<string, unknown>[] }> {
+    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const search = String(options.search || '').trim();
+    let jobId = options.jobId && Number.isFinite(options.jobId) ? Math.trunc(options.jobId) : null;
+    if (!jobId) {
+      jobId = await this.getLatestJobId('import_all');
+    }
+
+    const whereParts: string[] = [];
+    const values: unknown[] = [];
+    if (jobId) {
+      values.push(jobId);
+      whereParts.push(`pr.job_id = $${values.length}`);
+    }
+
+    if (search) {
+      values.push(`%${search}%`);
+      const index = values.length;
+      whereParts.push(`(pr.article ILIKE $${index} OR pr.extra ILIKE $${index})`);
+    }
+
+    const sort = normalizeSort(options.sort, 'article_asc');
+    let orderBy = 'pr.article ASC, pr.id DESC';
+    if (sort === 'article_desc') {
+      orderBy = 'pr.article DESC, pr.id DESC';
+    } else if (sort === 'created_desc') {
+      orderBy = 'pr.id DESC';
+    }
+
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+    const result = await this.pool.query(
+      `SELECT pr.article, pr.size, pr.quantity, pr.price, pr.extra,
+              sp.name AS supplier_name, pr.created_at, pr.job_id,
+              COUNT(*) OVER() AS total
+       FROM products_raw pr
+       JOIN suppliers sp ON sp.id = pr.supplier_id
+       ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
+    );
+
+    const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
+    const rows = result.rows.map(({ total: ignored, ...row }) => row);
+    return { jobId, total, rows };
+  }
+
+  async listFinalPreview(
+    options: FinalPreviewOptions
+  ): Promise<{ jobId: number | null; total: number; rows: Record<string, unknown>[] }> {
+    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const search = String(options.search || '').trim();
+    let jobId = options.jobId && Number.isFinite(options.jobId) ? Math.trunc(options.jobId) : null;
+    if (!jobId) {
+      jobId = await this.getLatestJobId('finalize');
+    }
+
+    const supplierId =
+      options.supplierId && Number.isFinite(options.supplierId) && options.supplierId > 0
+        ? Math.trunc(options.supplierId)
+        : null;
+
+    const whereParts: string[] = [];
+    const values: unknown[] = [];
+    if (jobId) {
+      values.push(jobId);
+      whereParts.push(`pf.job_id = $${values.length}`);
+    }
+    if (search) {
+      values.push(`%${search}%`);
+      const index = values.length;
+      whereParts.push(
+        `(pf.article ILIKE $${index} OR pf.extra ILIKE $${index} OR sp.name ILIKE $${index})`
+      );
+    }
+    if (supplierId) {
+      values.push(supplierId);
+      whereParts.push(`pf.supplier_id = $${values.length}`);
+    }
+
+    const sort = normalizeSort(options.sort, 'article_asc');
+    let orderBy = 'pf.article ASC, pf.id DESC';
+    if (sort === 'article_desc') {
+      orderBy = 'pf.article DESC, pf.id DESC';
+    } else if (sort === 'created_desc') {
+      orderBy = 'pf.id DESC';
+    }
+
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+    const result = await this.pool.query(
+      `SELECT pf.article, pf.size, pf.quantity, pf.price_base,
+              COALESCE(po.price_final, pf.price_final) AS price_final,
+              pf.extra, sp.name AS supplier_name, pf.created_at, pf.job_id,
+              po.id AS override_id, po.price_final AS override_price, po.notes AS override_notes,
+              COUNT(*) OVER() AS total
+       FROM products_final pf
+       LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
+       LEFT JOIN price_overrides po
+         ON po.article = pf.article
+        AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
+        AND po.is_active = TRUE
+       ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
+    );
+
+    const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
+    const rows = result.rows.map(({ total: ignored, ...row }) => row);
+    return { jobId, total, rows };
+  }
+
+  async listComparePreview(
+    options: ComparePreviewOptions
+  ): Promise<{ total: number; rows: Record<string, unknown>[] }> {
+    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const search = String(options.search || '').trim();
+    const supplierId =
+      options.supplierId && Number.isFinite(options.supplierId) && options.supplierId > 0
+        ? Math.trunc(options.supplierId)
+        : null;
+    const missingOnly = options.missingOnly === true;
+    const store = String(options.store || 'cscart').trim().toLowerCase() || 'cscart';
+
+    const baseWhereParts: string[] = [];
+    const baseValues: unknown[] = [];
+    if (supplierId) {
+      baseValues.push(supplierId);
+      baseWhereParts.push(`pf.supplier_id = $${baseValues.length}`);
+    }
+    const baseWhereClause = baseWhereParts.length ? `WHERE ${baseWhereParts.join(' AND ')}` : '';
+
+    const whereParts: string[] = [];
+    const values: unknown[] = [...baseValues];
+    if (search) {
+      values.push(`%${search}%`);
+      const index = values.length;
+      whereParts.push(
+        `(base.article ILIKE $${index}
+          OR base.extra ILIKE $${index}
+          OR base.supplier_name ILIKE $${index}
+          OR base.sku_article ILIKE $${index})`
+      );
+    }
+    if (missingOnly) {
+      whereParts.push('sm_sku.article IS NULL');
+    }
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+    values.push(store);
+
+    const result = await this.pool.query(
+      `WITH base AS (
+         SELECT
+           pf.id,
+           pf.article,
+           pf.size,
+           pf.quantity,
+           pf.price_base,
+           COALESCE(po.price_final, pf.price_final) AS price_final,
+           pf.extra,
+           sp.name AS supplier_name,
+           CASE
+             WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
+             WHEN right(lower(pf.article), length(replace(btrim(pf.size), ',', '.'))) =
+                  lower(replace(btrim(pf.size), ',', '.'))
+               THEN pf.article
+             ELSE pf.article || '-' || replace(btrim(pf.size), ',', '.')
+           END AS sku_article
+         FROM products_final pf
+         LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
+         LEFT JOIN price_overrides po
+           ON po.article = pf.article
+          AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
+          AND po.is_active = TRUE
+         ${baseWhereClause}
+       )
+       SELECT
+         base.article,
+         base.size,
+         base.quantity,
+         base.price_base,
+         base.price_final,
+         base.extra,
+         base.supplier_name,
+         base.sku_article,
+         sm_base.article AS store_article,
+         sm_sku.article AS store_sku,
+         sm_sku.visibility AS store_visibility,
+         sm_sku.price AS store_price,
+         sm_sku.supplier AS store_supplier,
+         COUNT(*) OVER() AS total
+       FROM base
+       LEFT JOIN store_mirror sm_base
+         ON sm_base.store = $${values.length}
+        AND sm_base.article = base.article
+       LEFT JOIN store_mirror sm_sku
+         ON sm_sku.store = $${values.length}
+        AND sm_sku.article = base.sku_article
+       ${whereClause}
+       ORDER BY base.id ASC
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
+    );
+
+    const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
+    const rows = result.rows.map(({ total: ignored, ...row }) => row);
+    return { total, rows };
   }
 }

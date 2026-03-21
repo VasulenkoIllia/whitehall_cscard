@@ -26,6 +26,9 @@
 - Доступні Google Sheets helper API для джерел:
   - `source-sheets` (лист аркушів + selected)
   - `source-preview` (headers + sampleRows для mapping UI)
+- Доступні review/export API для операторського контролю:
+  - `merged-preview`, `final-preview`, `compare-preview`
+  - `merged-export`, `final-export`, `compare-export` (CSV)
 - Ендпоїнти винесені в `admin/api/*` і захищені ролями `viewer/admin`.
 
 ## Finalize і preview
