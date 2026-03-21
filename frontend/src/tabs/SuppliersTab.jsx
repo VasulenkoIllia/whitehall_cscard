@@ -1,5 +1,5 @@
 import React from 'react';
-import { Section } from '../components/ui';
+import { Section, Tag } from '../components/ui';
 
 export function SuppliersTab({
   refreshSuppliers,
@@ -32,39 +32,42 @@ export function SuppliersTab({
     <div className="grid">
       <Section
         title="Постачальники"
-        subtitle="Пошук, сортування, CRUD"
+        subtitle="Пошук, сортування та вибір для пайплайна"
         extra={<button className="btn" onClick={refreshSuppliers}>Оновити список</button>}
       >
         <div className="form-row">
           <div>
             <label>Пошук</label>
-            <input value={supplierSearch} onChange={(event) => setSupplierSearch(event.target.value)} />
+            <input
+              placeholder="Назва постачальника..."
+              value={supplierSearch}
+              onChange={(event) => setSupplierSearch(event.target.value)}
+            />
           </div>
           <div>
             <label>Сортування</label>
             <select value={supplierSort} onChange={(event) => setSupplierSort(event.target.value)}>
-              <option value="id_asc">ID</option>
-              <option value="name_asc">A-Я</option>
-              <option value="name_desc">Я-A</option>
+              <option value="id_asc">За ID</option>
+              <option value="name_asc">Назва А-Я</option>
+              <option value="name_desc">Назва Я-А</option>
             </select>
           </div>
           <div>
-            <label>Selected IDs</label>
-            <input value={selectedSupplierIds.join(',')} readOnly />
+            <label>Вибрано для масових дій</label>
+            <input value={selectedSupplierIds.length ? selectedSupplierIds.join(', ') : 'немає'} readOnly />
           </div>
         </div>
 
         <table>
           <thead>
             <tr>
-              <th>Select</th>
-              <th>ID</th>
-              <th>Назва</th>
-              <th>Active</th>
-              <th>Priority</th>
-              <th>Markup %</th>
+              <th>Вибір</th>
+              <th>Постачальник</th>
+              <th>Стан</th>
+              <th>Пріоритет</th>
+              <th>Націнка</th>
               <th>Rule set</th>
-              <th>Actions</th>
+              <th>Дії</th>
             </tr>
           </thead>
           <tbody>
@@ -85,9 +88,15 @@ export function SuppliersTab({
                     }}
                   />
                 </td>
-                <td>{supplier.id}</td>
-                <td>{supplier.name}</td>
-                <td>{supplier.is_active ? 'true' : 'false'}</td>
+                <td>
+                  <div>{supplier.name}</div>
+                  <div className="muted">ID: {supplier.id}</div>
+                </td>
+                <td>
+                  <Tag tone={supplier.is_active ? 'ok' : 'warn'}>
+                    {supplier.is_active ? 'active' : 'paused'}
+                  </Tag>
+                </td>
                 <td>{supplier.priority}</td>
                 <td>{supplier.markup_percent}</td>
                 <td>{supplier.markup_rule_set_name || '-'}</td>
@@ -102,14 +111,14 @@ export function SuppliersTab({
                         setSelectedSupplierId(String(supplier.id));
                       }}
                     >
-                      Edit
+                      Редагувати
                     </button>
                     <button
                       className="btn danger"
                       disabled={isReadOnly}
                       onClick={() => deleteSupplier(supplier.id)}
                     >
-                      Delete
+                      Видалити
                     </button>
                   </div>
                 </td>
@@ -125,6 +134,7 @@ export function SuppliersTab({
           <div>
             <label>Назва</label>
             <input
+              placeholder="Наприклад: Склад WHITE HALL"
               value={supplierDraft.name}
               onChange={(event) =>
                 setSupplierDraft((prev) => ({ ...prev, name: event.target.value }))
@@ -133,7 +143,7 @@ export function SuppliersTab({
             {supplierErrors.name ? <div className="field-error">{supplierErrors.name}</div> : null}
           </div>
           <div>
-            <label>Priority</label>
+            <label>Пріоритет</label>
             <input
               value={supplierDraft.priority}
               onChange={(event) =>
@@ -143,7 +153,7 @@ export function SuppliersTab({
             {supplierErrors.priority ? <div className="field-error">{supplierErrors.priority}</div> : null}
           </div>
           <div>
-            <label>Markup %</label>
+            <label>Націнка %</label>
             <input
               value={supplierDraft.markup_percent}
               onChange={(event) =>
@@ -155,7 +165,7 @@ export function SuppliersTab({
         </div>
         <div className="form-row">
           <div>
-            <label>Min profit amount</label>
+            <label>Мінімальний прибуток</label>
             <input
               value={supplierDraft.min_profit_amount}
               onChange={(event) =>
@@ -167,7 +177,7 @@ export function SuppliersTab({
             ) : null}
           </div>
           <div>
-            <label>Markup rule set id</label>
+            <label>ID rule set (опційно)</label>
             <input
               value={supplierDraft.markup_rule_set_id}
               onChange={(event) =>
@@ -188,7 +198,7 @@ export function SuppliersTab({
                 setSupplierDraft((prev) => ({ ...prev, min_profit_enabled: event.target.checked }))
               }
             />
-            min_profit_enabled
+            Увімкнути мінімальний прибуток
           </label>
           <label>
             <input
@@ -198,12 +208,12 @@ export function SuppliersTab({
                 setSupplierDraft((prev) => ({ ...prev, is_active: event.target.checked }))
               }
             />
-            is_active
+            Постачальник активний
           </label>
         </div>
         <div className="actions" style={{ marginTop: 8 }}>
           <button className="btn primary" disabled={isReadOnly} onClick={saveSupplier}>
-            {editingSupplierId ? 'Save supplier' : 'Create supplier'}
+            {editingSupplierId ? 'Зберегти' : 'Створити'}
           </button>
           <button
             className="btn"
@@ -213,75 +223,76 @@ export function SuppliersTab({
               setSupplierErrors({});
             }}
           >
-            Reset form
+            Скинути форму
           </button>
         </div>
         <div className="status-line">{supplierFormStatus}</div>
       </Section>
 
-      <Section
-        title="Bulk update suppliers"
-        subtitle="Без зміни бізнес-логіки, лише масове оновлення полів"
-      >
-        <div className="form-row">
-          <div>
-            <label>
+      <Section title="Масове оновлення" subtitle="Застосування полів до вибраних постачальників">
+        <details className="details-block">
+          <summary>Показати bulk-налаштування</summary>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={bulkDraft.apply_markup_percent}
+                  onChange={(event) =>
+                    setBulkDraft((prev) => ({ ...prev, apply_markup_percent: event.target.checked }))
+                  }
+                  style={{ width: 'auto', marginRight: 8 }}
+                />
+                Застосувати націнку %
+              </label>
               <input
-                type="checkbox"
-                checked={bulkDraft.apply_markup_percent}
+                value={bulkDraft.markup_percent}
                 onChange={(event) =>
-                  setBulkDraft((prev) => ({ ...prev, apply_markup_percent: event.target.checked }))
+                  setBulkDraft((prev) => ({ ...prev, markup_percent: event.target.value }))
                 }
-                style={{ width: 'auto', marginRight: 8 }}
               />
-              Apply markup_percent
-            </label>
-            <input
-              value={bulkDraft.markup_percent}
-              onChange={(event) =>
-                setBulkDraft((prev) => ({ ...prev, markup_percent: event.target.value }))
-              }
-            />
-          </div>
-          <div>
-            <label>
+            </div>
+            <div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={bulkDraft.apply_min_profit}
+                  onChange={(event) =>
+                    setBulkDraft((prev) => ({ ...prev, apply_min_profit: event.target.checked }))
+                  }
+                  style={{ width: 'auto', marginRight: 8 }}
+                />
+                Застосувати мінімальний прибуток
+              </label>
               <input
-                type="checkbox"
-                checked={bulkDraft.apply_min_profit}
+                value={bulkDraft.min_profit_amount}
                 onChange={(event) =>
-                  setBulkDraft((prev) => ({ ...prev, apply_min_profit: event.target.checked }))
+                  setBulkDraft((prev) => ({ ...prev, min_profit_amount: event.target.value }))
                 }
-                style={{ width: 'auto', marginRight: 8 }}
               />
-              Apply min_profit
-            </label>
-            <input
-              value={bulkDraft.min_profit_amount}
-              onChange={(event) =>
-                setBulkDraft((prev) => ({ ...prev, min_profit_amount: event.target.value }))
-              }
-            />
+            </div>
           </div>
-        </div>
-        <label style={{ marginTop: 8 }}>
-          <input
-            type="checkbox"
-            checked={bulkDraft.min_profit_enabled}
-            onChange={(event) =>
-              setBulkDraft((prev) => ({ ...prev, min_profit_enabled: event.target.checked }))
-            }
-            style={{ width: 'auto', marginRight: 8 }}
-          />
-          min_profit_enabled
-        </label>
-        <div className="actions" style={{ marginTop: 8 }}>
-          <button className="btn primary" disabled={isReadOnly} onClick={saveSupplierBulk}>
-            Run bulk update
-          </button>
-          <button className="btn" onClick={() => setSelectedSupplierIds([])}>
-            Clear selection
-          </button>
-        </div>
+          <label style={{ marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={bulkDraft.min_profit_enabled}
+              onChange={(event) =>
+                setBulkDraft((prev) => ({ ...prev, min_profit_enabled: event.target.checked }))
+              }
+              style={{ width: 'auto', marginRight: 8 }}
+            />
+            Мінімальний прибуток увімкнено
+          </label>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button className="btn primary" disabled={isReadOnly} onClick={saveSupplierBulk}>
+              Виконати bulk update
+            </button>
+            <button className="btn" onClick={() => setSelectedSupplierIds([])}>
+              Очистити вибір
+            </button>
+            <span className="muted">Вибрано: {selectedSupplierIds.length}</span>
+          </div>
+        </details>
         <div className="status-line">{bulkStatus}</div>
       </Section>
     </div>

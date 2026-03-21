@@ -1,4 +1,15 @@
-export function renderLoginPage(): string {
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function renderLoginPage(nextPath = '/admin'): string {
+  const safeNextPath = nextPath && nextPath.trim() ? nextPath.trim() : '/admin';
+  const nextValue = escapeHtmlAttribute(safeNextPath);
+
   return `<!doctype html>
 <html>
 <head>
@@ -18,6 +29,7 @@ export function renderLoginPage(): string {
   <div class="card">
     <h1>Admin Login</h1>
     <form id="loginForm">
+      <input name="next" type="hidden" value="${nextValue}" />
       <label>Email or username</label>
       <input name="email" type="text" autocomplete="username" required />
       <label>Password</label>
@@ -33,6 +45,7 @@ export function renderLoginPage(): string {
       e.preventDefault();
       errorBox.style.display = 'none';
       const formData = new FormData(form);
+      const nextPath = String(formData.get('next') || '/admin');
       const res = await fetch('/auth/login', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -42,7 +55,7 @@ export function renderLoginPage(): string {
         })
       });
       if (res.ok) {
-        window.location.href = '/admin';
+        window.location.href = nextPath;
       } else {
         const data = await res.json().catch(() => ({}));
         errorBox.textContent = data.error || 'Login failed';

@@ -16,12 +16,12 @@ import { DataTab } from './tabs/DataTab';
 import { JobsTab } from './tabs/JobsTab';
 
 const TABS = [
-  { id: 'overview', label: 'Огляд' },
+  { id: 'overview', label: 'Панель' },
   { id: 'suppliers', label: 'Постачальники' },
-  { id: 'mapping', label: 'Джерела та мапінг' },
-  { id: 'pricing', label: 'Націнки та override' },
-  { id: 'data', label: 'Змерджений / Final / Compare' },
-  { id: 'jobs', label: 'Джоби та логи' }
+  { id: 'mapping', label: 'Джерела і мапінг' },
+  { id: 'pricing', label: 'Націнки' },
+  { id: 'data', label: 'Дані' },
+  { id: 'jobs', label: 'Моніторинг' }
 ];
 
 const SOURCE_TYPES = ['google_sheet', 'csv', 'xml', 'json'];
@@ -236,6 +236,7 @@ function normalizeRuleSetPayload(ruleSetDraft) {
 export default function App() {
   const [tab, setTab] = useState('overview');
   const [apiStatus, setApiStatus] = useState('checking');
+  const [authReady, setAuthReady] = useState(false);
   const [meRole, setMeRole] = useState(null);
 
   const [stats, setStats] = useState(null);
@@ -1452,21 +1453,28 @@ export default function App() {
   useEffect(() => {
     const boot = async () => {
       try {
-        const [health, me] = await Promise.all([
-          fetch('/health', { credentials: 'same-origin' }),
-          apiFetch('/me')
-        ]);
-        setApiStatus(health.ok ? 'ok' : 'error');
+        const me = await apiFetch('/me');
         setMeRole(me?.role || null);
-      } catch (_error) {
+        setApiStatus('ok');
+      } catch (error) {
+        if (Number(error?.status) === 401) {
+          setMeRole(null);
+          setAuthReady(true);
+          return;
+        }
         setApiStatus('error');
+        setMeRole(null);
+        setAuthReady(true);
+        return;
       }
+
       await Promise.all([
         refreshCore(),
         refreshSuppliers(),
         refreshMarkupRuleSets(),
         refreshPriceOverrides()
       ]);
+      setAuthReady(true);
     };
     void boot();
   }, []);
@@ -1479,6 +1487,32 @@ export default function App() {
     void refreshMapping(selectedSupplierId, selectedSourceId);
   }, [selectedSupplierId, selectedSourceId]);
 
+  if (!authReady) {
+    return (
+      <div className="app">
+        <div className="panel">
+          <h3>Перевірка авторизації...</h3>
+        </div>
+      </div>
+    );
+  }
+
+  if (!meRole) {
+    const nextPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const loginHref = `/admin/login?next=${encodeURIComponent(nextPath || '/admin')}`;
+    return (
+      <div className="app">
+        <div className="panel">
+          <h3>Потрібна авторизація</h3>
+          <p className="muted">Сесія не знайдена або протермінована.</p>
+          <div className="actions">
+            <a className="btn primary" href={loginHref}>Перейти на сторінку логіну</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <ToastViewport items={toasts} onDismiss={dismissToast} />
@@ -1486,8 +1520,8 @@ export default function App() {
         <div className="title-block">
           <h1>Whitehall CS-Cart Admin</h1>
           <p>
-            React UI для пайплайна CS-Cart: перенос legacy flow, модульна адмінка, без зміни
-            бізнес-логіки backend.
+            Операційна панель для пайплайна CS-Cart: мінімум шуму, швидкі дії, без зміни
+            бізнес-логіки бекенду.
           </p>
         </div>
         <div className="top-actions">
@@ -1525,6 +1559,12 @@ export default function App() {
           stats={stats}
           recentErrorLogs={recentErrorLogs}
           openJobDetails={openJobDetails}
+          suppliers={suppliers}
+          selectedSupplierId={selectedSupplierId}
+          setSelectedSupplierId={setSelectedSupplierId}
+          sources={sources}
+          selectedSourceId={selectedSourceId}
+          setSelectedSourceId={setSelectedSourceId}
           actionForm={actionForm}
           setActionForm={setActionForm}
           isReadOnly={isReadOnly}

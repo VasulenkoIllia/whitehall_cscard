@@ -1,7 +1,6 @@
 import React from 'react';
-import { toJsonString } from '../lib/api';
 import { columnLetter } from '../lib/mapping';
-import { Section } from '../components/ui';
+import { Section, Tag } from '../components/ui';
 
 export function MappingTab({
   selectedSupplierId,
@@ -50,7 +49,7 @@ export function MappingTab({
 }) {
   return (
     <div className="grid">
-      <Section title="Джерела" subtitle="Source CRUD + sheet preview">
+      <Section title="Крок 1. Постачальник і джерело" subtitle="Оберіть, що саме налаштовуємо">
         <div className="form-row">
           <div>
             <label>Постачальник</label>
@@ -88,22 +87,27 @@ export function MappingTab({
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Active</th>
-              <th>Sheet</th>
-              <th>Actions</th>
+              <th>Джерело</th>
+              <th>Тип</th>
+              <th>Аркуш</th>
+              <th>Стан</th>
+              <th>Дії</th>
             </tr>
           </thead>
           <tbody>
             {sources.map((source) => (
               <tr key={source.id}>
-                <td>{source.id}</td>
-                <td>{source.name}</td>
+                <td>
+                  <div>{source.name || '-'}</div>
+                  <div className="muted">ID: {source.id}</div>
+                </td>
                 <td>{source.source_type}</td>
-                <td>{source.is_active ? 'true' : 'false'}</td>
                 <td>{source.sheet_name || '-'}</td>
+                <td>
+                  <Tag tone={source.is_active ? 'ok' : 'warn'}>
+                    {source.is_active ? 'active' : 'paused'}
+                  </Tag>
+                </td>
                 <td>
                   <div className="actions">
                     <button
@@ -115,14 +119,14 @@ export function MappingTab({
                         setSourceErrors({});
                       }}
                     >
-                      Edit
+                      Редагувати
                     </button>
                     <button
                       className="btn danger"
                       disabled={isReadOnly}
                       onClick={() => deleteSource(source.id)}
                     >
-                      Delete
+                      Видалити
                     </button>
                   </div>
                 </td>
@@ -133,89 +137,10 @@ export function MappingTab({
         <div className="status-line">{sourcesStatus}</div>
       </Section>
 
-      <Section title={editingSourceId ? `Редагування source #${editingSourceId}` : 'Нове джерело'}>
+      <Section title="Крок 2. Перевірка джерела" subtitle="Аркуші та тестове превʼю таблиці">
         <div className="form-row">
           <div>
-            <label>Name</label>
-            <input
-              value={sourceDraft.name}
-              onChange={(event) => setSourceDraft((prev) => ({ ...prev, name: event.target.value }))}
-            />
-          </div>
-          <div>
-            <label>source_type</label>
-            <select
-              value={sourceDraft.source_type}
-              onChange={(event) =>
-                setSourceDraft((prev) => ({ ...prev, source_type: event.target.value }))
-              }
-            >
-              {sourceTypes.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-            {sourceErrors.source_type ? (
-              <div className="field-error">{sourceErrors.source_type}</div>
-            ) : null}
-          </div>
-        </div>
-        <div className="form-row">
-          <div>
-            <label>source_url</label>
-            <input
-              value={sourceDraft.source_url}
-              onChange={(event) =>
-                setSourceDraft((prev) => ({ ...prev, source_url: event.target.value }))
-              }
-            />
-            {sourceErrors.source_url ? <div className="field-error">{sourceErrors.source_url}</div> : null}
-            <div className="hint">detected: {parseSourceUrlHint(sourceDraft.source_url) || '-'}</div>
-          </div>
-          <div>
-            <label>sheet_name</label>
-            <input
-              value={sourceDraft.sheet_name}
-              onChange={(event) =>
-                setSourceDraft((prev) => ({ ...prev, sheet_name: event.target.value }))
-              }
-            />
-          </div>
-        </div>
-        <label>
-          <input
-            type="checkbox"
-            checked={sourceDraft.is_active}
-            onChange={(event) =>
-              setSourceDraft((prev) => ({ ...prev, is_active: event.target.checked }))
-            }
-            style={{ width: 'auto', marginRight: 8 }}
-          />
-          is_active
-        </label>
-        <div className="actions" style={{ marginTop: 8 }}>
-          <button className="btn primary" disabled={isReadOnly} onClick={saveSource}>
-            {editingSourceId ? 'Save source' : 'Create source'}
-          </button>
-          <button
-            className="btn"
-            onClick={() => {
-              setEditingSourceId('');
-              setSourceDraft(toSourceDraft(null));
-              setSourceErrors({});
-            }}
-          >
-            Reset form
-          </button>
-        </div>
-        <div className="status-line">{sourceFormStatus}</div>
-      </Section>
-
-      <Section title="Google Sheets preview" subtitle="Лоад аркушів + headers/sample rows">
-        <div className="form-row">
-          <div>
-            <label>Sheet name</label>
+            <label>Аркуш</label>
             <select value={selectedSheetName} onChange={(event) => setSelectedSheetName(event.target.value)}>
               <option value="">-- auto --</option>
               {sourceSheets.map((name) => (
@@ -228,23 +153,22 @@ export function MappingTab({
           <div>
             <label>Header row</label>
             <input value={mappingHeaderRow} onChange={(event) => setMappingHeaderRow(event.target.value)} />
+            {mappingErrors.header_row ? <div className="field-error">{mappingErrors.header_row}</div> : null}
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <div className="actions">
+              <button className="btn" onClick={loadSourceSheets}>Завантажити аркуші</button>
+              <button className="btn" onClick={loadSourcePreview}>Показати превʼю</button>
+            </div>
           </div>
         </div>
-        <div className="actions">
-          <button className="btn" onClick={loadSourceSheets}>Load sheets</button>
-          <button className="btn" onClick={loadSourcePreview}>Load preview</button>
-        </div>
+
         <div className="status-line">{sourceSheetsStatus}</div>
         <div className={`status-line ${sourcePreview.status.includes('error') ? 'error' : ''}`}>
           {sourcePreview.status}
         </div>
-        <pre>
-          {toJsonString({
-            sheet: sourcePreview.sheetName || selectedSheetName || null,
-            headerRow: sourcePreview.headerRow,
-            headers: sourcePreview.headers
-          })}
-        </pre>
+
         {sourcePreview.sampleRows.length > 0 ? (
           <div className="preview-table-wrap">
             <table>
@@ -270,10 +194,92 @@ export function MappingTab({
               </tbody>
             </table>
           </div>
-        ) : null}
+        ) : (
+          <div className="empty-preview">Превʼю ще не завантажено</div>
+        )}
+
+        <details className="details-block" style={{ marginTop: 10 }}>
+          <summary>{editingSourceId ? `Редагування source #${editingSourceId}` : 'Нове джерело'}</summary>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <div>
+              <label>Назва</label>
+              <input
+                value={sourceDraft.name}
+                onChange={(event) => setSourceDraft((prev) => ({ ...prev, name: event.target.value }))}
+              />
+            </div>
+            <div>
+              <label>Тип джерела</label>
+              <select
+                value={sourceDraft.source_type}
+                onChange={(event) =>
+                  setSourceDraft((prev) => ({ ...prev, source_type: event.target.value }))
+                }
+              >
+                {sourceTypes.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+              {sourceErrors.source_type ? (
+                <div className="field-error">{sourceErrors.source_type}</div>
+              ) : null}
+            </div>
+          </div>
+          <div className="form-row">
+            <div>
+              <label>source_url</label>
+              <input
+                value={sourceDraft.source_url}
+                onChange={(event) =>
+                  setSourceDraft((prev) => ({ ...prev, source_url: event.target.value }))
+                }
+              />
+              {sourceErrors.source_url ? <div className="field-error">{sourceErrors.source_url}</div> : null}
+              <div className="hint">detected: {parseSourceUrlHint(sourceDraft.source_url) || '-'}</div>
+            </div>
+            <div>
+              <label>sheet_name</label>
+              <input
+                value={sourceDraft.sheet_name}
+                onChange={(event) =>
+                  setSourceDraft((prev) => ({ ...prev, sheet_name: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <label>
+            <input
+              type="checkbox"
+              checked={sourceDraft.is_active}
+              onChange={(event) =>
+                setSourceDraft((prev) => ({ ...prev, is_active: event.target.checked }))
+              }
+              style={{ width: 'auto', marginRight: 8 }}
+            />
+            Джерело активне
+          </label>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button className="btn primary" disabled={isReadOnly} onClick={saveSource}>
+              {editingSourceId ? 'Зберегти джерело' : 'Створити джерело'}
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                setEditingSourceId('');
+                setSourceDraft(toSourceDraft(null));
+                setSourceErrors({});
+              }}
+            >
+              Скинути форму
+            </button>
+          </div>
+          <div className="status-line">{sourceFormStatus}</div>
+        </details>
       </Section>
 
-      <Section title="Мапінг" subtitle="Builder + JSON + Коментар">
+      <Section title="Крок 3. Мапінг полів" subtitle="Налаштуйте відповідність колонок і збережіть">
         <div className="mapping-builder">
           {mappingKeys.map((key) => {
             const entry = mappingFields[key];
@@ -300,8 +306,8 @@ export function MappingTab({
                     }
                   }}
                 >
-                  <option value="column">column</option>
-                  <option value="static">static</option>
+                  <option value="column">Колонка</option>
+                  <option value="static">Статичне значення</option>
                 </select>
                 {entry.mode === 'column' ? (
                   <select
@@ -312,7 +318,7 @@ export function MappingTab({
                       })
                     }
                   >
-                    <option value="">-- not set --</option>
+                    <option value="">-- не обрано --</option>
                     {mappingColumnOptions.map((option) => (
                       <option key={`${key}_${option.value}`} value={option.value}>
                         {option.label}
@@ -345,34 +351,32 @@ export function MappingTab({
           })}
         </div>
 
-        <div className="actions" style={{ marginTop: 8 }}>
-          <button className="btn" onClick={applyBuilderToJson}>
-            Builder to JSON
-          </button>
-          <button className="btn" onClick={() => refreshMapping(selectedSupplierId, selectedSourceId)}>
-            Reload mapping
-          </button>
-        </div>
-
-        <div className="form-row">
+        <div className="form-row" style={{ marginTop: 10 }}>
           <div>
-            <label>Header row</label>
-            <input value={mappingHeaderRow} onChange={(event) => setMappingHeaderRow(event.target.value)} />
-            {mappingErrors.header_row ? <div className="field-error">{mappingErrors.header_row}</div> : null}
-          </div>
-          <div>
-            <label>Коментар</label>
+            <label>Коментар до мапінгу</label>
             <input value={mappingComment} onChange={(event) => setMappingComment(event.target.value)} />
           </div>
         </div>
-        <label>Mapping JSON</label>
-        <textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} />
-        {mappingErrors.mapping ? <div className="field-error">{mappingErrors.mapping}</div> : null}
+
         <div className="actions" style={{ marginTop: 8 }}>
+          <button className="btn" onClick={applyBuilderToJson}>
+            Builder → JSON
+          </button>
+          <button className="btn" onClick={() => refreshMapping(selectedSupplierId, selectedSourceId)}>
+            Оновити з бази
+          </button>
           <button className="btn primary" disabled={isReadOnly} onClick={saveMapping}>
-            Save mapping
+            Зберегти мапінг
           </button>
         </div>
+
+        <details className="details-block" style={{ marginTop: 10 }}>
+          <summary>JSON мапінгу (технічний режим)</summary>
+          <label style={{ marginTop: 10 }}>Mapping JSON</label>
+          <textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} />
+          {mappingErrors.mapping ? <div className="field-error">{mappingErrors.mapping}</div> : null}
+        </details>
+
         <div
           className={`status-line ${
             mappingStatus.includes('помилка') || mappingStatus.includes('error') ? 'error' : ''

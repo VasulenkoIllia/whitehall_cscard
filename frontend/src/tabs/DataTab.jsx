@@ -1,6 +1,48 @@
 import React from 'react';
 import { Section } from '../components/ui';
 
+const VIEW_CONFIG = {
+  merged: {
+    title: 'Merged preview',
+    loadLabel: 'Завантажити merged',
+    exportHref: '/admin/api/merged-export',
+    columns: [
+      { key: 'article', label: 'Article' },
+      { key: 'size', label: 'Size' },
+      { key: 'quantity', label: 'К-сть' },
+      { key: 'price', label: 'Ціна' },
+      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'extra', label: 'Назва' }
+    ]
+  },
+  final: {
+    title: 'Final preview',
+    loadLabel: 'Завантажити final',
+    exportHref: '/admin/api/final-export',
+    columns: [
+      { key: 'article', label: 'Article' },
+      { key: 'size', label: 'Size' },
+      { key: 'quantity', label: 'К-сть' },
+      { key: 'price_base', label: 'Базова ціна' },
+      { key: 'price_final', label: 'Фінальна ціна' },
+      { key: 'supplier_name', label: 'Постачальник' }
+    ]
+  },
+  compare: {
+    title: 'Compare preview (CS-Cart)',
+    loadLabel: 'Завантажити compare',
+    exportHref: '/admin/api/compare-export?store=cscart',
+    columns: [
+      { key: 'article', label: 'Article' },
+      { key: 'size', label: 'Size' },
+      { key: 'price_final', label: 'Фінальна ціна' },
+      { key: 'sku_article', label: 'SKU article' },
+      { key: 'store_sku', label: 'Store SKU' },
+      { key: 'store_visibility', label: 'Видимість' }
+    ]
+  }
+};
+
 export function DataTab({
   dataFilters,
   setDataFilters,
@@ -14,44 +56,63 @@ export function DataTab({
   finalState,
   compareState
 }) {
-  const renderPreviewTable = (rows, columns, emptyLabel) => {
-    if (!rows.length) {
-      return <div className="empty-preview">{emptyLabel}</div>;
+  const runLoadActive = () => {
+    if (activeDataView === 'merged') {
+      void loadMerged();
+      return;
     }
-    return (
-      <div className="preview-table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column.key}>{column.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, rowIndex) => (
-              <tr key={`row_${rowIndex}`}>
-                {columns.map((column) => (
-                  <td key={`${rowIndex}_${column.key}`}>
-                    {typeof column.render === 'function'
-                      ? column.render(row[column.key], row)
-                      : String(row[column.key] ?? '-')}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
+    if (activeDataView === 'final') {
+      void loadFinal();
+      return;
+    }
+    void loadCompare();
   };
+
+  const currentConfig = VIEW_CONFIG[activeDataView];
+  const currentState =
+    activeDataView === 'merged' ? mergedState : activeDataView === 'final' ? finalState : compareState;
 
   return (
     <div className="data-grid">
-      <Section title="Фільтри" subtitle="Параметри серверної вибірки та сортування">
-        <div className="form-row">
+      <Section title="Перегляд даних" subtitle="Merged / Final / Compare для перевірки перед імпортом">
+        <div className="mini-tabs">
+          <button
+            className={`tab ${activeDataView === 'merged' ? 'active' : ''}`}
+            onClick={() => setActiveDataView('merged')}
+          >
+            merged
+          </button>
+          <button
+            className={`tab ${activeDataView === 'final' ? 'active' : ''}`}
+            onClick={() => setActiveDataView('final')}
+          >
+            final
+          </button>
+          <button
+            className={`tab ${activeDataView === 'compare' ? 'active' : ''}`}
+            onClick={() => setActiveDataView('compare')}
+          >
+            compare
+          </button>
+        </div>
+
+        <div className="form-row" style={{ marginTop: 10 }}>
           <div>
-            <label>limit</label>
+            <label>Пошук (article / SKU)</label>
+            <input
+              value={dataFilters.search}
+              onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value }))}
+            />
+          </div>
+          <div>
+            <label>supplierId (для final/compare)</label>
+            <input
+              value={dataFilters.supplierId}
+              onChange={(event) => setDataFilters((prev) => ({ ...prev, supplierId: event.target.value }))}
+            />
+          </div>
+          <div>
+            <label>Розмір сторінки (limit)</label>
             <input
               value={dataFilters.limit}
               onChange={(event) => setDataFilters((prev) => ({ ...prev, limit: event.target.value }))}
@@ -64,178 +125,88 @@ export function DataTab({
               onChange={(event) => setDataFilters((prev) => ({ ...prev, offset: event.target.value }))}
             />
           </div>
-          <div>
-            <label>search</label>
-            <input
-              value={dataFilters.search}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value }))}
-            />
-          </div>
-          <div>
-            <label>supplierId (final/compare)</label>
-            <input
-              value={dataFilters.supplierId}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, supplierId: event.target.value }))}
-            />
-          </div>
         </div>
-        <div className="form-row">
-          <div>
-            <label>Merged sort</label>
-            <select
-              value={dataFilters.mergedSort}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, mergedSort: event.target.value }))}
-            >
-              <option value="article_asc">article asc</option>
-              <option value="article_desc">article desc</option>
-              <option value="created_desc">created desc</option>
-            </select>
+
+        <details className="details-block">
+          <summary>Розширені фільтри</summary>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <div>
+              <label>Merged sort</label>
+              <select
+                value={dataFilters.mergedSort}
+                onChange={(event) => setDataFilters((prev) => ({ ...prev, mergedSort: event.target.value }))}
+              >
+                <option value="article_asc">article asc</option>
+                <option value="article_desc">article desc</option>
+                <option value="created_desc">created desc</option>
+              </select>
+            </div>
+            <div>
+              <label>Final sort</label>
+              <select
+                value={dataFilters.finalSort}
+                onChange={(event) => setDataFilters((prev) => ({ ...prev, finalSort: event.target.value }))}
+              >
+                <option value="article_asc">article asc</option>
+                <option value="article_desc">article desc</option>
+                <option value="created_desc">created desc</option>
+              </select>
+            </div>
+            <div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={dataFilters.missingOnly}
+                  onChange={(event) =>
+                    setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))
+                  }
+                  style={{ width: 'auto', marginRight: 8 }}
+                />
+                compare: лише missing
+              </label>
+            </div>
           </div>
-          <div>
-            <label>Final sort</label>
-            <select
-              value={dataFilters.finalSort}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, finalSort: event.target.value }))}
-            >
-              <option value="article_asc">article asc</option>
-              <option value="article_desc">article desc</option>
-              <option value="created_desc">created desc</option>
-            </select>
-          </div>
-        </div>
-        <div className="actions">
-          <label>
-            <input
-              type="checkbox"
-              checked={dataFilters.missingOnly}
-              onChange={(event) =>
-                setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))
-              }
-              style={{ width: 'auto', marginRight: 8 }}
-            />
-            compare missingOnly
-          </label>
-          <button
-            className="btn"
-            onClick={() => {
-              if (activeDataView === 'merged') {
-                void loadMerged();
-              } else if (activeDataView === 'final') {
-                void loadFinal();
-              } else {
-                void loadCompare();
-              }
-            }}
-          >
-            Load active view
+        </details>
+
+        <div className="actions" style={{ marginTop: 10 }}>
+          <button className="btn primary" onClick={runLoadActive}>
+            {currentConfig.loadLabel}
           </button>
-          <button
-            className="btn"
-            onClick={() => {
-              void loadMerged();
-              void loadFinal();
-              void loadCompare();
-            }}
-          >
-            Load all
-          </button>
-          <button className="btn" onClick={() => shiftDataOffset(-1)}>Prev page</button>
-          <button className="btn" onClick={() => shiftDataOffset(1)}>Next page</button>
+          <button className="btn" onClick={() => shiftDataOffset(-1)}>Попередня сторінка</button>
+          <button className="btn" onClick={() => shiftDataOffset(1)}>Наступна сторінка</button>
+          <a className="btn" href={currentConfig.exportHref}>Export CSV</a>
+          <span className="chip">total: {currentState.total}</span>
+          <span className="chip">offset: {dataFilters.offset}</span>
         </div>
       </Section>
 
-      <div className="mini-tabs">
-        <button
-          className={`tab ${activeDataView === 'merged' ? 'active' : ''}`}
-          onClick={() => setActiveDataView('merged')}
-        >
-          merged
-        </button>
-        <button
-          className={`tab ${activeDataView === 'final' ? 'active' : ''}`}
-          onClick={() => setActiveDataView('final')}
-        >
-          final
-        </button>
-        <button
-          className={`tab ${activeDataView === 'compare' ? 'active' : ''}`}
-          onClick={() => setActiveDataView('compare')}
-        >
-          compare
-        </button>
-      </div>
-
-      {activeDataView === 'merged' ? (
-        <Section title="Merged preview" extra={<button className="btn" onClick={loadMerged}>Load</button>}>
-          <div className="actions" style={{ marginBottom: 8 }}>
-            <a className="btn" href="/admin/api/merged-export">Export CSV</a>
-            <span className="chip">total: {mergedState.total}</span>
-            <span className="chip">offset: {dataFilters.offset}</span>
+      <Section title={currentConfig.title}>
+        <div className="status-line">{currentState.status}</div>
+        {currentState.rows.length === 0 ? (
+          <div className="empty-preview">Немає даних для поточного фільтра</div>
+        ) : (
+          <div className="preview-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  {currentConfig.columns.map((column) => (
+                    <th key={column.key}>{column.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {currentState.rows.map((row, rowIndex) => (
+                  <tr key={`row_${rowIndex}`}>
+                    {currentConfig.columns.map((column) => (
+                      <td key={`${rowIndex}_${column.key}`}>{String(row[column.key] ?? '-')}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className="status-line">{mergedState.status}</div>
-          {renderPreviewTable(
-            mergedState.rows,
-            [
-              { key: 'article', label: 'article' },
-              { key: 'size', label: 'size' },
-              { key: 'quantity', label: 'qty' },
-              { key: 'price', label: 'price' },
-              { key: 'supplier_name', label: 'supplier' },
-              { key: 'extra', label: 'extra' }
-            ],
-            'Merged preview is empty'
-          )}
-        </Section>
-      ) : null}
-
-      {activeDataView === 'final' ? (
-        <Section title="Final preview" extra={<button className="btn" onClick={loadFinal}>Load</button>}>
-          <div className="actions" style={{ marginBottom: 8 }}>
-            <a className="btn" href="/admin/api/final-export">Export CSV</a>
-            <span className="chip">total: {finalState.total}</span>
-            <span className="chip">offset: {dataFilters.offset}</span>
-          </div>
-          <div className="status-line">{finalState.status}</div>
-          {renderPreviewTable(
-            finalState.rows,
-            [
-              { key: 'article', label: 'article' },
-              { key: 'size', label: 'size' },
-              { key: 'quantity', label: 'qty' },
-              { key: 'price_base', label: 'base' },
-              { key: 'price_final', label: 'final' },
-              { key: 'supplier_name', label: 'supplier' }
-            ],
-            'Final preview is empty'
-          )}
-        </Section>
-      ) : null}
-
-      {activeDataView === 'compare' ? (
-        <Section
-          title="Compare preview (CS-Cart)"
-          extra={<button className="btn" onClick={loadCompare}>Load</button>}
-        >
-          <div className="actions" style={{ marginBottom: 8 }}>
-            <a className="btn" href="/admin/api/compare-export?store=cscart">Export CSV</a>
-            <span className="chip">total: {compareState.total}</span>
-            <span className="chip">offset: {dataFilters.offset}</span>
-          </div>
-          <div className="status-line">{compareState.status}</div>
-          {renderPreviewTable(
-            compareState.rows,
-            [
-              { key: 'article', label: 'article' },
-              { key: 'size', label: 'size' },
-              { key: 'price_final', label: 'final' },
-              { key: 'sku_article', label: 'sku_article' },
-              { key: 'store_sku', label: 'store_sku' },
-              { key: 'store_visibility', label: 'visibility' }
-            ],
-            'Compare preview is empty'
-          )}
-        </Section>
-      ) : null}
+        )}
+      </Section>
     </div>
   );
 }

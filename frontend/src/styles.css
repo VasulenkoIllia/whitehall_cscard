@@ -390,6 +390,10 @@ th {
   font-weight: 600;
 }
 
+tbody tr:hover {
+  background: #f4f8ff;
+}
+
 pre {
   margin: 0;
   white-space: pre-wrap;
@@ -505,6 +509,44 @@ pre {
   margin: 0 0 8px;
   font-size: 13px;
   color: #304564;
+}
+
+.operator-group {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #dfe8f7;
+  background: #ffffff;
+}
+
+.operator-group-warn {
+  border-color: #efd5a3;
+  background: #fffaf1;
+}
+
+.details-block {
+  border: 1px solid #d7e3f5;
+  border-radius: 12px;
+  background: #f9fbff;
+  padding: 8px 10px;
+}
+
+.details-block summary {
+  cursor: pointer;
+  color: #2c456b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.details-block[open] summary {
+  margin-bottom: 6px;
+}
+
+.truncate-cell {
+  max-width: 540px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @keyframes panelIn {

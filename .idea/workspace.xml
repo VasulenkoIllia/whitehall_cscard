@@ -6,19 +6,23 @@
   <component name="ChangeListManager">
     <list default="true" id="e2539e80-4d9b-492c-a689-139fb23c07d4" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/ARCHITECTURE_BASELINE_2026_03.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/ARCHITECTURE_BASELINE_2026_03.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/IMPLEMENTATION_STAGES.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/IMPLEMENTATION_STAGES.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/RUNBOOK_BACKEND_CUTOVER_CHECKLIST_2026_03.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/RUNBOOK_BACKEND_CUTOVER_CHECKLIST_2026_03.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/lib/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/lib/api.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/styles.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/JobsTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/JobsTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/MappingTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/MappingTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/PricingTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/PricingTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/SuppliersTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/SuppliersTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/vite.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/vite.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/package-lock.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-DFzV1q-K.css" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-DLRvVp_m.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-ByEdURS1.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-JnnMOd3m.js" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/public/admin/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/public/admin/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/app/http/loginPage.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/http/loginPage.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/app/http/server.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/http/server.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -44,31 +48,42 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;javascript.preferred.runtime.type.id&quot;: &quot;node&quot;,
-    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;npm.migrate.executor&quot;: &quot;Run&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.AcpAgentsConfigurable&quot;,
-    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
-    &quot;ts.external.directory.path&quot;: &quot;/Users/monstermac/WebstormProjects/whitehall_cscard/node_modules/typescript/lib&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "main",
+    "javascript.preferred.runtime.type.id": "node",
+    "junie.onboarding.icon.badge.shown": "true",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "npm.dev:all.executor": "Run",
+    "npm.migrate.executor": "Run",
+    "settings.editor.selected.configurable": "ml.llm.AcpAgentsConfigurable",
+    "to.speed.mode.migration.done": "true",
+    "ts.external.directory.path": "/Users/monstermac/WebstormProjects/whitehall_cscard/node_modules/typescript/lib",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
-  <component name="RunManager">
+}]]></component>
+  <component name="RunManager" selected="npm.dev:all">
+    <configuration name="dev:all" type="js.build_tools.npm" temporary="true" nameIsGenerated="true">
+      <package-json value="$PROJECT_DIR$/package.json" />
+      <command value="run" />
+      <scripts>
+        <script value="dev:all" />
+      </scripts>
+      <node-interpreter value="project" />
+      <envs />
+      <method v="2" />
+    </configuration>
     <configuration name="migrate" type="js.build_tools.npm" temporary="true" nameIsGenerated="true">
       <package-json value="$PROJECT_DIR$/package.json" />
       <command value="run" />
@@ -81,6 +96,7 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="npm.dev:all" />
         <item itemvalue="npm.migrate" />
       </list>
     </recent_temporary>
@@ -106,7 +122,7 @@
       <workItem from="1774114666269" duration="489000" />
       <workItem from="1774115183219" duration="61000" />
       <workItem from="1774115258599" duration="3921000" />
-      <workItem from="1774121500051" duration="620000" />
+      <workItem from="1774121500051" duration="4493000" />
     </task>
     <servers />
   </component>

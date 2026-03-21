@@ -1,6 +1,6 @@
 import React from 'react';
 import { toJsonString } from '../lib/api';
-import { Section } from '../components/ui';
+import { Section, Tag } from '../components/ui';
 
 export function JobsTab({
   refreshCore,
@@ -19,16 +19,16 @@ export function JobsTab({
 }) {
   return (
     <div className="grid">
-      <Section title="Jobs" extra={<button className="btn" onClick={refreshCore}>Reload</button>}>
+      <Section title="Джоби" subtitle="Останні запуски пайплайна" extra={<button className="btn" onClick={refreshCore}>Оновити</button>}>
         <div className="status-line">{jobsStatus}</div>
         <table>
           <thead>
             <tr>
               <th>ID</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Action</th>
+              <th>Тип</th>
+              <th>Стан</th>
+              <th>Створено</th>
+              <th>Дія</th>
             </tr>
           </thead>
           <tbody>
@@ -36,16 +36,20 @@ export function JobsTab({
               <tr key={job.id}>
                 <td>{job.id}</td>
                 <td>{job.type}</td>
-                <td>{job.status}</td>
+                <td>
+                  <Tag tone={job.status === 'completed' ? 'ok' : job.status === 'failed' ? 'error' : 'warn'}>
+                    {job.status}
+                  </Tag>
+                </td>
                 <td>{job.created_at || '-'}</td>
                 <td>
                   <div className="actions">
                     <button className="btn" onClick={() => openJobDetails(job.id)}>
-                      Details
+                      Деталі
                     </button>
                     {job.status === 'running' || job.status === 'queued' ? (
                       <button className="btn danger" disabled={isReadOnly} onClick={() => cancelJob(job.id)}>
-                        Cancel
+                        Скасувати
                       </button>
                     ) : null}
                   </div>
@@ -57,12 +61,12 @@ export function JobsTab({
       </Section>
 
       <Section
-        title="Logs"
-        subtitle="Операційний потік помилок і попереджень"
+        title="Логи"
+        subtitle="Фільтрація помилок і попереджень"
         extra={
           <div className="actions">
             <select value={logsLevel} onChange={(event) => setLogsLevel(event.target.value)}>
-              <option value="">all</option>
+              <option value="">всі рівні</option>
               <option value="error">error</option>
               <option value="warning">warning</option>
               <option value="info">info</option>
@@ -73,7 +77,7 @@ export function JobsTab({
               placeholder="jobId"
               style={{ width: 110 }}
             />
-            <button className="btn" onClick={refreshCore}>Reload</button>
+            <button className="btn" onClick={refreshCore}>Оновити</button>
             <button
               className="btn"
               onClick={() => {
@@ -82,17 +86,48 @@ export function JobsTab({
                 void refreshCore();
               }}
             >
-              Reset
+              Скинути
             </button>
           </div>
         }
       >
-        <pre>{toJsonString(logs.slice(0, 120))}</pre>
+        {logs.length === 0 ? (
+          <div className="empty-preview">Логи за поточним фільтром відсутні</div>
+        ) : (
+          <div className="preview-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Час</th>
+                  <th>Рівень</th>
+                  <th>Job</th>
+                  <th>Повідомлення</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.slice(0, 120).map((item) => (
+                  <tr key={item.id || `${item.created_at}_${item.message}`}>
+                    <td>{item.created_at || '-'}</td>
+                    <td>
+                      <Tag tone={item.level === 'error' ? 'error' : item.level === 'warning' ? 'warn' : 'ok'}>
+                        {item.level || '-'}
+                      </Tag>
+                    </td>
+                    <td>{item.job_id || '-'}</td>
+                    <td className="truncate-cell" title={item.message || '-'}>
+                      {item.message || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       {jobDetails.jobId ? (
         <Section
-          title={`Job details #${jobDetails.jobId}`}
+          title={`Деталі job #${jobDetails.jobId}`}
           extra={
             <div className="actions">
               <button
@@ -103,13 +138,13 @@ export function JobsTab({
                   }
                 }}
               >
-                Reload details
+                Оновити деталі
               </button>
-              <button className="btn" onClick={closeJobDetails}>Close</button>
+              <button className="btn" onClick={closeJobDetails}>Закрити</button>
             </div>
           }
         >
-          {jobDetails.loading ? <div className="status-line">Loading...</div> : null}
+          {jobDetails.loading ? <div className="status-line">Завантаження...</div> : null}
           {jobDetails.error ? <div className="status-line error">{jobDetails.error}</div> : null}
           {jobDetails.payload ? (
             <div className="grid">
@@ -123,7 +158,7 @@ export function JobsTab({
               </div>
               <div>
                 <h4 className="block-title">Logs (latest)</h4>
-                <pre>{toJsonString((jobDetails.payload.logs || []).slice(0, 200))}</pre>
+                <pre>{toJsonString((jobDetails.payload.logs || []).slice(0, 120))}</pre>
               </div>
             </div>
           ) : null}

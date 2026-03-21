@@ -1,5 +1,5 @@
 import React from 'react';
-import { Section } from '../components/ui';
+import { Section, Tag } from '../components/ui';
 
 export function PricingTab({
   refreshMarkupRuleSets,
@@ -37,9 +37,9 @@ export function PricingTab({
   return (
     <div className="grid">
       <Section
-        title="Markup Rule Sets"
-        subtitle="Огляд, default, apply по suppliers/all suppliers"
-        extra={<button className="btn" onClick={refreshMarkupRuleSets}>Reload</button>}
+        title="Rule sets націнки"
+        subtitle="Вибір правила за замовчуванням та застосування до постачальників"
+        extra={<button className="btn" onClick={refreshMarkupRuleSets}>Оновити rule sets</button>}
       >
         <div className="form-row">
           <div>
@@ -57,67 +57,72 @@ export function PricingTab({
             </select>
           </div>
           <div>
-            <label>Scope</label>
+            <label>Область застосування</label>
             <select value={pricingApplyScope} onChange={(event) => setPricingApplyScope(event.target.value)}>
-              <option value="suppliers">suppliers (selected)</option>
-              <option value="all_suppliers">all_suppliers</option>
+              <option value="suppliers">Вибрані постачальники</option>
+              <option value="all_suppliers">Усі постачальники</option>
             </select>
           </div>
           <div>
             <label>&nbsp;</label>
             <div className="actions">
               <button className="btn" disabled={isReadOnly} onClick={applyMarkupRuleSet}>
-                Apply
+                Застосувати
               </button>
               <button
                 className="btn"
                 disabled={isReadOnly || !pricingApplyRuleSetId}
                 onClick={() => setDefaultMarkupRuleSet(pricingApplyRuleSetId)}
               >
-                Set default
+                Зробити default
               </button>
               <button className="btn" onClick={startCreateRuleSet}>
-                New rule set
+                Новий rule set
               </button>
             </div>
           </div>
         </div>
-        <div className="status-line">global_rule_set_id: {globalRuleSetId || '-'}</div>
+        <div className="status-line">Поточний default rule set: {globalRuleSetId || '-'}</div>
         {pricingApplyScope === 'all_suppliers' ? (
           <div className="preflight-warning">
-            Scope `all_suppliers` запускає preflight keyword-підтвердження.
+            Для scope=all_suppliers система запросить preflight підтвердження.
           </div>
         ) : null}
         <div className="status-line">{pricingStatus}</div>
+
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Active</th>
-              <th>Conditions</th>
-              <th>Actions</th>
+              <th>Rule set</th>
+              <th>Стан</th>
+              <th>Умов</th>
+              <th>Дії</th>
             </tr>
           </thead>
           <tbody>
             {markupRuleSets.map((ruleSet) => (
               <tr key={ruleSet.id}>
-                <td>{ruleSet.id}</td>
                 <td>
-                  {ruleSet.name}
-                  {Number(globalRuleSetId || 0) === Number(ruleSet.id) ? (
-                    <span className="chip">default</span>
-                  ) : null}
+                  <div>
+                    #{ruleSet.id} {ruleSet.name}
+                    {Number(globalRuleSetId || 0) === Number(ruleSet.id) ? (
+                      <span className="chip">default</span>
+                    ) : null}
+                  </div>
                 </td>
-                <td>{ruleSet.is_active ? 'true' : 'false'}</td>
+                <td>
+                  <Tag tone={ruleSet.is_active ? 'ok' : 'warn'}>
+                    {ruleSet.is_active ? 'active' : 'paused'}
+                  </Tag>
+                </td>
                 <td>{Array.isArray(ruleSet.conditions) ? ruleSet.conditions.length : 0}</td>
                 <td>
                   <div className="actions">
                     <button className="btn" onClick={() => startEditRuleSet(ruleSet.id)}>
-                      Edit in form
+                      Редагувати
                     </button>
                     <button className="btn" onClick={() => setPricingApplyRuleSetId(String(ruleSet.id))}>
-                      Select
+                      Обрати
                     </button>
                   </div>
                 </td>
@@ -128,12 +133,12 @@ export function PricingTab({
       </Section>
 
       <Section
-        title={ruleSetDraft.id ? `Rule Set #${ruleSetDraft.id}` : 'Створення Rule Set'}
-        subtitle="Повний editor conditions для create/update"
+        title={ruleSetDraft.id ? `Редактор rule set #${ruleSetDraft.id}` : 'Створення нового rule set'}
+        subtitle="Налаштування діапазонів і дій націнки"
       >
         <div className="form-row">
           <div>
-            <label>Name</label>
+            <label>Назва</label>
             <input
               value={ruleSetDraft.name}
               onChange={(event) => setRuleSetDraft((prev) => ({ ...prev, name: event.target.value }))}
@@ -150,7 +155,7 @@ export function PricingTab({
                 }
                 style={{ width: 'auto', marginRight: 8 }}
               />
-              is_active
+              Rule set активний
             </label>
           </div>
         </div>
@@ -158,34 +163,34 @@ export function PricingTab({
         <div className="conditions-list">
           {ruleSetDraft.conditions.map((condition, index) => (
             <div className="condition-card" key={`condition_${index}`}>
-              <div className="condition-title">Condition #{index + 1}</div>
+              <div className="condition-title">Умова #{index + 1}</div>
               {ruleSetErrors[`condition_${index}`] ? (
                 <div className="field-error">{ruleSetErrors[`condition_${index}`]}</div>
               ) : null}
               <div className="form-row">
                 <div>
-                  <label>priority</label>
+                  <label>Пріоритет</label>
                   <input
                     value={condition.priority}
                     onChange={(event) => updateRuleCondition(index, { priority: event.target.value })}
                   />
                 </div>
                 <div>
-                  <label>price_from</label>
+                  <label>Ціна від</label>
                   <input
                     value={condition.price_from}
                     onChange={(event) => updateRuleCondition(index, { price_from: event.target.value })}
                   />
                 </div>
                 <div>
-                  <label>price_to (optional)</label>
+                  <label>Ціна до (опційно)</label>
                   <input
                     value={condition.price_to}
                     onChange={(event) => updateRuleCondition(index, { price_to: event.target.value })}
                   />
                 </div>
                 <div>
-                  <label>action_type</label>
+                  <label>Тип дії</label>
                   <select
                     value={condition.action_type}
                     onChange={(event) => updateRuleCondition(index, { action_type: event.target.value })}
@@ -195,7 +200,7 @@ export function PricingTab({
                   </select>
                 </div>
                 <div>
-                  <label>action_value</label>
+                  <label>Значення дії</label>
                   <input
                     value={condition.action_value}
                     onChange={(event) => updateRuleCondition(index, { action_value: event.target.value })}
@@ -210,14 +215,14 @@ export function PricingTab({
                     onChange={(event) => updateRuleCondition(index, { is_active: event.target.checked })}
                     style={{ width: 'auto', marginRight: 8 }}
                   />
-                  is_active
+                  Активна умова
                 </label>
                 <button
                   className="btn danger"
                   disabled={ruleSetDraft.conditions.length <= 1}
                   onClick={() => removeRuleCondition(index)}
                 >
-                  Remove condition
+                  Видалити умову
                 </button>
               </div>
             </div>
@@ -225,50 +230,53 @@ export function PricingTab({
         </div>
 
         <div className="actions" style={{ marginTop: 10 }}>
-          <button className="btn" onClick={addRuleCondition}>Add condition</button>
+          <button className="btn" onClick={addRuleCondition}>Додати умову</button>
           <button className="btn primary" disabled={isReadOnly} onClick={saveRuleSet}>
-            {ruleSetDraft.id ? 'Update rule set' : 'Create rule set'}
+            {ruleSetDraft.id ? 'Оновити rule set' : 'Створити rule set'}
           </button>
-          <button className="btn" onClick={startCreateRuleSet}>Reset editor</button>
+          <button className="btn" onClick={startCreateRuleSet}>Скинути редактор</button>
         </div>
         <div className={`status-line ${ruleSetStatus.includes('invalid') ? 'error' : ''}`}>
           {ruleSetStatus}
         </div>
       </Section>
 
-      <Section title="Price Overrides" subtitle="Upsert/update для фінальної ціни">
-        <div className="form-row">
-          <div>
-            <label>search</label>
-            <input
-              value={priceOverrideFilters.search}
-              onChange={(event) =>
-                setPriceOverrideFilters((prev) => ({ ...prev, search: event.target.value }))
-              }
-            />
+      <Section title="Price overrides" subtitle="Ручне перевизначення фінальної ціни">
+        <details className="details-block">
+          <summary>Фільтри списку override</summary>
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <div>
+              <label>Пошук</label>
+              <input
+                value={priceOverrideFilters.search}
+                onChange={(event) =>
+                  setPriceOverrideFilters((prev) => ({ ...prev, search: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>limit</label>
+              <input
+                value={priceOverrideFilters.limit}
+                onChange={(event) =>
+                  setPriceOverrideFilters((prev) => ({ ...prev, limit: event.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>offset</label>
+              <input
+                value={priceOverrideFilters.offset}
+                onChange={(event) =>
+                  setPriceOverrideFilters((prev) => ({ ...prev, offset: event.target.value }))
+                }
+              />
+            </div>
           </div>
-          <div>
-            <label>limit</label>
-            <input
-              value={priceOverrideFilters.limit}
-              onChange={(event) =>
-                setPriceOverrideFilters((prev) => ({ ...prev, limit: event.target.value }))
-              }
-            />
+          <div className="actions">
+            <button className="btn" onClick={refreshPriceOverrides}>Оновити список override</button>
           </div>
-          <div>
-            <label>offset</label>
-            <input
-              value={priceOverrideFilters.offset}
-              onChange={(event) =>
-                setPriceOverrideFilters((prev) => ({ ...prev, offset: event.target.value }))
-              }
-            />
-          </div>
-        </div>
-        <div className="actions">
-          <button className="btn" onClick={refreshPriceOverrides}>Reload overrides</button>
-        </div>
+        </details>
 
         <div className="form-row" style={{ marginTop: 10 }}>
           <div>
@@ -321,13 +329,13 @@ export function PricingTab({
                 }
                 style={{ width: 'auto', marginRight: 8 }}
               />
-              is_active
+              Активний override
             </label>
           </div>
         </div>
         <div className="actions">
           <button className="btn primary" disabled={isReadOnly} onClick={savePriceOverride}>
-            {priceOverrideDraft.id ? 'Update override' : 'Upsert override'}
+            {priceOverrideDraft.id ? 'Оновити override' : 'Створити override'}
           </button>
           <button
             className="btn"
@@ -336,7 +344,7 @@ export function PricingTab({
               setPriceOverrideErrors({});
             }}
           >
-            Reset override form
+            Скинути форму
           </button>
         </div>
 
@@ -350,9 +358,9 @@ export function PricingTab({
               <th>Article</th>
               <th>Size</th>
               <th>Price final</th>
-              <th>Active</th>
+              <th>Стан</th>
               <th>Notes</th>
-              <th>Action</th>
+              <th>Дія</th>
             </tr>
           </thead>
           <tbody>
@@ -362,17 +370,13 @@ export function PricingTab({
                 <td>{row.article}</td>
                 <td>{row.size || '-'}</td>
                 <td>{row.price_final}</td>
-                <td>{row.is_active ? 'true' : 'false'}</td>
+                <td>
+                  <Tag tone={row.is_active ? 'ok' : 'warn'}>{row.is_active ? 'active' : 'paused'}</Tag>
+                </td>
                 <td>{row.notes || '-'}</td>
                 <td>
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      setPriceOverrideDraft(toPriceOverrideDraft(row));
-                      setPriceOverrideErrors({});
-                    }}
-                  >
-                    Edit
+                  <button className="btn" onClick={() => setPriceOverrideDraft(toPriceOverrideDraft(row))}>
+                    Редагувати
                   </button>
                 </td>
               </tr>

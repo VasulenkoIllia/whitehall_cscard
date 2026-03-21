@@ -1,4 +1,21 @@
 export const API_BASE = '/admin/api';
+let authRedirectStarted = false;
+
+function redirectToLogin() {
+  if (authRedirectStarted) {
+    return;
+  }
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (window.location.pathname.startsWith('/admin/login')) {
+    return;
+  }
+  authRedirectStarted = true;
+  const nextPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  const target = `/admin/login?next=${encodeURIComponent(nextPath || '/admin')}`;
+  window.location.assign(target);
+}
 
 async function readJsonSafe(response) {
   try {
@@ -20,6 +37,9 @@ export async function apiFetch(path, options = {}) {
 
   const json = await readJsonSafe(response);
   if (!response.ok) {
+    if (response.status === 401) {
+      redirectToLogin();
+    }
     const message = json?.error || `${response.status} ${response.statusText}`;
     const error = new Error(message);
     error.status = response.status;

@@ -3,7 +3,7 @@ import cookieParser from 'cookie-parser';
 import fs from 'fs';
 import path from 'path';
 import type { Application as AppContext } from '../createApplication';
-import type { Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { createAuthMiddleware } from './authMiddleware';
 import { renderLoginPage } from './loginPage';
 import { getSheetPreview, listSheetNames } from '../../core/pipeline/googleSheetsService';
@@ -92,6 +92,47 @@ export function createHttpServer(appContext: AppContext) {
       return 'name_desc';
     }
     return 'id_asc';
+  };
+
+  const normalizeAdminNextPath = (value: unknown, fallback = '/admin'): string => {
+    if (typeof value !== 'string') {
+      return fallback;
+    }
+    const nextPath = value.trim();
+    if (!nextPath) {
+      return fallback;
+    }
+    if (!nextPath.startsWith('/')) {
+      return fallback;
+    }
+    if (nextPath.startsWith('//')) {
+      return fallback;
+    }
+    if (!nextPath.startsWith('/admin')) {
+      return fallback;
+    }
+    if (nextPath === '/admin/login' || nextPath.startsWith('/admin/login?')) {
+      return fallback;
+    }
+    if (nextPath.startsWith('/admin/api')) {
+      return fallback;
+    }
+    if (nextPath.startsWith('/admin/assets')) {
+      return fallback;
+    }
+    return nextPath;
+  };
+
+  const buildLoginRedirectPath = (req: Request): string => {
+    const nextPath = normalizeAdminNextPath(req.originalUrl, '/admin');
+    return `/admin/login?next=${encodeURIComponent(nextPath)}`;
+  };
+
+  const requireAdminUiAuth = (req: Request, res: Response, next: NextFunction) => {
+    if (!req.userRole) {
+      return res.redirect(302, buildLoginRedirectPath(req));
+    }
+    return next();
   };
 
   const toCsvCell = (value: unknown): string => {
@@ -1202,13 +1243,17 @@ export function createHttpServer(appContext: AppContext) {
     }
   );
 
-  app.get('/admin/login', (_req, res) => {
-    res.set('Content-Type', 'text/html; charset=utf-8').send(renderLoginPage());
+  app.get('/admin/login', (req: Request, res: Response) => {
+    const nextPath = normalizeAdminNextPath(req.query?.next, '/admin');
+    if (req.userRole) {
+      return res.redirect(302, nextPath);
+    }
+    return res.set('Content-Type', 'text/html; charset=utf-8').send(renderLoginPage(nextPath));
   });
 
   // Protected static admin UI
-  app.use('/admin', authMw.requireRole('viewer'), express.static(adminStaticPath));
-  app.get('/admin/*', authMw.requireRole('viewer'), (_req, res) => {
+  app.use('/admin', requireAdminUiAuth, express.static(adminStaticPath));
+  app.get('/admin/*', requireAdminUiAuth, (_req, res) => {
     res.sendFile(path.join(adminStaticPath, 'index.html'));
   });
 
