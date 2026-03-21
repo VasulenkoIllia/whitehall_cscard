@@ -31,18 +31,15 @@
 ### Phase 1 (completed)
 - React shell + базова навігація + критичні operator flows.
 
-### Phase 2 (in progress)
-- Supplier/source/mapping operator flows вже перенесено у React.
-- Залишок фази:
-  - polishing UX (валідації, підказки, edge-cases для mapping builder)
-  - lightweight job detail drawer (`/admin/api/jobs/:jobId`) для швидкого дебагу з UI.
+### Phase 2 (done)
+- Supplier/source/mapping operator flows перенесено у React.
+- Додано lightweight job details panel (`/admin/api/jobs/:jobId`) для дебагу.
+- Додано табличний data-review UX (filters/sort/paging controls).
 
-### Phase 3 (in progress)
-- Вже перенесено:
-  - markup rule sets: `list/default/apply`.
+### Phase 3 (done)
+- Перенесено pricing/admin секції:
+  - markup rule sets: `list/create/update/default/apply` + conditions editor.
   - price overrides: `list/upsert/update`.
-- Залишок:
-  - повний CRUD rule sets з conditions-редактором у React.
 
 ### Phase 4
 - Розширення data-review UX:

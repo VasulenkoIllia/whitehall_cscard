@@ -8,9 +8,9 @@
   - `Огляд` (jobs/readiness/actions),
   - `Постачальники` (search/sort + CRUD + bulk update),
   - `Джерела та мапінг` (source CRUD + source sheets/preview + mapping builder + JSON),
-  - `Націнки та override` (markup rule sets: list/default/apply, price overrides: list/upsert/update),
-  - `Дані` (merged/final/compare preview + export),
-  - `Джоби та логи`.
+  - `Націнки та override` (markup rule sets: list/create/update/default/apply + conditions editor, price overrides: list/upsert/update),
+  - `Дані` (merged/final/compare preview + export + server filters/sort/paging controls),
+  - `Джоби та логи` (list + cancel + details panel `/admin/api/jobs/:jobId`).
 
 ## Імпорт даних
 - Імпорт Google Sheets у `products_raw` з перевіркою mapping і skip-логікою.

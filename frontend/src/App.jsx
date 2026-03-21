@@ -115,6 +115,103 @@ function parseSourceUrlHint(sourceUrl) {
   return 'custom URL';
 }
 
+function createRuleConditionDraft(priority = 10) {
+  return {
+    priority: String(priority),
+    price_from: '0',
+    price_to: '',
+    action_type: 'percent',
+    action_value: '0',
+    is_active: true
+  };
+}
+
+function toRuleSetDraft(ruleSet = null) {
+  if (!ruleSet) {
+    return {
+      id: '',
+      name: '',
+      is_active: true,
+      conditions: [createRuleConditionDraft(10)]
+    };
+  }
+  const conditions = Array.isArray(ruleSet.conditions)
+    ? ruleSet.conditions.map((row, index) => ({
+        priority: String(Number(row.priority || (index + 1) * 10)),
+        price_from: String(Number(row.price_from || 0)),
+        price_to:
+          row.price_to === null || typeof row.price_to === 'undefined'
+            ? ''
+            : String(Number(row.price_to)),
+        action_type: String(row.action_type || 'percent'),
+        action_value: String(Number(row.action_value || 0)),
+        is_active: row.is_active !== false
+      }))
+    : [createRuleConditionDraft(10)];
+
+  return {
+    id: String(ruleSet.id || ''),
+    name: String(ruleSet.name || ''),
+    is_active: ruleSet.is_active !== false,
+    conditions: conditions.length > 0 ? conditions : [createRuleConditionDraft(10)]
+  };
+}
+
+function normalizeRuleSetPayload(ruleSetDraft) {
+  const name = String(ruleSetDraft.name || '').trim();
+  if (!name) {
+    return { ok: false, error: 'name is required' };
+  }
+  if (!Array.isArray(ruleSetDraft.conditions) || ruleSetDraft.conditions.length === 0) {
+    return { ok: false, error: 'conditions are required' };
+  }
+
+  const conditions = [];
+  for (let index = 0; index < ruleSetDraft.conditions.length; index += 1) {
+    const condition = ruleSetDraft.conditions[index];
+    const priority = Number(condition.priority);
+    const priceFrom = Number(condition.price_from);
+    const actionValue = Number(condition.action_value);
+    const priceToRaw = String(condition.price_to || '').trim();
+    const priceTo = priceToRaw === '' ? null : Number(priceToRaw);
+    const actionType = String(condition.action_type || '').trim();
+
+    if (!Number.isFinite(priority)) {
+      return { ok: false, error: `condition #${index + 1}: priority is invalid` };
+    }
+    if (!Number.isFinite(priceFrom) || priceFrom < 0) {
+      return { ok: false, error: `condition #${index + 1}: price_from is invalid` };
+    }
+    if (priceTo !== null && (!Number.isFinite(priceTo) || priceTo < priceFrom)) {
+      return { ok: false, error: `condition #${index + 1}: price_to is invalid` };
+    }
+    if (actionType !== 'percent' && actionType !== 'fixed_add') {
+      return { ok: false, error: `condition #${index + 1}: action_type is invalid` };
+    }
+    if (!Number.isFinite(actionValue)) {
+      return { ok: false, error: `condition #${index + 1}: action_value is invalid` };
+    }
+
+    conditions.push({
+      priority: Math.trunc(priority),
+      price_from: priceFrom,
+      price_to: priceTo,
+      action_type: actionType,
+      action_value: actionValue,
+      is_active: condition.is_active !== false
+    });
+  }
+
+  return {
+    ok: true,
+    payload: {
+      name,
+      is_active: ruleSetDraft.is_active !== false,
+      conditions
+    }
+  };
+}
+
 export default function App() {
   const [tab, setTab] = useState('overview');
   const [apiStatus, setApiStatus] = useState('checking');
@@ -174,6 +271,8 @@ export default function App() {
   const [pricingStatus, setPricingStatus] = useState('');
   const [pricingApplyRuleSetId, setPricingApplyRuleSetId] = useState('');
   const [pricingApplyScope, setPricingApplyScope] = useState('suppliers');
+  const [ruleSetDraft, setRuleSetDraft] = useState(() => toRuleSetDraft(null));
+  const [ruleSetStatus, setRuleSetStatus] = useState('');
 
   const [priceOverrides, setPriceOverrides] = useState({ rows: [], total: 0, status: '' });
   const [priceOverrideFilters, setPriceOverrideFilters] = useState({
@@ -192,7 +291,16 @@ export default function App() {
     offset: '0',
     search: '',
     supplierId: '',
-    missingOnly: true
+    missingOnly: true,
+    mergedSort: 'article_asc',
+    finalSort: 'article_asc'
+  });
+  const [activeDataView, setActiveDataView] = useState('merged');
+  const [jobDetails, setJobDetails] = useState({
+    loading: false,
+    error: '',
+    jobId: null,
+    payload: null
   });
 
   const [actionForm, setActionForm] = useState({
@@ -333,6 +441,12 @@ export default function App() {
       setGlobalRuleSetId(globalId);
       if (!pricingApplyRuleSetId && rows.length > 0) {
         setPricingApplyRuleSetId(String(rows[0].id));
+      }
+      if (ruleSetDraft.id) {
+        const matched = rows.find((item) => String(item.id) === String(ruleSetDraft.id));
+        if (matched) {
+          setRuleSetDraft(toRuleSetDraft(matched));
+        }
       }
       setPricingStatus(`Rule sets: ${rows.length}`);
     } catch (error) {
@@ -730,6 +844,86 @@ export default function App() {
     }
   };
 
+  const startCreateRuleSet = () => {
+    setRuleSetDraft(toRuleSetDraft(null));
+    setRuleSetStatus('Створення нового rule set');
+  };
+
+  const startEditRuleSet = (ruleSetId) => {
+    const matched = markupRuleSets.find((item) => String(item.id) === String(ruleSetId));
+    if (!matched) {
+      setRuleSetStatus('Rule set не знайдено');
+      return;
+    }
+    setRuleSetDraft(toRuleSetDraft(matched));
+    setRuleSetStatus(`Редагування #${matched.id}`);
+  };
+
+  const updateRuleCondition = (index, patch) => {
+    setRuleSetDraft((prev) => ({
+      ...prev,
+      conditions: prev.conditions.map((item, conditionIndex) =>
+        conditionIndex === index ? { ...item, ...patch } : item
+      )
+    }));
+  };
+
+  const addRuleCondition = () => {
+    setRuleSetDraft((prev) => {
+      const nextPriority =
+        prev.conditions.length > 0
+          ? Number(prev.conditions[prev.conditions.length - 1].priority || 0) + 10
+          : 10;
+      return {
+        ...prev,
+        conditions: [...prev.conditions, createRuleConditionDraft(nextPriority)]
+      };
+    });
+  };
+
+  const removeRuleCondition = (index) => {
+    setRuleSetDraft((prev) => {
+      if (prev.conditions.length <= 1) {
+        return prev;
+      }
+      return {
+        ...prev,
+        conditions: prev.conditions.filter((_item, conditionIndex) => conditionIndex !== index)
+      };
+    });
+  };
+
+  const saveRuleSet = async () => {
+    const normalized = normalizeRuleSetPayload(ruleSetDraft);
+    if (!normalized.ok) {
+      setRuleSetStatus(normalized.error);
+      return;
+    }
+    setRuleSetStatus('Збереження rule set...');
+    try {
+      const result = ruleSetDraft.id
+        ? await apiFetch(`/markup-rule-sets/${ruleSetDraft.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(normalized.payload)
+          })
+        : await apiFetch('/markup-rule-sets', {
+            method: 'POST',
+            body: JSON.stringify(normalized.payload)
+          });
+      const savedId = Number(result?.rule_set?.id || 0);
+      await refreshMarkupRuleSets();
+      if (savedId > 0) {
+        setPricingApplyRuleSetId(String(savedId));
+        startEditRuleSet(savedId);
+      } else {
+        startCreateRuleSet();
+      }
+      setRuleSetStatus('Rule set збережено');
+    } catch (error) {
+      setRuleSetStatus(formatError(error));
+    }
+  };
+
   const loadMerged = async () => {
     setMergedState((prev) => ({ ...prev, status: 'Завантаження...' }));
     try {
@@ -739,6 +933,7 @@ export default function App() {
       if (dataFilters.search.trim()) {
         query.set('search', dataFilters.search.trim());
       }
+      query.set('sort', dataFilters.mergedSort || 'article_asc');
       const result = await apiFetch(`/merged-preview?${query.toString()}`);
       setMergedState({
         rows: Array.isArray(result?.rows) ? result.rows : [],
@@ -762,6 +957,7 @@ export default function App() {
       if (dataFilters.supplierId.trim()) {
         query.set('supplierId', dataFilters.supplierId.trim());
       }
+      query.set('sort', dataFilters.finalSort || 'article_asc');
       const result = await apiFetch(`/final-preview?${query.toString()}`);
       setFinalState({
         rows: Array.isArray(result?.rows) ? result.rows : [],
@@ -771,6 +967,61 @@ export default function App() {
     } catch (error) {
       setFinalState((prev) => ({ ...prev, status: formatError(error) }));
     }
+  };
+
+  const shiftDataOffset = (direction) => {
+    setDataFilters((prev) => {
+      const limit = Math.max(1, Number(prev.limit || 50));
+      const offset = Math.max(0, Number(prev.offset || 0) + direction * limit);
+      return {
+        ...prev,
+        offset: String(offset)
+      };
+    });
+  };
+
+  const openJobDetails = async (jobId) => {
+    const normalizedId = Number(jobId);
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+      setJobDetails({
+        loading: false,
+        error: 'jobId is invalid',
+        jobId: null,
+        payload: null
+      });
+      return;
+    }
+    setJobDetails({
+      loading: true,
+      error: '',
+      jobId: normalizedId,
+      payload: null
+    });
+    try {
+      const payload = await apiFetch(`/jobs/${normalizedId}`);
+      setJobDetails({
+        loading: false,
+        error: '',
+        jobId: normalizedId,
+        payload
+      });
+    } catch (error) {
+      setJobDetails({
+        loading: false,
+        error: formatError(error),
+        jobId: normalizedId,
+        payload: null
+      });
+    }
+  };
+
+  const closeJobDetails = () => {
+    setJobDetails({
+      loading: false,
+      error: '',
+      jobId: null,
+      payload: null
+    });
   };
 
   const loadCompare = async () => {
@@ -869,6 +1120,38 @@ export default function App() {
   useEffect(() => {
     void refreshMapping(selectedSupplierId, selectedSourceId);
   }, [selectedSupplierId, selectedSourceId]);
+
+  const renderPreviewTable = (rows, columns, emptyLabel) => {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return <div className="empty-preview">{emptyLabel}</div>;
+    }
+    return (
+      <div className="preview-table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column.key}>{column.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={`row_${rowIndex}`}>
+                {columns.map((column) => (
+                  <td key={`${rowIndex}_${column.key}`}>
+                    {typeof column.render === 'function'
+                      ? column.render(row[column.key], row)
+                      : String(row[column.key] ?? '-')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
   return (
     <div className="app">
@@ -1640,7 +1923,11 @@ export default function App() {
 
       {tab === 'pricing' ? (
         <div className="grid">
-          <Section title="Markup Rule Sets" subtitle="Огляд, default, apply">
+          <Section
+            title="Markup Rule Sets"
+            subtitle="Огляд, default, apply по suppliers/all suppliers"
+            extra={<button className="btn" onClick={refreshMarkupRuleSets}>Reload</button>}
+          >
             <div className="form-row">
               <div>
                 <label>Rule set</label>
@@ -1669,7 +1956,6 @@ export default function App() {
               <div>
                 <label>&nbsp;</label>
                 <div className="actions">
-                  <button className="btn" onClick={refreshMarkupRuleSets}>Reload</button>
                   <button className="btn" disabled={isReadOnly} onClick={applyMarkupRuleSet}>Apply</button>
                   <button
                     className="btn"
@@ -1678,6 +1964,7 @@ export default function App() {
                   >
                     Set default
                   </button>
+                  <button className="btn" onClick={startCreateRuleSet}>New rule set</button>
                 </div>
               </div>
             </div>
@@ -1690,6 +1977,7 @@ export default function App() {
                   <th>Name</th>
                   <th>Active</th>
                   <th>Conditions</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1704,12 +1992,144 @@ export default function App() {
                     </td>
                     <td>{ruleSet.is_active ? 'true' : 'false'}</td>
                     <td>
-                      <pre>{toJsonString(ruleSet.conditions || [])}</pre>
+                      {Array.isArray(ruleSet.conditions) ? ruleSet.conditions.length : 0}
+                    </td>
+                    <td>
+                      <div className="actions">
+                        <button className="btn" onClick={() => startEditRuleSet(ruleSet.id)}>
+                          Edit in form
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() => setPricingApplyRuleSetId(String(ruleSet.id))}
+                        >
+                          Select
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </Section>
+
+          <Section
+            title={ruleSetDraft.id ? `Rule Set #${ruleSetDraft.id}` : 'Створення Rule Set'}
+            subtitle="Повний editor conditions для create/update"
+          >
+            <div className="form-row">
+              <div>
+                <label>Name</label>
+                <input
+                  value={ruleSetDraft.name}
+                  onChange={(event) =>
+                    setRuleSetDraft((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={ruleSetDraft.is_active}
+                    onChange={(event) =>
+                      setRuleSetDraft((prev) => ({ ...prev, is_active: event.target.checked }))
+                    }
+                    style={{ width: 'auto', marginRight: 8 }}
+                  />
+                  is_active
+                </label>
+              </div>
+            </div>
+
+            <div className="conditions-list">
+              {ruleSetDraft.conditions.map((condition, index) => (
+                <div className="condition-card" key={`condition_${index}`}>
+                  <div className="condition-title">Condition #{index + 1}</div>
+                  <div className="form-row">
+                    <div>
+                      <label>priority</label>
+                      <input
+                        value={condition.priority}
+                        onChange={(event) =>
+                          updateRuleCondition(index, { priority: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>price_from</label>
+                      <input
+                        value={condition.price_from}
+                        onChange={(event) =>
+                          updateRuleCondition(index, { price_from: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>price_to (optional)</label>
+                      <input
+                        value={condition.price_to}
+                        onChange={(event) =>
+                          updateRuleCondition(index, { price_to: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>action_type</label>
+                      <select
+                        value={condition.action_type}
+                        onChange={(event) =>
+                          updateRuleCondition(index, { action_type: event.target.value })
+                        }
+                      >
+                        <option value="percent">percent</option>
+                        <option value="fixed_add">fixed_add</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>action_value</label>
+                      <input
+                        value={condition.action_value}
+                        onChange={(event) =>
+                          updateRuleCondition(index, { action_value: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="actions">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={condition.is_active}
+                        onChange={(event) =>
+                          updateRuleCondition(index, { is_active: event.target.checked })
+                        }
+                        style={{ width: 'auto', marginRight: 8 }}
+                      />
+                      is_active
+                    </label>
+                    <button
+                      className="btn danger"
+                      disabled={ruleSetDraft.conditions.length <= 1}
+                      onClick={() => removeRuleCondition(index)}
+                    >
+                      Remove condition
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="actions" style={{ marginTop: 10 }}>
+              <button className="btn" onClick={addRuleCondition}>Add condition</button>
+              <button className="btn primary" disabled={isReadOnly} onClick={saveRuleSet}>
+                {ruleSetDraft.id ? 'Update rule set' : 'Create rule set'}
+              </button>
+              <button className="btn" onClick={startCreateRuleSet}>Reset editor</button>
+            </div>
+            <div className={`status-line ${ruleSetStatus.includes('invalid') ? 'error' : ''}`}>
+              {ruleSetStatus}
+            </div>
           </Section>
 
           <Section title="Price Overrides" subtitle="Upsert/update для фінальної ціни">
@@ -1849,7 +2269,7 @@ export default function App() {
 
       {tab === 'data' ? (
         <div className="data-grid">
-          <Section title="Фільтри" subtitle="Параметри вибірки для preview таблиць">
+          <Section title="Фільтри" subtitle="Параметри серверної вибірки та сортування">
             <div className="form-row">
               <div>
                 <label>limit</label>
@@ -1880,44 +2300,164 @@ export default function App() {
                 />
               </div>
             </div>
-            <label>
-              <input
-                type="checkbox"
-                checked={dataFilters.missingOnly}
-                onChange={(event) =>
-                  setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))
-                }
-                style={{ width: 'auto', marginRight: 8 }}
-              />
-              compare missingOnly
-            </label>
+            <div className="form-row">
+              <div>
+                <label>Merged sort</label>
+                <select
+                  value={dataFilters.mergedSort}
+                  onChange={(event) =>
+                    setDataFilters((prev) => ({ ...prev, mergedSort: event.target.value }))
+                  }
+                >
+                  <option value="article_asc">article asc</option>
+                  <option value="article_desc">article desc</option>
+                  <option value="created_desc">created desc</option>
+                </select>
+              </div>
+              <div>
+                <label>Final sort</label>
+                <select
+                  value={dataFilters.finalSort}
+                  onChange={(event) =>
+                    setDataFilters((prev) => ({ ...prev, finalSort: event.target.value }))
+                  }
+                >
+                  <option value="article_asc">article asc</option>
+                  <option value="article_desc">article desc</option>
+                  <option value="created_desc">created desc</option>
+                </select>
+              </div>
+            </div>
+            <div className="actions">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={dataFilters.missingOnly}
+                  onChange={(event) =>
+                    setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))
+                  }
+                  style={{ width: 'auto', marginRight: 8 }}
+                />
+                compare missingOnly
+              </label>
+              <button
+                className="btn"
+                onClick={() => {
+                  if (activeDataView === 'merged') {
+                    void loadMerged();
+                  } else if (activeDataView === 'final') {
+                    void loadFinal();
+                  } else {
+                    void loadCompare();
+                  }
+                }}
+              >
+                Load active view
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  void loadMerged();
+                  void loadFinal();
+                  void loadCompare();
+                }}
+              >
+                Load all
+              </button>
+              <button className="btn" onClick={() => shiftDataOffset(-1)}>Prev page</button>
+              <button className="btn" onClick={() => shiftDataOffset(1)}>Next page</button>
+            </div>
           </Section>
 
-          <div className="grid">
+          <div className="mini-tabs">
+            <button
+              className={`tab ${activeDataView === 'merged' ? 'active' : ''}`}
+              onClick={() => setActiveDataView('merged')}
+            >
+              merged
+            </button>
+            <button
+              className={`tab ${activeDataView === 'final' ? 'active' : ''}`}
+              onClick={() => setActiveDataView('final')}
+            >
+              final
+            </button>
+            <button
+              className={`tab ${activeDataView === 'compare' ? 'active' : ''}`}
+              onClick={() => setActiveDataView('compare')}
+            >
+              compare
+            </button>
+          </div>
+
+          {activeDataView === 'merged' ? (
             <Section title="Merged preview" extra={<button className="btn" onClick={loadMerged}>Load</button>}>
               <div className="actions" style={{ marginBottom: 8 }}>
                 <a className="btn" href="/admin/api/merged-export">Export CSV</a>
+                <span className="chip">total: {mergedState.total}</span>
+                <span className="chip">offset: {dataFilters.offset}</span>
               </div>
               <div className="status-line">{mergedState.status}</div>
-              <pre>{toJsonString(mergedState.rows.slice(0, 30))}</pre>
+              {renderPreviewTable(
+                mergedState.rows,
+                [
+                  { key: 'article', label: 'article' },
+                  { key: 'size', label: 'size' },
+                  { key: 'quantity', label: 'qty' },
+                  { key: 'price', label: 'price' },
+                  { key: 'supplier_name', label: 'supplier' },
+                  { key: 'extra', label: 'extra' }
+                ],
+                'Merged preview is empty'
+              )}
             </Section>
+          ) : null}
 
+          {activeDataView === 'final' ? (
             <Section title="Final preview" extra={<button className="btn" onClick={loadFinal}>Load</button>}>
               <div className="actions" style={{ marginBottom: 8 }}>
                 <a className="btn" href="/admin/api/final-export">Export CSV</a>
+                <span className="chip">total: {finalState.total}</span>
+                <span className="chip">offset: {dataFilters.offset}</span>
               </div>
               <div className="status-line">{finalState.status}</div>
-              <pre>{toJsonString(finalState.rows.slice(0, 30))}</pre>
+              {renderPreviewTable(
+                finalState.rows,
+                [
+                  { key: 'article', label: 'article' },
+                  { key: 'size', label: 'size' },
+                  { key: 'quantity', label: 'qty' },
+                  { key: 'price_base', label: 'base' },
+                  { key: 'price_final', label: 'final' },
+                  { key: 'supplier_name', label: 'supplier' }
+                ],
+                'Final preview is empty'
+              )}
             </Section>
-          </div>
+          ) : null}
 
-          <Section title="Compare preview (CS-Cart)" extra={<button className="btn" onClick={loadCompare}>Load</button>}>
-            <div className="actions" style={{ marginBottom: 8 }}>
-              <a className="btn" href="/admin/api/compare-export?store=cscart">Export CSV</a>
-            </div>
-            <div className="status-line">{compareState.status}</div>
-            <pre>{toJsonString(compareState.rows.slice(0, 30))}</pre>
-          </Section>
+          {activeDataView === 'compare' ? (
+            <Section title="Compare preview (CS-Cart)" extra={<button className="btn" onClick={loadCompare}>Load</button>}>
+              <div className="actions" style={{ marginBottom: 8 }}>
+                <a className="btn" href="/admin/api/compare-export?store=cscart">Export CSV</a>
+                <span className="chip">total: {compareState.total}</span>
+                <span className="chip">offset: {dataFilters.offset}</span>
+              </div>
+              <div className="status-line">{compareState.status}</div>
+              {renderPreviewTable(
+                compareState.rows,
+                [
+                  { key: 'article', label: 'article' },
+                  { key: 'size', label: 'size' },
+                  { key: 'price_final', label: 'final' },
+                  { key: 'sku_article', label: 'sku_article' },
+                  { key: 'store_sku', label: 'store_sku' },
+                  { key: 'store_visibility', label: 'visibility' }
+                ],
+                'Compare preview is empty'
+              )}
+            </Section>
+          ) : null}
         </div>
       ) : null}
 
@@ -1946,13 +2486,16 @@ export default function App() {
                     <td>{job.status}</td>
                     <td>{job.created_at || '-'}</td>
                     <td>
-                      {job.status === 'running' || job.status === 'queued' ? (
-                        <button className="btn danger" disabled={isReadOnly} onClick={() => cancelJob(job.id)}>
-                          Cancel
+                      <div className="actions">
+                        <button className="btn" onClick={() => openJobDetails(job.id)}>
+                          Details
                         </button>
-                      ) : (
-                        '-'
-                      )}
+                        {job.status === 'running' || job.status === 'queued' ? (
+                          <button className="btn danger" disabled={isReadOnly} onClick={() => cancelJob(job.id)}>
+                            Cancel
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1977,6 +2520,46 @@ export default function App() {
           >
             <pre>{toJsonString(logs.slice(0, 120))}</pre>
           </Section>
+
+          {jobDetails.jobId ? (
+            <Section
+              title={`Job details #${jobDetails.jobId}`}
+              extra={
+                <div className="actions">
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      if (jobDetails.jobId) {
+                        void openJobDetails(jobDetails.jobId);
+                      }
+                    }}
+                  >
+                    Reload details
+                  </button>
+                  <button className="btn" onClick={closeJobDetails}>Close</button>
+                </div>
+              }
+            >
+              {jobDetails.loading ? <div className="status-line">Loading...</div> : null}
+              {jobDetails.error ? <div className="status-line error">{jobDetails.error}</div> : null}
+              {jobDetails.payload ? (
+                <div className="grid">
+                  <div>
+                    <h4 className="block-title">Job</h4>
+                    <pre>{toJsonString(jobDetails.payload.job || {})}</pre>
+                  </div>
+                  <div>
+                    <h4 className="block-title">Children</h4>
+                    <pre>{toJsonString(jobDetails.payload.children || [])}</pre>
+                  </div>
+                  <div>
+                    <h4 className="block-title">Logs (latest)</h4>
+                    <pre>{toJsonString((jobDetails.payload.logs || []).slice(0, 200))}</pre>
+                  </div>
+                </div>
+              ) : null}
+            </Section>
+          ) : null}
         </div>
       ) : null}
     </div>
