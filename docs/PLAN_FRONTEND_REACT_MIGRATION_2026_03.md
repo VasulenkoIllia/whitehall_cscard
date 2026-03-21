@@ -19,12 +19,12 @@
   - `npm run frontend:dev`
   - `npm run frontend:build`
 - Реалізовано базові екрани:
-  - `Огляд` (stats/readiness + job actions)
+  - `Огляд` (stats/readiness + job actions + operational KPI/error panel)
   - `Постачальники` (search/sort/list + CRUD + bulk update)
   - `Джерела та мапінг` (source CRUD + source-sheets/source-preview + mapping builder + JSON editor + comment/header_row)
-  - `Націнки та override` (markup rule sets: list/default/apply, price overrides: list/upsert/update)
-  - `Змерджений / Final / Compare` (preview + export links)
-  - `Джоби та логи` (list + cancel + logs stream)
+  - `Націнки та override` (markup rule sets: list/create/update/default/apply + conditions editor, price overrides: list/upsert/update)
+  - `Змерджений / Final / Compare` (table preview + export + sort/paging controls)
+  - `Джоби та логи` (list + cancel + logs stream + job details panel)
 
 ## Етапи повного переносу legacy UX
 
@@ -41,17 +41,19 @@
   - markup rule sets: `list/create/update/default/apply` + conditions editor.
   - price overrides: `list/upsert/update`.
 
-### Phase 4
-- Розширення data-review UX:
-  - серверна пагінація і сортування в таблицях merged/final/compare
-  - jobs details drawer (`/admin/api/jobs/:jobId`)
+### Phase 4 (done)
+- Розширено data-review UX:
+  - серверна пагінація і сортування в таблицях merged/final/compare.
+  - jobs details panel (`/admin/api/jobs/:jobId`).
   - logs filters (level, job).
 
-### Phase 5
+### Phase 5 (in progress)
 - UX hardening:
-  - optimistic feedback + retry actions
-  - фіксований error panel
-  - preflight warnings перед destructive runs.
+  - form-level валідації та помилки на полях (supplier/source/mapping/pricing) — done.
+  - operational error panel у dashboard — done.
+  - preflight warnings/keyword-confirmation перед destructive runs — done.
+  - retry UX для критичних mutating API дій — done.
+  - залишок: polishing UX дрібниць + єдина система toast/notifications.
 
 ## Telegram alerts (окремий backend-модуль)
 - У legacy є інтеграція через:

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { apiFetch, formatError, toJsonString } from './lib/api';
+import { apiFetch, apiFetchWithRetry, formatError, toJsonString } from './lib/api';
 import {
   buildMappingFromFields,
   columnLetter,
@@ -33,6 +33,18 @@ function normalizeOptionalNumber(value) {
     return null;
   }
   return number;
+}
+
+function parsePositiveInt(value) {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return null;
+  }
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+  return Math.trunc(numeric);
 }
 
 function toSourceDraft(source = null) {
@@ -222,14 +234,18 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [logs, setLogs] = useState([]);
   const [logsLevel, setLogsLevel] = useState('');
+  const [logsJobId, setLogsJobId] = useState('');
   const [jobsStatus, setJobsStatus] = useState('');
   const [actionStatus, setActionStatus] = useState('');
+  const [topStatus, setTopStatus] = useState('');
+  const [lastFailedAction, setLastFailedAction] = useState(null);
 
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [supplierSort, setSupplierSort] = useState('id_asc');
   const [suppliersStatus, setSuppliersStatus] = useState('');
   const [supplierDraft, setSupplierDraft] = useState(() => toSupplierDraft(null));
+  const [supplierErrors, setSupplierErrors] = useState({});
   const [editingSupplierId, setEditingSupplierId] = useState('');
   const [supplierFormStatus, setSupplierFormStatus] = useState('');
   const [selectedSupplierIds, setSelectedSupplierIds] = useState([]);
@@ -247,6 +263,7 @@ export default function App() {
   const [sourcesStatus, setSourcesStatus] = useState('');
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [sourceDraft, setSourceDraft] = useState(() => toSourceDraft(null));
+  const [sourceErrors, setSourceErrors] = useState({});
   const [editingSourceId, setEditingSourceId] = useState('');
   const [sourceFormStatus, setSourceFormStatus] = useState('');
   const [sourceSheets, setSourceSheets] = useState([]);
@@ -263,6 +280,7 @@ export default function App() {
   const [mappingText, setMappingText] = useState('{}');
   const [mappingComment, setMappingComment] = useState('');
   const [mappingHeaderRow, setMappingHeaderRow] = useState('1');
+  const [mappingErrors, setMappingErrors] = useState({});
   const [mappingStatus, setMappingStatus] = useState('');
   const [mappingFields, setMappingFields] = useState(() => createEmptyMappingFields());
 
@@ -272,6 +290,7 @@ export default function App() {
   const [pricingApplyRuleSetId, setPricingApplyRuleSetId] = useState('');
   const [pricingApplyScope, setPricingApplyScope] = useState('suppliers');
   const [ruleSetDraft, setRuleSetDraft] = useState(() => toRuleSetDraft(null));
+  const [ruleSetErrors, setRuleSetErrors] = useState({});
   const [ruleSetStatus, setRuleSetStatus] = useState('');
 
   const [priceOverrides, setPriceOverrides] = useState({ rows: [], total: 0, status: '' });
@@ -281,6 +300,7 @@ export default function App() {
     offset: '0'
   });
   const [priceOverrideDraft, setPriceOverrideDraft] = useState(() => toPriceOverrideDraft(null));
+  const [priceOverrideErrors, setPriceOverrideErrors] = useState({});
   const [priceOverrideStatus, setPriceOverrideStatus] = useState('');
 
   const [mergedState, setMergedState] = useState({ rows: [], total: 0, status: '' });
@@ -329,13 +349,76 @@ export default function App() {
     }));
   }, [sourcePreview.headers]);
 
+  const recentErrorLogs = useMemo(
+    () => logs.filter((item) => String(item.level || '').toLowerCase() === 'error').slice(0, 8),
+    [logs]
+  );
+
+  const rememberFailedAction = (label, run) => {
+    setLastFailedAction({
+      label,
+      run,
+      at: Date.now()
+    });
+  };
+
+  const clearFailedAction = () => {
+    setLastFailedAction(null);
+  };
+
+  const runMutationWithRetryUX = async (label, run) => {
+    try {
+      const result = await run();
+      setTopStatus('');
+      clearFailedAction();
+      return result;
+    } catch (error) {
+      rememberFailedAction(label, run);
+      setTopStatus(`Failed: ${label}. Use "Retry failed".`);
+      throw error;
+    }
+  };
+
+  const confirmWithKeyword = ({ title, details, keyword }) => {
+    const promptText = [title, details, `Введіть "${keyword}" для підтвердження.`]
+      .filter(Boolean)
+      .join('\n');
+    const answer = window.prompt(promptText);
+    return String(answer || '').trim() === keyword;
+  };
+
+  const retryLastFailedAction = async () => {
+    if (!lastFailedAction?.run) {
+      return;
+    }
+    setTopStatus(`Retry: ${lastFailedAction.label}...`);
+    try {
+      await lastFailedAction.run();
+      setTopStatus(`Retry success: ${lastFailedAction.label}`);
+      clearFailedAction();
+      await refreshCore();
+    } catch (error) {
+      setTopStatus(`Retry failed: ${formatError(error)}`);
+      rememberFailedAction(lastFailedAction.label, lastFailedAction.run);
+    }
+  };
+
   const refreshCore = async () => {
     try {
+      const logsQuery = new URLSearchParams();
+      logsQuery.set('limit', '50');
+      if (logsLevel.trim()) {
+        logsQuery.set('level', logsLevel.trim());
+      }
+      const parsedLogJobId = parsePositiveInt(logsJobId);
+      if (parsedLogJobId) {
+        logsQuery.set('jobId', String(parsedLogJobId));
+      }
       const [statsPayload, readinessPayload, jobsPayload, logsPayload] = await Promise.all([
         apiFetch('/stats'),
         apiFetch('/backend-readiness?store=cscart&maxMirrorAgeMinutes=120'),
         apiFetch('/jobs?limit=25'),
-        apiFetch(`/logs?limit=50${logsLevel ? `&level=${encodeURIComponent(logsLevel)}` : ''}`)
+        apiFetch(`/logs?${logsQuery.toString()}`)
       ]);
       setStats(statsPayload);
       setReadiness(readinessPayload);
@@ -422,6 +505,7 @@ export default function App() {
       setMappingComment(String(data?.comment || ''));
       setMappingHeaderRow(String(Number(data?.header_row || 1)));
       setMappingFields(parseMappingToFields(mapping));
+      setMappingErrors({});
       setMappingStatus('Мапінг завантажено');
     } catch (error) {
       setMappingStatus(formatError(error));
@@ -474,16 +558,88 @@ export default function App() {
     }
   };
 
+  const validateSupplierDraft = () => {
+    const errors = {};
+    if (!supplierDraft.name.trim()) {
+      errors.name = 'Назва постачальника обовʼязкова';
+    }
+    if (normalizeOptionalNumber(supplierDraft.priority) === null) {
+      errors.priority = 'Priority має бути числом';
+    }
+    if (normalizeOptionalNumber(supplierDraft.markup_percent) === null) {
+      errors.markup_percent = 'Markup % має бути числом';
+    }
+    if (supplierDraft.min_profit_enabled && normalizeOptionalNumber(supplierDraft.min_profit_amount) === null) {
+      errors.min_profit_amount = 'Min profit amount має бути числом';
+    }
+    if (supplierDraft.markup_rule_set_id.trim()) {
+      const parsedRuleSetId = parsePositiveInt(supplierDraft.markup_rule_set_id);
+      if (!parsedRuleSetId) {
+        errors.markup_rule_set_id = 'Markup rule set id має бути додатнім числом';
+      }
+    }
+    return errors;
+  };
+
+  const validateSourceDraft = () => {
+    const errors = {};
+    if (!sourceDraft.source_type.trim()) {
+      errors.source_type = 'source_type обовʼязкове';
+    }
+    if (!sourceDraft.source_url.trim()) {
+      errors.source_url = 'source_url обовʼязкове';
+    }
+    return errors;
+  };
+
+  const validateMappingDraft = () => {
+    const errors = {};
+    const headerRow = parsePositiveInt(mappingHeaderRow);
+    if (!headerRow) {
+      errors.header_row = 'Header row має бути додатнім числом';
+    }
+    if (!mappingText.trim()) {
+      errors.mapping = 'Mapping JSON обовʼязковий';
+      return errors;
+    }
+    try {
+      const parsed = JSON.parse(mappingText);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        errors.mapping = 'Mapping має бути JSON object';
+      }
+    } catch (_error) {
+      errors.mapping = 'Некоректний JSON';
+    }
+    return errors;
+  };
+
+  const validatePriceOverrideDraft = () => {
+    const errors = {};
+    if (!priceOverrideDraft.id && !priceOverrideDraft.article.trim()) {
+      errors.article = 'article обовʼязковий';
+    }
+    if (priceOverrideDraft.price_final.trim() !== '') {
+      if (normalizeOptionalNumber(priceOverrideDraft.price_final) === null) {
+        errors.price_final = 'price_final має бути числом';
+      }
+    } else if (!priceOverrideDraft.id) {
+      errors.price_final = 'price_final обовʼязковий';
+    }
+    return errors;
+  };
+
   const saveSupplier = async () => {
-    const name = supplierDraft.name.trim();
-    if (!name) {
-      setSupplierFormStatus('name is required');
+    const errors = validateSupplierDraft();
+    setSupplierErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setSupplierFormStatus('Перевірте поля форми постачальника');
       return;
     }
+    const name = supplierDraft.name.trim();
     const payload = {
       name,
-      priority: Number(supplierDraft.priority || 0),
-      markup_percent: Number(supplierDraft.markup_percent || 0),
+      priority: Number(supplierDraft.priority),
+      markup_percent: Number(supplierDraft.markup_percent),
       min_profit_enabled: supplierDraft.min_profit_enabled,
       min_profit_amount: Number(supplierDraft.min_profit_amount || 0),
       is_active: supplierDraft.is_active,
@@ -494,18 +650,29 @@ export default function App() {
     };
     setSupplierFormStatus('Збереження постачальника...');
     try {
-      if (editingSupplierId) {
-        await apiFetch(`/suppliers/${editingSupplierId}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload)
-        });
-      } else {
-        await apiFetch('/suppliers', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-      }
+      await runMutationWithRetryUX(
+        editingSupplierId ? `save_supplier_${editingSupplierId}` : 'create_supplier',
+        () =>
+          editingSupplierId
+            ? apiFetchWithRetry(
+                `/suppliers/${editingSupplierId}`,
+                {
+                  method: 'PUT',
+                  body: JSON.stringify(payload)
+                },
+                { retries: 1 }
+              )
+            : apiFetchWithRetry(
+                '/suppliers',
+                {
+                  method: 'POST',
+                  body: JSON.stringify(payload)
+                },
+                { retries: 1 }
+              )
+      );
       setSupplierFormStatus('Постачальника збережено');
+      setSupplierErrors({});
       setEditingSupplierId('');
       setSupplierDraft(toSupplierDraft(null));
       await refreshSuppliers();
@@ -515,12 +682,25 @@ export default function App() {
   };
 
   const deleteSupplier = async (supplierId) => {
-    if (!window.confirm(`Видалити постачальника #${supplierId}?`)) {
+    const keyword = `DELETE_SUPPLIER_${supplierId}`;
+    const confirmed = confirmWithKeyword({
+      title: `Видалення постачальника #${supplierId}`,
+      details: 'Це видалить постачальника і повʼязані налаштування.',
+      keyword
+    });
+    if (!confirmed) {
+      setSupplierFormStatus('Видалення скасовано (не пройдено preflight)');
       return;
     }
     setSupplierFormStatus(`Видалення #${supplierId}...`);
     try {
-      await apiFetch(`/suppliers/${supplierId}`, { method: 'DELETE' });
+      await runMutationWithRetryUX(`delete_supplier_${supplierId}`, () =>
+        apiFetchWithRetry(
+          `/suppliers/${supplierId}`,
+          { method: 'DELETE' },
+          { retries: 1 }
+        )
+      );
       setSupplierFormStatus(`Постачальника #${supplierId} видалено`);
       if (editingSupplierId === String(supplierId)) {
         setEditingSupplierId('');
@@ -573,10 +753,16 @@ export default function App() {
 
     setBulkStatus('Виконання bulk update...');
     try {
-      const result = await apiFetch('/suppliers/bulk', {
-        method: 'PUT',
-        body: JSON.stringify(payload)
-      });
+      const result = await runMutationWithRetryUX('bulk_update_suppliers', () =>
+        apiFetchWithRetry(
+          '/suppliers/bulk',
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+          },
+          { retries: 1 }
+        )
+      );
       setBulkStatus(`Оновлено: ${Number(result?.updated || 0)}`);
       await refreshSuppliers();
     } catch (error) {
@@ -590,12 +776,14 @@ export default function App() {
       setSourceFormStatus('Оберіть постачальника');
       return;
     }
-    const sourceType = sourceDraft.source_type.trim();
-    const sourceUrl = sourceDraft.source_url.trim();
-    if (!sourceType || !sourceUrl) {
-      setSourceFormStatus('source_type і source_url обовʼязкові');
+    const errors = validateSourceDraft();
+    setSourceErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setSourceFormStatus('Перевірте поля форми джерела');
       return;
     }
+    const sourceType = sourceDraft.source_type.trim();
+    const sourceUrl = sourceDraft.source_url.trim();
 
     const payload = {
       supplier_id: supplierId,
@@ -608,18 +796,29 @@ export default function App() {
 
     setSourceFormStatus('Збереження джерела...');
     try {
-      if (editingSourceId) {
-        await apiFetch(`/sources/${editingSourceId}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload)
-        });
-      } else {
-        await apiFetch('/sources', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-      }
+      await runMutationWithRetryUX(
+        editingSourceId ? `save_source_${editingSourceId}` : 'create_source',
+        () =>
+          editingSourceId
+            ? apiFetchWithRetry(
+                `/sources/${editingSourceId}`,
+                {
+                  method: 'PUT',
+                  body: JSON.stringify(payload)
+                },
+                { retries: 1 }
+              )
+            : apiFetchWithRetry(
+                '/sources',
+                {
+                  method: 'POST',
+                  body: JSON.stringify(payload)
+                },
+                { retries: 1 }
+              )
+      );
       setSourceFormStatus('Джерело збережено');
+      setSourceErrors({});
       setSourceDraft(toSourceDraft(null));
       setEditingSourceId('');
       await refreshSources(selectedSupplierId);
@@ -629,12 +828,25 @@ export default function App() {
   };
 
   const deleteSource = async (sourceId) => {
-    if (!window.confirm(`Видалити джерело #${sourceId}?`)) {
+    const keyword = `DELETE_SOURCE_${sourceId}`;
+    const confirmed = confirmWithKeyword({
+      title: `Видалення джерела #${sourceId}`,
+      details: 'Перевірте, що це джерело більше не використовується у pipeline.',
+      keyword
+    });
+    if (!confirmed) {
+      setSourceFormStatus('Видалення скасовано (не пройдено preflight)');
       return;
     }
     setSourceFormStatus(`Видалення source #${sourceId}...`);
     try {
-      await apiFetch(`/sources/${sourceId}`, { method: 'DELETE' });
+      await runMutationWithRetryUX(`delete_source_${sourceId}`, () =>
+        apiFetchWithRetry(
+          `/sources/${sourceId}`,
+          { method: 'DELETE' },
+          { retries: 1 }
+        )
+      );
       setSourceFormStatus(`Source #${sourceId} видалено`);
       if (editingSourceId === String(sourceId)) {
         setEditingSourceId('');
@@ -712,6 +924,12 @@ export default function App() {
       setMappingStatus('Оберіть постачальника і джерело');
       return;
     }
+    const errors = validateMappingDraft();
+    setMappingErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setMappingStatus('Перевірте поля мапінгу');
+      return;
+    }
 
     let parsedMapping;
     try {
@@ -723,21 +941,28 @@ export default function App() {
 
     setMappingStatus('Збереження мапінгу...');
     try {
-      await apiFetch(`/mappings/${supplierId}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          source_id: sourceId,
-          mapping: parsedMapping,
-          header_row: Number(mappingHeaderRow) || 1,
-          comment: mappingComment,
-          mapping_meta: {
-            source_id: sourceId,
-            sheet_name: selectedSheetName || null,
-            header_row: Number(mappingHeaderRow) || 1
-          }
-        })
-      });
+      await runMutationWithRetryUX(`save_mapping_${supplierId}_${sourceId}`, () =>
+        apiFetchWithRetry(
+          `/mappings/${supplierId}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              source_id: sourceId,
+              mapping: parsedMapping,
+              header_row: Number(mappingHeaderRow),
+              comment: mappingComment,
+              mapping_meta: {
+                source_id: sourceId,
+                sheet_name: selectedSheetName || null,
+                header_row: Number(mappingHeaderRow)
+              }
+            })
+          },
+          { retries: 1 }
+        )
+      );
       setMappingStatus('Мапінг збережено');
+      setMappingErrors({});
     } catch (error) {
       setMappingStatus(formatError(error));
     }
@@ -746,6 +971,7 @@ export default function App() {
   const applyBuilderToJson = () => {
     const mapping = buildMappingFromFields(mappingFields);
     setMappingText(toJsonString(mapping));
+    setMappingErrors((prev) => ({ ...prev, mapping: undefined }));
     setMappingStatus('Builder перенесено в JSON');
   };
 
@@ -760,36 +986,51 @@ export default function App() {
   };
 
   const savePriceOverride = async () => {
-    const article = priceOverrideDraft.article.trim();
-    const priceFinal = normalizeOptionalNumber(priceOverrideDraft.price_final);
-    if (!priceOverrideDraft.id && (!article || priceFinal === null)) {
-      setPriceOverrideStatus('article і price_final обовʼязкові');
+    const errors = validatePriceOverrideDraft();
+    setPriceOverrideErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setPriceOverrideStatus('Перевірте поля override');
       return;
     }
+    const article = priceOverrideDraft.article.trim();
+    const priceFinal = normalizeOptionalNumber(priceOverrideDraft.price_final);
 
     setPriceOverrideStatus('Збереження override...');
     try {
       if (priceOverrideDraft.id) {
-        await apiFetch(`/price-overrides/${priceOverrideDraft.id}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            price_final: priceFinal === null ? undefined : priceFinal,
-            notes: priceOverrideDraft.notes.trim() || null,
-            is_active: priceOverrideDraft.is_active
-          })
-        });
+        await runMutationWithRetryUX(`update_price_override_${priceOverrideDraft.id}`, () =>
+          apiFetchWithRetry(
+            `/price-overrides/${priceOverrideDraft.id}`,
+            {
+              method: 'PUT',
+              body: JSON.stringify({
+                price_final: priceFinal === null ? undefined : priceFinal,
+                notes: priceOverrideDraft.notes.trim() || null,
+                is_active: priceOverrideDraft.is_active
+              })
+            },
+            { retries: 1 }
+          )
+        );
       } else {
-        await apiFetch('/price-overrides', {
-          method: 'POST',
-          body: JSON.stringify({
-            article,
-            size: priceOverrideDraft.size.trim() || null,
-            price_final: priceFinal,
-            notes: priceOverrideDraft.notes.trim() || null
-          })
-        });
+        await runMutationWithRetryUX('create_price_override', () =>
+          apiFetchWithRetry(
+            '/price-overrides',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                article,
+                size: priceOverrideDraft.size.trim() || null,
+                price_final: priceFinal,
+                notes: priceOverrideDraft.notes.trim() || null
+              })
+            },
+            { retries: 1 }
+          )
+        );
       }
       setPriceOverrideStatus('Override збережено');
+      setPriceOverrideErrors({});
       setPriceOverrideDraft(toPriceOverrideDraft(null));
       await refreshPriceOverrides();
     } catch (error) {
@@ -800,10 +1041,16 @@ export default function App() {
   const setDefaultMarkupRuleSet = async (ruleSetId) => {
     setPricingStatus(`Set default #${ruleSetId}...`);
     try {
-      const result = await apiFetch('/markup-rule-sets/default', {
-        method: 'POST',
-        body: JSON.stringify({ rule_set_id: Number(ruleSetId) })
-      });
+      const result = await runMutationWithRetryUX(`set_default_ruleset_${ruleSetId}`, () =>
+        apiFetchWithRetry(
+          '/markup-rule-sets/default',
+          {
+            method: 'POST',
+            body: JSON.stringify({ rule_set_id: Number(ruleSetId) })
+          },
+          { retries: 1 }
+        )
+      );
       setGlobalRuleSetId(Number(result?.global_rule_set_id || 0) || null);
       setPricingStatus(`Default rule set: #${Number(result?.global_rule_set_id || 0)}`);
       await refreshSuppliers();
@@ -828,13 +1075,31 @@ export default function App() {
     };
     if (pricingApplyScope === 'suppliers') {
       payload.supplier_ids = selectedSupplierIds;
+    } else {
+      const confirmed = confirmWithKeyword({
+        title: 'Застосування rule set до ALL suppliers',
+        details: 'Це змінить правило націнки для всіх постачальників.',
+        keyword: 'APPLY_ALL_SUPPLIERS'
+      });
+      if (!confirmed) {
+        setPricingStatus('Apply скасовано (не пройдено preflight)');
+        return;
+      }
     }
     setPricingStatus('Apply rule set...');
     try {
-      const result = await apiFetch('/markup-rule-sets/apply', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
+      const result = await runMutationWithRetryUX(
+        `apply_ruleset_${ruleSetId}_${pricingApplyScope}`,
+        () =>
+          apiFetchWithRetry(
+            '/markup-rule-sets/apply',
+            {
+              method: 'POST',
+              body: JSON.stringify(payload)
+            },
+            { retries: 1 }
+          )
+      );
       setPricingStatus(
         `Apply завершено: scope=${result?.scope || '-'}, updated=${Number(result?.updated_suppliers || 0)}`
       );
@@ -846,6 +1111,7 @@ export default function App() {
 
   const startCreateRuleSet = () => {
     setRuleSetDraft(toRuleSetDraft(null));
+    setRuleSetErrors({});
     setRuleSetStatus('Створення нового rule set');
   };
 
@@ -856,6 +1122,7 @@ export default function App() {
       return;
     }
     setRuleSetDraft(toRuleSetDraft(matched));
+    setRuleSetErrors({});
     setRuleSetStatus(`Редагування #${matched.id}`);
   };
 
@@ -894,22 +1161,47 @@ export default function App() {
   };
 
   const saveRuleSet = async () => {
+    setRuleSetErrors({});
     const normalized = normalizeRuleSetPayload(ruleSetDraft);
     if (!normalized.ok) {
+      const baseError = String(normalized.error || '');
+      const conditionMatch = baseError.match(/^condition #(\d+):\s*(.+)$/i);
+      if (conditionMatch) {
+        const index = Number(conditionMatch[1]) - 1;
+        if (Number.isFinite(index) && index >= 0) {
+          setRuleSetErrors({
+            [`condition_${index}`]: conditionMatch[2]
+          });
+        }
+      } else {
+        setRuleSetErrors({ base: baseError });
+      }
       setRuleSetStatus(normalized.error);
       return;
     }
     setRuleSetStatus('Збереження rule set...');
     try {
-      const result = ruleSetDraft.id
-        ? await apiFetch(`/markup-rule-sets/${ruleSetDraft.id}`, {
-            method: 'PUT',
-            body: JSON.stringify(normalized.payload)
-          })
-        : await apiFetch('/markup-rule-sets', {
-            method: 'POST',
-            body: JSON.stringify(normalized.payload)
-          });
+      const result = await runMutationWithRetryUX(
+        ruleSetDraft.id ? `update_ruleset_${ruleSetDraft.id}` : 'create_ruleset',
+        () =>
+          ruleSetDraft.id
+            ? apiFetchWithRetry(
+                `/markup-rule-sets/${ruleSetDraft.id}`,
+                {
+                  method: 'PUT',
+                  body: JSON.stringify(normalized.payload)
+                },
+                { retries: 1 }
+              )
+            : apiFetchWithRetry(
+                '/markup-rule-sets',
+                {
+                  method: 'POST',
+                  body: JSON.stringify(normalized.payload)
+                },
+                { retries: 1 }
+              )
+      );
       const savedId = Number(result?.rule_set?.id || 0);
       await refreshMarkupRuleSets();
       if (savedId > 0) {
@@ -1052,10 +1344,16 @@ export default function App() {
   const runJob = async (label, path, payload = {}) => {
     setActionStatus(`${label}: запуск...`);
     try {
-      const result = await apiFetch(path, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
+      const result = await runMutationWithRetryUX(`job_${label}`, () =>
+        apiFetchWithRetry(
+          path,
+          {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          },
+          { retries: 1 }
+        )
+      );
       setActionStatus(`${label}: ${toJsonString(result)}`);
       await refreshCore();
     } catch (error) {
@@ -1075,6 +1373,28 @@ export default function App() {
       body.resumeFromJobId = Number(actionForm.resumeFromJobId.trim());
     }
     await runJob('store_import', '/jobs/store-import', body);
+  };
+
+  const runCleanupWithPreflight = async () => {
+    const retentionDays = Number(actionForm.retentionDays);
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+      setActionStatus('cleanup: retentionDays must be a positive number');
+      return;
+    }
+    const keyword = `CLEANUP_${Math.trunc(retentionDays)}`;
+    const confirmed = confirmWithKeyword({
+      title: `Cleanup run (retentionDays=${Math.trunc(retentionDays)})`,
+      details:
+        'Операція видалить старі logs/jobs/дані за правилами retention. Перевірте значення.',
+      keyword
+    });
+    if (!confirmed) {
+      setActionStatus('cleanup: скасовано (не пройдено preflight)');
+      return;
+    }
+    await runJob('cleanup', '/jobs/cleanup', {
+      retentionDays: Math.trunc(retentionDays)
+    });
   };
 
   const cancelJob = async (jobId) => {
@@ -1168,10 +1488,17 @@ export default function App() {
           <Tag tone={readyForImport ? 'ok' : 'warn'}>
             store import: {readyForImport ? 'ready' : 'check gates'}
           </Tag>
+          {lastFailedAction ? (
+            <button className="btn danger" disabled={isReadOnly} onClick={retryLastFailedAction}>
+              Retry failed: {lastFailedAction.label}
+            </button>
+          ) : null}
           <button className="btn" onClick={refreshCore}>Оновити</button>
           <button className="btn danger" onClick={logout}>Logout</button>
         </div>
       </div>
+
+      {topStatus ? <div className="top-status">{topStatus}</div> : null}
 
       <div className="tabs">
         {TABS.map((item) => (
@@ -1193,6 +1520,68 @@ export default function App() {
 
           <Section title="Stats" subtitle="Операційна статистика">
             <pre>{toJsonString(stats || {})}</pre>
+          </Section>
+
+          <Section title="Операційні сигнали" subtitle="Ключові KPI та останні error-логи">
+            <div className="kpi-grid">
+              <div className="kpi-card">
+                <div className="kpi-label">Suppliers</div>
+                <div className="kpi-value">{Number(stats?.suppliers || 0)}</div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Sources</div>
+                <div className="kpi-value">{Number(stats?.sources || 0)}</div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Raw rows</div>
+                <div className="kpi-value">{Number(stats?.products_raw || 0)}</div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Final rows</div>
+                <div className="kpi-value">{Number(stats?.products_final || 0)}</div>
+              </div>
+            </div>
+            <div className="status-line">
+              Running jobs: {(readiness?.jobs?.running_blocking_jobs || []).length}
+            </div>
+            <div className="status-line">
+              Mirror fresh: {readiness?.mirror?.is_fresh ? 'yes' : 'no'}
+            </div>
+            <div className="status-line">Recent errors: {recentErrorLogs.length}</div>
+            {recentErrorLogs.length > 0 ? (
+              <div className="preview-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>time</th>
+                      <th>job</th>
+                      <th>message</th>
+                      <th>action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentErrorLogs.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.created_at || '-'}</td>
+                        <td>{item.job_id || '-'}</td>
+                        <td>{item.message || '-'}</td>
+                        <td>
+                          {item.job_id ? (
+                            <button className="btn" onClick={() => openJobDetails(item.job_id)}>
+                              Job details
+                            </button>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="empty-preview">Error logs не знайдено за поточним фільтром</div>
+            )}
           </Section>
 
           <Section title="Швидкі дії" subtitle="Запуск джоб без переходу по екранах">
@@ -1312,14 +1701,14 @@ export default function App() {
               <button
                 className="btn"
                 disabled={isReadOnly || !Number.isFinite(Number(actionForm.retentionDays))}
-                onClick={() =>
-                  runJob('cleanup', '/jobs/cleanup', {
-                    retentionDays: Number(actionForm.retentionDays)
-                  })
-                }
+                onClick={runCleanupWithPreflight}
               >
                 cleanup
               </button>
+            </div>
+
+            <div className="preflight-warning">
+              Preflight: `cleanup` вимагає keyword-підтвердження перед запуском.
             </div>
 
             <label style={{ marginTop: 10 }}>
@@ -1407,6 +1796,7 @@ export default function App() {
                           onClick={() => {
                             setEditingSupplierId(String(supplier.id));
                             setSupplierDraft(toSupplierDraft(supplier));
+                            setSupplierErrors({});
                             setSelectedSupplierId(String(supplier.id));
                           }}
                         >
@@ -1438,6 +1828,7 @@ export default function App() {
                     setSupplierDraft((prev) => ({ ...prev, name: event.target.value }))
                   }
                 />
+                {supplierErrors.name ? <div className="field-error">{supplierErrors.name}</div> : null}
               </div>
               <div>
                 <label>Priority</label>
@@ -1447,6 +1838,7 @@ export default function App() {
                     setSupplierDraft((prev) => ({ ...prev, priority: event.target.value }))
                   }
                 />
+                {supplierErrors.priority ? <div className="field-error">{supplierErrors.priority}</div> : null}
               </div>
               <div>
                 <label>Markup %</label>
@@ -1456,6 +1848,7 @@ export default function App() {
                     setSupplierDraft((prev) => ({ ...prev, markup_percent: event.target.value }))
                   }
                 />
+                {supplierErrors.markup_percent ? <div className="field-error">{supplierErrors.markup_percent}</div> : null}
               </div>
             </div>
             <div className="form-row">
@@ -1467,6 +1860,7 @@ export default function App() {
                     setSupplierDraft((prev) => ({ ...prev, min_profit_amount: event.target.value }))
                   }
                 />
+                {supplierErrors.min_profit_amount ? <div className="field-error">{supplierErrors.min_profit_amount}</div> : null}
               </div>
               <div>
                 <label>Markup rule set id</label>
@@ -1476,6 +1870,7 @@ export default function App() {
                     setSupplierDraft((prev) => ({ ...prev, markup_rule_set_id: event.target.value }))
                   }
                 />
+                {supplierErrors.markup_rule_set_id ? <div className="field-error">{supplierErrors.markup_rule_set_id}</div> : null}
               </div>
             </div>
             <div className="checkbox-row">
@@ -1509,6 +1904,7 @@ export default function App() {
                 onClick={() => {
                   setEditingSupplierId('');
                   setSupplierDraft(toSupplierDraft(null));
+                  setSupplierErrors({});
                 }}
               >
                 Reset form
@@ -1649,6 +2045,7 @@ export default function App() {
                             setEditingSourceId(String(source.id));
                             setSelectedSourceId(String(source.id));
                             setSourceDraft(toSourceDraft(source));
+                            setSourceErrors({});
                           }}
                         >
                           Edit
@@ -1694,6 +2091,7 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+                {sourceErrors.source_type ? <div className="field-error">{sourceErrors.source_type}</div> : null}
               </div>
             </div>
             <div className="form-row">
@@ -1705,6 +2103,7 @@ export default function App() {
                     setSourceDraft((prev) => ({ ...prev, source_url: event.target.value }))
                   }
                 />
+                {sourceErrors.source_url ? <div className="field-error">{sourceErrors.source_url}</div> : null}
                 <div className="hint">detected: {parseSourceUrlHint(sourceDraft.source_url) || '-'}</div>
               </div>
               <div>
@@ -1737,6 +2136,7 @@ export default function App() {
                 onClick={() => {
                   setEditingSourceId('');
                   setSourceDraft(toSourceDraft(null));
+                  setSourceErrors({});
                 }}
               >
                 Reset form
@@ -1898,6 +2298,7 @@ export default function App() {
                   value={mappingHeaderRow}
                   onChange={(event) => setMappingHeaderRow(event.target.value)}
                 />
+                {mappingErrors.header_row ? <div className="field-error">{mappingErrors.header_row}</div> : null}
               </div>
               <div>
                 <label>Коментар</label>
@@ -1909,6 +2310,7 @@ export default function App() {
             </div>
             <label>Mapping JSON</label>
             <textarea value={mappingText} onChange={(event) => setMappingText(event.target.value)} />
+            {mappingErrors.mapping ? <div className="field-error">{mappingErrors.mapping}</div> : null}
             <div className="actions" style={{ marginTop: 8 }}>
               <button className="btn primary" disabled={isReadOnly} onClick={saveMapping}>
                 Save mapping
@@ -1969,6 +2371,11 @@ export default function App() {
               </div>
             </div>
             <div className="status-line">global_rule_set_id: {globalRuleSetId || '-'}</div>
+            {pricingApplyScope === 'all_suppliers' ? (
+              <div className="preflight-warning">
+                Scope `all_suppliers` запускає preflight keyword-підтвердження.
+              </div>
+            ) : null}
             <div className="status-line">{pricingStatus}</div>
             <table>
               <thead>
@@ -2026,6 +2433,7 @@ export default function App() {
                     setRuleSetDraft((prev) => ({ ...prev, name: event.target.value }))
                   }
                 />
+                {ruleSetErrors.base ? <div className="field-error">{ruleSetErrors.base}</div> : null}
               </div>
               <div>
                 <label>
@@ -2046,6 +2454,9 @@ export default function App() {
               {ruleSetDraft.conditions.map((condition, index) => (
                 <div className="condition-card" key={`condition_${index}`}>
                   <div className="condition-title">Condition #{index + 1}</div>
+                  {ruleSetErrors[`condition_${index}`] ? (
+                    <div className="field-error">{ruleSetErrors[`condition_${index}`]}</div>
+                  ) : null}
                   <div className="form-row">
                     <div>
                       <label>priority</label>
@@ -2176,6 +2587,7 @@ export default function App() {
                   }
                   disabled={Boolean(priceOverrideDraft.id)}
                 />
+                {priceOverrideErrors.article ? <div className="field-error">{priceOverrideErrors.article}</div> : null}
               </div>
               <div>
                 <label>size</label>
@@ -2195,6 +2607,7 @@ export default function App() {
                     setPriceOverrideDraft((prev) => ({ ...prev, price_final: event.target.value }))
                   }
                 />
+                {priceOverrideErrors.price_final ? <div className="field-error">{priceOverrideErrors.price_final}</div> : null}
               </div>
             </div>
             <div className="form-row">
@@ -2225,7 +2638,13 @@ export default function App() {
               <button className="btn primary" disabled={isReadOnly} onClick={savePriceOverride}>
                 {priceOverrideDraft.id ? 'Update override' : 'Upsert override'}
               </button>
-              <button className="btn" onClick={() => setPriceOverrideDraft(toPriceOverrideDraft(null))}>
+              <button
+                className="btn"
+                onClick={() => {
+                  setPriceOverrideDraft(toPriceOverrideDraft(null));
+                  setPriceOverrideErrors({});
+                }}
+              >
                 Reset override form
               </button>
             </div>
@@ -2255,7 +2674,13 @@ export default function App() {
                     <td>{row.is_active ? 'true' : 'false'}</td>
                     <td>{row.notes || '-'}</td>
                     <td>
-                      <button className="btn" onClick={() => setPriceOverrideDraft(toPriceOverrideDraft(row))}>
+                      <button
+                        className="btn"
+                        onClick={() => {
+                          setPriceOverrideDraft(toPriceOverrideDraft(row));
+                          setPriceOverrideErrors({});
+                        }}
+                      >
                         Edit
                       </button>
                     </td>
@@ -2514,7 +2939,23 @@ export default function App() {
                   <option value="warning">warning</option>
                   <option value="info">info</option>
                 </select>
+                <input
+                  value={logsJobId}
+                  onChange={(event) => setLogsJobId(event.target.value)}
+                  placeholder="jobId"
+                  style={{ width: 110 }}
+                />
                 <button className="btn" onClick={refreshCore}>Reload</button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setLogsLevel('');
+                    setLogsJobId('');
+                    void refreshCore();
+                  }}
+                >
+                  Reset
+                </button>
               </div>
             }
           >

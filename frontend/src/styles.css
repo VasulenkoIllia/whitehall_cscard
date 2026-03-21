@@ -65,6 +65,16 @@ body,
   flex-wrap: wrap;
 }
 
+.top-status {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #cbd9ee;
+  background: #f8fbff;
+  color: #395276;
+  font-size: 12px;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -137,6 +147,22 @@ body,
 
 .status-line.ok {
   color: var(--ok);
+}
+
+.preflight-warning {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #f1d69e;
+  background: #fff8e9;
+  color: #8d5a00;
+  font-size: 12px;
+}
+
+.field-error {
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: 12px;
 }
 
 .hint {
@@ -342,6 +368,32 @@ pre {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.kpi-card {
+  border: 1px solid #d8e3f3;
+  border-radius: 12px;
+  padding: 10px;
+  background: linear-gradient(130deg, #f7faff, #ffffff);
+}
+
+.kpi-label {
+  color: #5a6f8d;
+  font-size: 12px;
+}
+
+.kpi-value {
+  margin-top: 4px;
+  color: #1f3658;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .mini-tabs {

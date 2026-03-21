@@ -2,6 +2,7 @@
 /out-tsc
 /dist
 /output
+/skills
 
 /node_modules
 /frontend/node_modules

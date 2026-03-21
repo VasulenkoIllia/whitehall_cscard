@@ -10,7 +10,10 @@
   - `Джерела та мапінг` (source CRUD + source sheets/preview + mapping builder + JSON),
   - `Націнки та override` (markup rule sets: list/create/update/default/apply + conditions editor, price overrides: list/upsert/update),
   - `Дані` (merged/final/compare preview + export + server filters/sort/paging controls),
-  - `Джоби та логи` (list + cancel + details panel `/admin/api/jobs/:jobId`).
+  - `Джоби та логи` (list + cancel + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
+  - додано form-level валідації і inline помилки для операторських форм.
+  - додано preflight-підтвердження для destructive дій (`cleanup`, `delete supplier/source`, `apply all_suppliers`).
+  - додано retry UX для критичних mutating API дій (збереження/апдейти/джоби).
 
 ## Імпорт даних
 - Імпорт Google Sheets у `products_raw` з перевіркою mapping і skip-логікою.
