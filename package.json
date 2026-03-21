@@ -8,7 +8,10 @@
     "check": "tsc --noEmit",
     "start": "node dist/index.js",
     "seed:users": "node dist/scripts/seedUsers.js",
-    "migrate": "node dist/scripts/runMigrations.js"
+    "migrate": "node dist/scripts/runMigrations.js",
+    "audit:load": "node dist/scripts/runLoadAudit.js",
+    "export:legacy-config": "node dist/scripts/exportLegacySupplierConfig.js",
+    "import:legacy-config": "node dist/scripts/importSupplierConfigSnapshot.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

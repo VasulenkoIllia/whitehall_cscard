@@ -8,6 +8,8 @@
 - `CURRENT_FUNCTIONALITY.md` — опис поточного функціоналу (імпорт, фіналізація, експорт).
 - `IMPLEMENTATION_STAGES.md` — початковий план перенесення логіки з Apps Script у Node.js/БД.
 - `RUNBOOK_FINALIZE_STABILITY_2026_03.md` — ранбук стабілізації етапу finalize.
+- `RUNBOOK_LOAD_AUDIT_2026_03.md` — сценарій контрольованого load-аудиту 100k/300k/500k.
+- `RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md` — вигрузка/перенос supplier config зі старої БД у нову для тестування parity.
 - `README_FEED_EXTENSION.md` — розширення імпорту фідів.
 - `ARCHITECTURE_BASELINE_2026_03.md` — що вже закладено в `whitehall_cscard` після рев’ю документації та як це мапиться на legacy-код.
 - `CSCART_CONNECTOR_NOTES.md` — конспект CS-Cart REST API та мапінг під наш нейтральний preview.

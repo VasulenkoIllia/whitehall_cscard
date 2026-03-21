@@ -1,0 +1,210 @@
+{
+  "sources": [
+    {
+      "id": 12,
+      "name": "sevrukosha manual",
+      "is_active": true,
+      "sheet_name": "Аркуш1",
+      "source_url": "1lgztw9n-jSezxFBbJPAY8lL_xYksgEApFVJ5MbOKiqM",
+      "source_type": "google_sheet",
+      "supplier_id": 10
+    },
+    {
+      "id": 39,
+      "name": "Склад WHITE HALL",
+      "is_active": true,
+      "sheet_name": "Аркуш1",
+      "source_url": "1gxT2aROOmtc9Y23C315KafoOE3pDYxGI4TzqtRmoNy4",
+      "source_type": "google_sheet",
+      "supplier_id": 31
+    },
+    {
+      "id": 40,
+      "name": "Склад WHITE HALL Supreme",
+      "is_active": true,
+      "sheet_name": "Аркуш2",
+      "source_url": "1gxT2aROOmtc9Y23C315KafoOE3pDYxGI4TzqtRmoNy4",
+      "source_type": "google_sheet",
+      "supplier_id": 31
+    }
+  ],
+  "version": 1,
+  "mappings": [
+    {
+      "id": 13,
+      "mapping": {
+        "size": 3,
+        "extra": 1,
+        "price": 6,
+        "article": 4,
+        "quantity": {
+          "type": "static",
+          "value": "1"
+        }
+      },
+      "source_id": 12,
+      "created_at": "2026-01-02T18:25:18.45298+00:00",
+      "header_row": 1,
+      "supplier_id": 10,
+      "mapping_meta": {
+        "headers": {
+          "size": "Сайз ",
+          "extra": "Назва Футболки",
+          "price": "Дроп ціна ",
+          "article": "Артикул "
+        },
+        "source_id": "12",
+        "header_row": 1,
+        "sheet_name": "Аркуш1"
+      }
+    },
+    {
+      "id": 40,
+      "mapping": {
+        "size": {
+          "type": "static",
+          "value": ""
+        },
+        "extra": 2,
+        "price": 3,
+        "article": 1,
+        "quantity": 4
+      },
+      "source_id": 39,
+      "created_at": "2026-01-02T21:30:04.400247+00:00",
+      "header_row": 1,
+      "supplier_id": 31,
+      "mapping_meta": {
+        "headers": {
+          "extra": "Назва",
+          "price": "Ціна",
+          "article": "Артикул",
+          "quantity": "Наявність"
+        },
+        "source_id": "39",
+        "header_row": 1,
+        "sheet_name": "Аркуш1"
+      }
+    },
+    {
+      "id": 61,
+      "mapping": {
+        "size": 6,
+        "extra": 3,
+        "price": 7,
+        "article": 5,
+        "quantity": 8
+      },
+      "source_id": 40,
+      "created_at": "2026-01-11T12:06:22.437156+00:00",
+      "header_row": 1,
+      "supplier_id": 31,
+      "mapping_meta": {
+        "headers": {
+          "size": "Розмір",
+          "extra": "Назва",
+          "price": "Ціна",
+          "article": "Артикул",
+          "quantity": "Кількість"
+        },
+        "source_id": "40",
+        "header_row": 1,
+        "sheet_name": "Аркуш2"
+      }
+    }
+  ],
+  "suppliers": [
+    {
+      "id": 10,
+      "name": "sevrukosha manual",
+      "priority": 100,
+      "is_active": true,
+      "pricing_mode": "custom",
+      "markup_percent": 27.0,
+      "min_profit_amount": 300.0,
+      "markup_rule_set_id": 1,
+      "min_profit_enabled": true
+    },
+    {
+      "id": 31,
+      "name": "Склад WHITE HALL",
+      "priority": 1,
+      "is_active": true,
+      "pricing_mode": "custom",
+      "markup_percent": 0.0,
+      "min_profit_amount": 0.0,
+      "markup_rule_set_id": 5,
+      "min_profit_enabled": true
+    }
+  ],
+  "generated_at": "2026-03-21T08:55:18.005787+00:00",
+  "markup_rule_sets": [
+    {
+      "id": 1,
+      "code": "default_v1",
+      "name": "Базове правило націнки",
+      "is_active": true,
+      "description": "Автоматично створений стартовий набір націнок."
+    },
+    {
+      "id": 5,
+      "code": null,
+      "name": "Націнка 0",
+      "is_active": true,
+      "description": null
+    }
+  ],
+  "global_rule_set_id": 1,
+  "markup_rule_conditions": [
+    {
+      "id": 43,
+      "price_to": 1101.0,
+      "priority": 10,
+      "is_active": true,
+      "price_from": 0.0,
+      "action_type": "fixed_add",
+      "rule_set_id": 1,
+      "action_value": 300.0
+    },
+    {
+      "id": 44,
+      "price_to": 7000.0,
+      "priority": 20,
+      "is_active": true,
+      "price_from": 1101.0,
+      "action_type": "percent",
+      "rule_set_id": 1,
+      "action_value": 32.0
+    },
+    {
+      "id": 45,
+      "price_to": 10000.0,
+      "priority": 30,
+      "is_active": true,
+      "price_from": 7001.0,
+      "action_type": "percent",
+      "rule_set_id": 1,
+      "action_value": 20.0
+    },
+    {
+      "id": 46,
+      "price_to": null,
+      "priority": 40,
+      "is_active": true,
+      "price_from": 10001.0,
+      "action_type": "percent",
+      "rule_set_id": 1,
+      "action_value": 14.0
+    },
+    {
+      "id": 22,
+      "price_to": null,
+      "priority": 1,
+      "is_active": true,
+      "price_from": 0.0,
+      "action_type": "percent",
+      "rule_set_id": 5,
+      "action_value": 0.0
+    }
+  ]
+}

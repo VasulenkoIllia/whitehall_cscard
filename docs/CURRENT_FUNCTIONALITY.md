@@ -14,9 +14,9 @@
 
 ## Catalog admin API (backend)
 - Доступні CRUD-операції для:
-  - `suppliers` (включно з bulk update)
+  - `suppliers` (включно з bulk update, search і sort)
   - `sources`
-  - `mappings` (latest get/save per supplier/source)
+  - `mappings` (latest get/save per supplier/source, поле `comment`)
 - Доступні API для pricing-керування:
   - `markup rule sets` (list/create/update/apply to suppliers)
   - `price overrides` (list/upsert/update)
@@ -29,6 +29,11 @@
 - Доступні review/export API для операторського контролю:
   - `merged-preview`, `final-preview`, `compare-preview`
   - `merged-export`, `final-export`, `compare-export` (CSV)
+- `GET /admin/api/suppliers` підтримує:
+  - `search=<рядок>` (пошук по `supplier.name`, case-insensitive)
+  - `sort=name_asc|name_desc|id_asc` (A-Я / Я-А / дефолт по id)
+- `POST /admin/api/mappings/:supplierId` підтримує поле:
+  - `comment` — операторський коментар до mapping-конфігурації
 - Ендпоїнти винесені в `admin/api/*` і захищені ролями `viewer/admin`.
 
 ## Finalize і preview
@@ -64,9 +69,15 @@
 - Runtime-активація daily partition для `products_raw`.
 - Cleanup job чистить старі partition/рядки/логи/завершені jobs.
 - Логи мають payload truncation (`LOG_PAYLOAD_MAX_BYTES`) для контролю росту таблиці `logs`.
+- Є scripted backend load-audit контур:
+  - `npm run audit:load`
+  - runbook: `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`
+- Є scripted перенос supplier config з legacy:
+  - `npm run export:legacy-config`
+  - `npm run import:legacy-config`
+  - runbook: `docs/RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md`
 
 ## Ще не закрито до повного parity
-- Admin CRUD parity (`suppliers`, `sources`, `mappings`, `markup rules`, `price overrides`).
-- Read parity для legacy аналітичних endpoint-ів (`stats`, `final/compare export`).
 - Інтеграційні тести на критичні інваріанти бізнес-логіки.
 - Staging load-test baseline 100k/300k/500k.
+- Legacy-семантика global default markup rule (`markup_settings` / `markup-rule-sets/default`) для 1:1 parity.

@@ -34,8 +34,8 @@ What is already good:
 - env validation and basic auth/session layer exist
 
 What is still not at legacy parity:
-- admin CRUD/data APIs still partial (`suppliers/sources/mappings/markup rules/price overrides`)
-- legacy read endpoints parity is still pending (`stats`, `final-preview/export`, `compare-preview/export`)
+- admin CRUD/data APIs are mostly covered (including supplier search/sort and mapping comment field)
+- legacy default markup semantics (`markup_settings` / `markup-rule-sets/default`) is still not fully mirrored
 - integration test coverage for critical business invariants is still missing
 - no staged load-test baseline yet for 100k/300k/500k runs
 - Horoshop is intentionally paused in current scope (separate future connector)
@@ -521,6 +521,58 @@ Effect:
 - closes backend parity gap for cron/scheduler settings management
 - enables operational tuning of schedule cadence in production without redeploy
 - keeps scheduler behavior aligned with persisted admin settings
+
+### 21. Backend load-audit harness for staged 100k/300k/500k runs
+
+Changed files:
+- `src/scripts/runLoadAudit.ts`
+- `package.json`
+- `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`
+- `docs/CURRENT_FUNCTIONALITY.md`
+- `docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md`
+
+What changed:
+- added reproducible load-audit script (`npm run audit:load`) with scenario counts from env.
+- script measures:
+  - finalize wall-time and summary (`rawCount/finalCount/durationMs`)
+  - preview latency/total
+  - compare latency/total + missing-only latency/total
+- added safety gates:
+  - requires `LOAD_AUDIT_CONFIRM=YES`
+  - non-empty DB blocked unless explicitly allowed
+  - cleanup of synthetic artifacts enabled by default
+- writes structured JSON report to output path.
+
+Effect:
+- creates executable baseline for next performance tuning step on staging
+- reduces manual/one-off benchmark noise with consistent scenario runner
+- keeps load-audit logic outside production code paths (no business logic changes)
+
+### 22. Supplier UX/API improvements + legacy config migration tooling
+
+Changed files:
+- `src/core/admin/CatalogAdminService.ts`
+- `src/app/http/server.ts`
+- `migrations/025_add_column_mappings_comment.sql`
+- `src/scripts/exportLegacySupplierConfig.ts`
+- `src/scripts/importSupplierConfigSnapshot.ts`
+- `package.json`
+- `docs/RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md`
+
+What changed:
+- `GET /admin/api/suppliers` now supports:
+  - `search` by supplier name (`ILIKE`)
+  - `sort=name_asc|name_desc|id_asc` (A-Я / Я-А / default by id).
+- `column_mappings` now has explicit `comment` field (migration `025`).
+- mapping API (`get/save latest`) now reads/writes `comment`.
+- added controlled legacy config migration path:
+  - export selected suppliers from old DB into snapshot JSON
+  - import snapshot into new DB with upsert and `mapping_meta.source_id` remap.
+
+Effect:
+- closes requested operator features without changing business pricing/import logic
+- improves readiness for parity testing on real suppliers (`WHITE HALL`, `sevrukov`)
+- reduces manual risk during config transfer from legacy production data
 
 ## Adjusted plan
 

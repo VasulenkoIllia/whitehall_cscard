@@ -67,6 +67,30 @@ export function createHttpServer(appContext: AppContext) {
     return Math.trunc(numeric);
   };
 
+  const parseSupplierSort = (value: unknown): 'id_asc' | 'name_asc' | 'name_desc' => {
+    if (typeof value !== 'string') {
+      return 'id_asc';
+    }
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized === 'name_asc' ||
+      normalized === 'a-z' ||
+      normalized === 'az' ||
+      normalized === 'asc'
+    ) {
+      return 'name_asc';
+    }
+    if (
+      normalized === 'name_desc' ||
+      normalized === 'z-a' ||
+      normalized === 'za' ||
+      normalized === 'desc'
+    ) {
+      return 'name_desc';
+    }
+    return 'id_asc';
+  };
+
   const toCsvCell = (value: unknown): string => {
     if (value === null || typeof value === 'undefined') {
       return '';
@@ -184,9 +208,14 @@ export function createHttpServer(appContext: AppContext) {
     res.json({ role: req.userRole || null })
   );
 
-  app.get('/admin/api/suppliers', authMw.requireRole('viewer'), async (_req: Request, res: Response) => {
+  app.get('/admin/api/suppliers', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
     try {
-      const items = await catalogAdmin.listSuppliers();
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const sort = parseSupplierSort(req.query.sort);
+      const items = await catalogAdmin.listSuppliers({
+        search,
+        sort
+      });
       return res.json(items);
     } catch (err) {
       return res

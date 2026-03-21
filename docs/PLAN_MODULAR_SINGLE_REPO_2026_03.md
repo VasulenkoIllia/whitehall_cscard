@@ -54,9 +54,9 @@
 - виділяти read/write сервіси per-domain для прогнозованої підтримки.
 
 Поточний статус:
-- `suppliers`: in progress (CRUD + bulk update API ready)
+- `suppliers`: in progress (CRUD + bulk update + search + A-Я sort API ready)
 - `sources`: in progress (CRUD API ready)
-- `mappings`: in progress (latest get/save API ready)
+- `mappings`: in progress (latest get/save API ready, `comment` field support added)
 - `source-sheets/source-preview`: in progress (API ready for mapping flow)
 - `markup rule sets`: in progress (list/create/update/apply API ready)
 - `price overrides`: in progress (list/upsert/update API ready)
@@ -87,6 +87,10 @@
   - `CSCART_IMPORT_CONCURRENCY`
   - scheduler cadence
 
+Поточний статус:
+- scripted load-audit контур додано (`npm run audit:load`, `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`)
+- лишається прогін на staging і фіксація фактичного tuning baseline
+
 ### Phase 5: Migration cutover readiness
 Ціль:
 - закрити ризики production cutover.
@@ -95,6 +99,7 @@
 - всі core сценарії legacy доступні в новому API/UI;
 - документація відповідає фактичній реалізації;
 - retention і recovery runbook перевірені на staging.
+- є керований шлях переносу supplier config зі старої БД (`export/import legacy-config` runbook).
 
 ## Пропозиції для прискорення без зміни бізнес-логіки
 - Додати lightweight integration tests на критичні інваріанти:
@@ -109,7 +114,7 @@
   - warnings density.
 
 ## Короткий execution plan на найближчі кроки
-1. Завершити admin CRUD parity (suppliers/sources/mappings) у модульних сервісах.
-2. Додати parity для markup rule sets + price overrides API.
-3. Перенести stats/final-preview/compare-export read-paths.
-4. Прогнати staged load tests та зафіксувати tuning-профіль у runbook.
+1. Закрити parity по default markup semantics (`markup-rule-sets/default` / `markup_settings` equivalent).
+2. Додати інтеграційні тести на mapping/dedup/override/resume інваріанти.
+3. Прогнати staged load tests та зафіксувати tuning-профіль у runbook.
+4. Провести тестовий перенос legacy supplier config (WHITE HALL, sevrukov) і валідацію імпорту.

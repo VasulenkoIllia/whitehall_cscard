@@ -24,6 +24,7 @@ type MappingSavePayload = {
   header_row?: number | null;
   mapping_meta?: Record<string, unknown> | null;
   source_id?: number | null;
+  comment?: string | null;
 };
 
 type MarkupConditionInput = {
@@ -48,6 +49,13 @@ type PriceOverrideListOptions = {
   limit: number;
   offset: number;
   search: string | null;
+};
+
+type SupplierListSort = 'id_asc' | 'name_asc' | 'name_desc';
+
+type SupplierListOptions = {
+  search: string | null;
+  sort: SupplierListSort;
 };
 
 type LogListOptions = {
@@ -221,7 +229,23 @@ export class CatalogAdminService {
     return jobId;
   }
 
-  async listSuppliers(): Promise<Record<string, unknown>[]> {
+  async listSuppliers(options: SupplierListOptions): Promise<Record<string, unknown>[]> {
+    const search = String(options.search || '').trim();
+    const values: unknown[] = [];
+    const whereParts: string[] = [];
+    if (search) {
+      values.push(`%${search}%`);
+      whereParts.push(`s.name ILIKE $${values.length}`);
+    }
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    let orderClause = 's.id ASC';
+    if (options.sort === 'name_asc') {
+      orderClause = 'LOWER(s.name) ASC, s.id ASC';
+    } else if (options.sort === 'name_desc') {
+      orderClause = 'LOWER(s.name) DESC, s.id DESC';
+    }
+
     const result = await this.pool.query(
       `SELECT
          s.id,
@@ -236,7 +260,9 @@ export class CatalogAdminService {
          rs.name AS markup_rule_set_name
        FROM suppliers s
        LEFT JOIN markup_rule_sets rs ON rs.id = s.markup_rule_set_id
-       ORDER BY s.id ASC`
+       ${whereClause}
+       ORDER BY ${orderClause}`,
+      values
     );
     return result.rows;
   }
@@ -606,7 +632,7 @@ export class CatalogAdminService {
     const normalizedSourceId = toOptionalFiniteNumber(sourceId);
     if (normalizedSourceId !== null && normalizedSourceId > 0) {
       const result = await this.pool.query(
-        `SELECT id, supplier_id, source_id, mapping, header_row, mapping_meta, created_at
+        `SELECT id, supplier_id, source_id, mapping, header_row, mapping_meta, comment, created_at
          FROM column_mappings
          WHERE supplier_id = $1 AND (source_id = $2 OR source_id IS NULL)
          ORDER BY (source_id = $2) DESC, id DESC
@@ -616,7 +642,7 @@ export class CatalogAdminService {
       return result.rows[0] || null;
     }
     const result = await this.pool.query(
-      `SELECT id, supplier_id, source_id, mapping, header_row, mapping_meta, created_at
+      `SELECT id, supplier_id, source_id, mapping, header_row, mapping_meta, comment, created_at
        FROM column_mappings
        WHERE supplier_id = $1
        ORDER BY id DESC
@@ -641,17 +667,27 @@ export class CatalogAdminService {
     const sourceFromBody = toOptionalFiniteNumber(payload.source_id);
     const sourceFromMeta = toOptionalFiniteNumber(payload.mapping_meta?.source_id);
     const resolvedSourceId = sourceFromBody !== null ? sourceFromBody : sourceFromMeta;
+    const commentFromBody =
+      payload.comment === null || typeof payload.comment === 'undefined'
+        ? null
+        : String(payload.comment).trim() || null;
+    const commentFromMeta =
+      commentFromBody === null && typeof payload.mapping_meta?.comment === 'string'
+        ? payload.mapping_meta.comment.trim() || null
+        : null;
+    const resolvedComment = commentFromBody !== null ? commentFromBody : commentFromMeta;
 
     const result = await this.pool.query(
-      `INSERT INTO column_mappings (supplier_id, source_id, mapping, header_row, mapping_meta)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO column_mappings (supplier_id, source_id, mapping, header_row, mapping_meta, comment)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [
         normalizedSupplierId,
         resolvedSourceId !== null ? Math.trunc(resolvedSourceId) : null,
         payload.mapping,
         headerRow,
-        payload.mapping_meta || null
+        payload.mapping_meta || null,
+        resolvedComment
       ]
     );
     return result.rows[0];
