@@ -12,7 +12,8 @@ const VIEW_CONFIG = {
       { key: 'quantity', label: 'К-сть' },
       { key: 'price', label: 'Ціна' },
       { key: 'supplier_name', label: 'Постачальник' },
-      { key: 'extra', label: 'Назва' }
+      { key: 'extra', label: 'Назва' },
+      { key: 'comment', label: 'Коментар' }
     ]
   },
   final: {
@@ -25,7 +26,8 @@ const VIEW_CONFIG = {
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
-      { key: 'supplier_name', label: 'Постачальник' }
+      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'comment', label: 'Коментар' }
     ]
   },
   compare: {
@@ -36,6 +38,7 @@ const VIEW_CONFIG = {
       { key: 'article', label: 'Article' },
       { key: 'size', label: 'Size' },
       { key: 'price_final', label: 'Фінальна ціна' },
+      { key: 'comment', label: 'Коментар' },
       { key: 'sku_article', label: 'SKU article' },
       { key: 'store_sku', label: 'Store SKU' },
       { key: 'store_visibility', label: 'Видимість' }

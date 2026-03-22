@@ -1,4 +1,4 @@
-const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra'];
+const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra', 'comment'];
 
 export function columnLetter(index) {
   let result = '';
@@ -48,7 +48,8 @@ export function createEmptyMappingFields() {
     size: { mode: 'column', value: null, allowEmpty: false },
     quantity: { mode: 'column', value: null, allowEmpty: false },
     price: { mode: 'column', value: null, allowEmpty: false },
-    extra: { mode: 'column', value: null, allowEmpty: false }
+    extra: { mode: 'column', value: null, allowEmpty: false },
+    comment: { mode: 'column', value: null, allowEmpty: true }
   };
 }
 
@@ -83,7 +84,7 @@ export function buildMappingFromFields(fields) {
   for (let index = 0; index < MAPPING_KEYS.length; index += 1) {
     const key = MAPPING_KEYS[index];
     const entry = fields?.[key];
-    const allowEmpty = key === 'size';
+    const allowEmpty = key === 'size' || key === 'comment';
     if (!isMappingFieldSet(entry, { allowEmpty })) {
       continue;
     }

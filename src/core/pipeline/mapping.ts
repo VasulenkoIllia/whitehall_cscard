@@ -3,7 +3,8 @@ export const DEFAULT_SYNONYMS = {
   size: ['розмір', 'размер', 'size'],
   quantity: ['кількість', 'количество', 'qty', 'quantity', 'остаток', 'залишок'],
   price: ['ціна', 'цена', 'price', 'дроп ціна', 'дроп цена', 'drop price'],
-  extra: ['назва', 'name', 'title', 'товар']
+  extra: ['назва', 'name', 'title', 'товар'],
+  comment: ['коментар', 'comment', 'примітка', 'note', 'опис']
 };
 
 export function normalizeHeader(value: unknown): string {

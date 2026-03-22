@@ -71,7 +71,7 @@ export function hasMappedColumnValues(mapping: Record<string, unknown> | null, r
   if (!mapping) {
     return false;
   }
-  const fields = ['article', 'size', 'quantity', 'price', 'extra'] as const;
+  const fields = ['article', 'size', 'quantity', 'price', 'extra', 'comment'] as const;
   return fields.some((field) => {
     const info = parseMappingEntry(mapping[field]);
     if (info.mode !== 'column' || !info.index) {

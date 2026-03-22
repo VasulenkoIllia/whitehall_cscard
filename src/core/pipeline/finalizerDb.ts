@@ -10,6 +10,7 @@ const stageFromPrecomputedSql = `
       pr.price AS price_base,
       CEIL(pr.price_with_markup / 10) * 10 AS price_final,
       pr.extra,
+      pr.comment_text,
       pr.supplier_id,
       s.priority AS supplier_priority
     FROM products_raw pr
@@ -25,6 +26,7 @@ const stageFromPrecomputedSql = `
       r.price_base,
       r.price_final,
       r.extra,
+      r.comment_text,
       r.supplier_id
     FROM rounded r
     ORDER BY
@@ -41,6 +43,7 @@ const stageFromPrecomputedSql = `
     price_base,
     price_final,
     extra,
+    comment_text,
     supplier_id
   FROM filtered;
 `;
@@ -53,6 +56,7 @@ const stageWithFinalizePricingSql = `
       pr.quantity,
       pr.price AS price_base,
       pr.extra,
+      pr.comment_text,
       pr.supplier_id,
       s.priority AS supplier_priority,
       CASE
@@ -83,6 +87,7 @@ const stageWithFinalizePricingSql = `
         ELSE b.legacy_price
       END AS price_with_markup,
       b.extra,
+      b.comment_text,
       b.supplier_id,
       b.supplier_priority
     FROM base b
@@ -107,6 +112,7 @@ const stageWithFinalizePricingSql = `
       price_base,
       CEIL(price_with_markup / 10) * 10 AS price_final,
       extra,
+      comment_text,
       supplier_id,
       supplier_priority
     FROM computed
@@ -119,6 +125,7 @@ const stageWithFinalizePricingSql = `
       r.price_base,
       r.price_final,
       r.extra,
+      r.comment_text,
       r.supplier_id
     FROM rounded r
     ORDER BY
@@ -135,6 +142,7 @@ const stageWithFinalizePricingSql = `
     price_base,
     price_final,
     extra,
+    comment_text,
     supplier_id
   FROM filtered;
 `;
@@ -152,6 +160,7 @@ const updateFinalFromStageSql = `
       price_base = fs.price_base,
       price_final = fs.price_final,
       extra = fs.extra,
+      comment_text = fs.comment_text,
       supplier_id = fs.supplier_id
   FROM finalize_stage fs
   WHERE pf.article = fs.article
@@ -167,6 +176,7 @@ const insertMissingFinalRowsSql = `
     price_base,
     price_final,
     extra,
+    comment_text,
     supplier_id
   )
   SELECT
@@ -177,6 +187,7 @@ const insertMissingFinalRowsSql = `
     fs.price_base,
     fs.price_final,
     fs.extra,
+    fs.comment_text,
     fs.supplier_id
   FROM finalize_stage fs
   WHERE NOT EXISTS (

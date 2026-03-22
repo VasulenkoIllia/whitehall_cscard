@@ -18,14 +18,12 @@ import { JobsTab } from './tabs/JobsTab';
 const TABS = [
   { id: 'overview', label: 'Панель' },
   { id: 'suppliers', label: 'Постачальники' },
-  { id: 'mapping', label: 'Джерела і мапінг' },
-  { id: 'pricing', label: 'Націнки' },
   { id: 'data', label: 'Дані' },
   { id: 'jobs', label: 'Моніторинг' }
 ];
 
 const SOURCE_TYPES = ['google_sheet', 'csv', 'xml', 'json'];
-const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra'];
+const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra', 'comment'];
 const TOAST_LIMIT = 6;
 const TOAST_TTL_MS = 5500;
 
@@ -253,21 +251,13 @@ export default function App() {
 
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
-  const [supplierSort, setSupplierSort] = useState('id_asc');
+  const [supplierSort, setSupplierSort] = useState('name_asc');
   const [suppliersStatus, setSuppliersStatus] = useState('');
   const [supplierDraft, setSupplierDraft] = useState(() => toSupplierDraft(null));
   const [supplierErrors, setSupplierErrors] = useState({});
   const [editingSupplierId, setEditingSupplierId] = useState('');
   const [supplierFormStatus, setSupplierFormStatus] = useState('');
   const [selectedSupplierIds, setSelectedSupplierIds] = useState([]);
-  const [bulkStatus, setBulkStatus] = useState('');
-  const [bulkDraft, setBulkDraft] = useState({
-    apply_markup_percent: false,
-    markup_percent: '',
-    apply_min_profit: false,
-    min_profit_enabled: true,
-    min_profit_amount: ''
-  });
 
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [sources, setSources] = useState([]);
@@ -299,7 +289,7 @@ export default function App() {
   const [globalRuleSetId, setGlobalRuleSetId] = useState(null);
   const [pricingStatus, setPricingStatus] = useState('');
   const [pricingApplyRuleSetId, setPricingApplyRuleSetId] = useState('');
-  const [pricingApplyScope, setPricingApplyScope] = useState('suppliers');
+  const [supplierBulkPricingStatus, setSupplierBulkPricingStatus] = useState('');
   const [ruleSetDraft, setRuleSetDraft] = useState(() => toRuleSetDraft(null));
   const [ruleSetErrors, setRuleSetErrors] = useState({});
   const [ruleSetStatus, setRuleSetStatus] = useState('');
@@ -359,6 +349,11 @@ export default function App() {
       label: `${columnLetter(index + 1)} (${index + 1})`
     }));
   }, [sourcePreview.headers]);
+
+  const selectedSupplierName = useMemo(() => {
+    const matched = suppliers.find((supplier) => String(supplier.id) === String(selectedSupplierId));
+    return matched?.name || '';
+  }, [suppliers, selectedSupplierId]);
 
   const recentErrorLogs = useMemo(
     () => logs.filter((item) => String(item.level || '').toLowerCase() === 'error').slice(0, 8),
@@ -605,16 +600,10 @@ export default function App() {
     if (normalizeOptionalNumber(supplierDraft.priority) === null) {
       errors.priority = 'Priority має бути числом';
     }
-    if (normalizeOptionalNumber(supplierDraft.markup_percent) === null) {
-      errors.markup_percent = 'Markup % має бути числом';
-    }
-    if (supplierDraft.min_profit_enabled && normalizeOptionalNumber(supplierDraft.min_profit_amount) === null) {
-      errors.min_profit_amount = 'Min profit amount має бути числом';
-    }
     if (supplierDraft.markup_rule_set_id.trim()) {
       const parsedRuleSetId = parsePositiveInt(supplierDraft.markup_rule_set_id);
       if (!parsedRuleSetId) {
-        errors.markup_rule_set_id = 'Markup rule set id має бути додатнім числом';
+        errors.markup_rule_set_id = 'Оберіть коректний тип націнки';
       }
     }
     return errors;
@@ -678,9 +667,6 @@ export default function App() {
     const payload = {
       name,
       priority: Number(supplierDraft.priority),
-      markup_percent: Number(supplierDraft.markup_percent),
-      min_profit_enabled: supplierDraft.min_profit_enabled,
-      min_profit_amount: Number(supplierDraft.min_profit_amount || 0),
       is_active: supplierDraft.is_active,
       markup_rule_set_id:
         supplierDraft.markup_rule_set_id.trim() === ''
@@ -751,61 +737,6 @@ export default function App() {
       await refreshSuppliers();
     } catch (error) {
       setSupplierFormStatus(formatError(error));
-    }
-  };
-
-  const saveSupplierBulk = async () => {
-    if (selectedSupplierIds.length === 0) {
-      setBulkStatus('Оберіть постачальників для bulk update');
-      return;
-    }
-    const payload = {
-      supplier_ids: selectedSupplierIds
-    };
-    if (bulkDraft.apply_markup_percent) {
-      const markup = normalizeOptionalNumber(bulkDraft.markup_percent);
-      if (markup === null) {
-        setBulkStatus('markup_percent має бути числом');
-        return;
-      }
-      payload.markup_percent = markup;
-    }
-    if (bulkDraft.apply_min_profit) {
-      payload.min_profit_enabled = bulkDraft.min_profit_enabled;
-      const minProfitAmount = normalizeOptionalNumber(bulkDraft.min_profit_amount);
-      if (bulkDraft.min_profit_enabled && minProfitAmount === null) {
-        setBulkStatus('min_profit_amount має бути числом');
-        return;
-      }
-      if (bulkDraft.min_profit_enabled) {
-        payload.min_profit_amount = minProfitAmount;
-      } else {
-        payload.min_profit_amount = 0;
-      }
-    }
-    if (!Object.prototype.hasOwnProperty.call(payload, 'markup_percent') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'min_profit_enabled')
-    ) {
-      setBulkStatus('Оберіть хоча б одне поле для bulk update');
-      return;
-    }
-
-    setBulkStatus('Виконання bulk update...');
-    try {
-      const result = await runMutationWithRetryUX('bulk_update_suppliers', () =>
-        apiFetchWithRetry(
-          '/suppliers/bulk',
-          {
-            method: 'PUT',
-            body: JSON.stringify(payload)
-          },
-          { retries: 1 }
-        )
-      );
-      setBulkStatus(`Оновлено: ${Number(result?.updated || 0)}`);
-      await refreshSuppliers();
-    } catch (error) {
-      setBulkStatus(formatError(error));
     }
   };
 
@@ -1007,6 +938,15 @@ export default function App() {
     }
   };
 
+  const resetMappingDraft = () => {
+    setMappingText('{}');
+    setMappingComment('');
+    setMappingHeaderRow('1');
+    setMappingFields(createEmptyMappingFields());
+    setMappingErrors({});
+    setMappingStatus('Новий мапінг: заповніть поля і збережіть');
+  };
+
   const applyBuilderToJson = () => {
     const mapping = buildMappingFromFields(mappingFields);
     setMappingText(toJsonString(mapping));
@@ -1098,53 +1038,42 @@ export default function App() {
     }
   };
 
-  const applyMarkupRuleSet = async () => {
-    const ruleSetId = Number(pricingApplyRuleSetId);
+  const applyRuleSetToSelectedSuppliers = async (ruleSetIdRaw) => {
+    const ruleSetId = Number(ruleSetIdRaw);
     if (!Number.isFinite(ruleSetId) || ruleSetId <= 0) {
-      setPricingStatus('Оберіть rule set');
+      setSupplierBulkPricingStatus('Оберіть тип націнки');
       return;
     }
-    if (pricingApplyScope === 'suppliers' && selectedSupplierIds.length === 0) {
-      setPricingStatus('Для scope=suppliers оберіть supplier_ids');
+    if (selectedSupplierIds.length === 0) {
+      setSupplierBulkPricingStatus('Оберіть хоча б одного постачальника');
       return;
     }
-    const payload = {
-      scope: pricingApplyScope,
-      rule_set_id: ruleSetId
-    };
-    if (pricingApplyScope === 'suppliers') {
-      payload.supplier_ids = selectedSupplierIds;
-    } else {
-      const confirmed = confirmWithKeyword({
-        title: 'Застосування rule set до ALL suppliers',
-        details: 'Це змінить правило націнки для всіх постачальників.',
-        keyword: 'APPLY_ALL_SUPPLIERS'
-      });
-      if (!confirmed) {
-        setPricingStatus('Apply скасовано (не пройдено preflight)');
-        return;
-      }
-    }
-    setPricingStatus('Apply rule set...');
+    setSupplierBulkPricingStatus('Застосування типу націнки...');
     try {
-      const result = await runMutationWithRetryUX(
-        `apply_ruleset_${ruleSetId}_${pricingApplyScope}`,
-        () =>
-          apiFetchWithRetry(
-            '/markup-rule-sets/apply',
-            {
-              method: 'POST',
-              body: JSON.stringify(payload)
-            },
-            { retries: 1 }
-          )
+      const result = await runMutationWithRetryUX(`apply_ruleset_${ruleSetId}_selected_suppliers`, () =>
+        apiFetchWithRetry(
+          '/markup-rule-sets/apply',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              scope: 'suppliers',
+              supplier_ids: selectedSupplierIds,
+              rule_set_id: ruleSetId
+            })
+          },
+          { retries: 1 }
+        )
       );
-      setPricingStatus(
-        `Apply завершено: scope=${result?.scope || '-'}, updated=${Number(result?.updated_suppliers || 0)}`
-      );
+      const updatedSuppliers = Number(result?.updated_suppliers || 0);
+      const statusText = `Тип націнки застосовано: updated=${updatedSuppliers}`;
+      setSupplierBulkPricingStatus(statusText);
+      setPricingStatus(statusText);
+      setPricingApplyRuleSetId(String(ruleSetId));
       await refreshSuppliers();
     } catch (error) {
-      setPricingStatus(formatError(error));
+      const errorText = formatError(error);
+      setSupplierBulkPricingStatus(errorText);
+      setPricingStatus(errorText);
     }
   };
 
@@ -1596,96 +1525,94 @@ export default function App() {
           editingSupplierId={editingSupplierId}
           supplierDraft={supplierDraft}
           supplierErrors={supplierErrors}
-          setBulkDraft={setBulkDraft}
-          bulkDraft={bulkDraft}
           supplierFormStatus={supplierFormStatus}
           saveSupplier={saveSupplier}
-          bulkStatus={bulkStatus}
-          saveSupplierBulk={saveSupplierBulk}
-        />
-      ) : null}
-
-      {tab === 'mapping' ? (
-        <MappingTab
-          selectedSupplierId={selectedSupplierId}
-          setSelectedSupplierId={setSelectedSupplierId}
-          suppliers={suppliers}
-          selectedSourceId={selectedSourceId}
-          setSelectedSourceId={setSelectedSourceId}
-          sources={sources}
-          refreshSources={refreshSources}
-          setEditingSourceId={setEditingSourceId}
-          setSourceDraft={setSourceDraft}
-          setSourceErrors={setSourceErrors}
-          toSourceDraft={toSourceDraft}
-          deleteSource={deleteSource}
-          isReadOnly={isReadOnly}
-          sourcesStatus={sourcesStatus}
-          editingSourceId={editingSourceId}
-          sourceDraft={sourceDraft}
-          sourceTypes={SOURCE_TYPES}
-          sourceErrors={sourceErrors}
-          parseSourceUrlHint={parseSourceUrlHint}
-          saveSource={saveSource}
-          sourceFormStatus={sourceFormStatus}
-          sourceSheets={sourceSheets}
-          selectedSheetName={selectedSheetName}
-          setSelectedSheetName={setSelectedSheetName}
-          mappingHeaderRow={mappingHeaderRow}
-          setMappingHeaderRow={setMappingHeaderRow}
-          loadSourceSheets={loadSourceSheets}
-          loadSourcePreview={loadSourcePreview}
-          sourceSheetsStatus={sourceSheetsStatus}
-          sourcePreview={sourcePreview}
-          mappingKeys={MAPPING_KEYS}
-          mappingFields={mappingFields}
-          updateMappingField={updateMappingField}
-          mappingColumnOptions={mappingColumnOptions}
-          applyBuilderToJson={applyBuilderToJson}
-          refreshMapping={refreshMapping}
-          mappingErrors={mappingErrors}
-          mappingComment={mappingComment}
-          setMappingComment={setMappingComment}
-          mappingText={mappingText}
-          setMappingText={setMappingText}
-          saveMapping={saveMapping}
-          mappingStatus={mappingStatus}
-        />
-      ) : null}
-
-      {tab === 'pricing' ? (
-        <PricingTab
-          refreshMarkupRuleSets={refreshMarkupRuleSets}
-          pricingApplyRuleSetId={pricingApplyRuleSetId}
-          setPricingApplyRuleSetId={setPricingApplyRuleSetId}
           markupRuleSets={markupRuleSets}
-          pricingApplyScope={pricingApplyScope}
-          setPricingApplyScope={setPricingApplyScope}
-          isReadOnly={isReadOnly}
-          applyMarkupRuleSet={applyMarkupRuleSet}
-          setDefaultMarkupRuleSet={setDefaultMarkupRuleSet}
-          startCreateRuleSet={startCreateRuleSet}
           globalRuleSetId={globalRuleSetId}
-          pricingStatus={pricingStatus}
-          startEditRuleSet={startEditRuleSet}
-          ruleSetDraft={ruleSetDraft}
-          setRuleSetDraft={setRuleSetDraft}
-          ruleSetErrors={ruleSetErrors}
-          updateRuleCondition={updateRuleCondition}
-          removeRuleCondition={removeRuleCondition}
-          addRuleCondition={addRuleCondition}
-          saveRuleSet={saveRuleSet}
-          ruleSetStatus={ruleSetStatus}
-          priceOverrideFilters={priceOverrideFilters}
-          setPriceOverrideFilters={setPriceOverrideFilters}
-          refreshPriceOverrides={refreshPriceOverrides}
-          priceOverrideDraft={priceOverrideDraft}
-          setPriceOverrideDraft={setPriceOverrideDraft}
-          priceOverrideErrors={priceOverrideErrors}
-          savePriceOverride={savePriceOverride}
-          toPriceOverrideDraft={toPriceOverrideDraft}
-          priceOverrideStatus={priceOverrideStatus}
-          priceOverrides={priceOverrides}
+          applyRuleSetToSelectedSuppliers={applyRuleSetToSelectedSuppliers}
+          supplierBulkPricingStatus={supplierBulkPricingStatus}
+          mappingPanel={(
+            <MappingTab
+              selectedSupplierId={selectedSupplierId}
+              setSelectedSupplierId={setSelectedSupplierId}
+              suppliers={suppliers}
+              selectedSourceId={selectedSourceId}
+              setSelectedSourceId={setSelectedSourceId}
+              sources={sources}
+              refreshSources={refreshSources}
+              setEditingSourceId={setEditingSourceId}
+              setSourceDraft={setSourceDraft}
+              setSourceErrors={setSourceErrors}
+              toSourceDraft={toSourceDraft}
+              deleteSource={deleteSource}
+              isReadOnly={isReadOnly}
+              sourcesStatus={sourcesStatus}
+              editingSourceId={editingSourceId}
+              sourceDraft={sourceDraft}
+              sourceTypes={SOURCE_TYPES}
+              sourceErrors={sourceErrors}
+              parseSourceUrlHint={parseSourceUrlHint}
+              saveSource={saveSource}
+              sourceFormStatus={sourceFormStatus}
+              sourceSheets={sourceSheets}
+              selectedSheetName={selectedSheetName}
+              setSelectedSheetName={setSelectedSheetName}
+              mappingHeaderRow={mappingHeaderRow}
+              setMappingHeaderRow={setMappingHeaderRow}
+              loadSourceSheets={loadSourceSheets}
+              loadSourcePreview={loadSourcePreview}
+              sourceSheetsStatus={sourceSheetsStatus}
+              sourcePreview={sourcePreview}
+              mappingKeys={MAPPING_KEYS}
+              mappingFields={mappingFields}
+              updateMappingField={updateMappingField}
+              mappingColumnOptions={mappingColumnOptions}
+              applyBuilderToJson={applyBuilderToJson}
+              refreshMapping={refreshMapping}
+              mappingErrors={mappingErrors}
+              mappingComment={mappingComment}
+              setMappingComment={setMappingComment}
+              mappingText={mappingText}
+              setMappingText={setMappingText}
+              saveMapping={saveMapping}
+              mappingStatus={mappingStatus}
+              resetMappingDraft={resetMappingDraft}
+              supplierLocked
+              supplierLockedName={selectedSupplierName}
+            />
+          )}
+          pricingPanel={(
+            <PricingTab
+              refreshMarkupRuleSets={refreshMarkupRuleSets}
+              pricingApplyRuleSetId={pricingApplyRuleSetId}
+              setPricingApplyRuleSetId={setPricingApplyRuleSetId}
+              markupRuleSets={markupRuleSets}
+              isReadOnly={isReadOnly}
+              setDefaultMarkupRuleSet={setDefaultMarkupRuleSet}
+              startCreateRuleSet={startCreateRuleSet}
+              globalRuleSetId={globalRuleSetId}
+              pricingStatus={pricingStatus}
+              startEditRuleSet={startEditRuleSet}
+              ruleSetDraft={ruleSetDraft}
+              setRuleSetDraft={setRuleSetDraft}
+              ruleSetErrors={ruleSetErrors}
+              updateRuleCondition={updateRuleCondition}
+              removeRuleCondition={removeRuleCondition}
+              addRuleCondition={addRuleCondition}
+              saveRuleSet={saveRuleSet}
+              ruleSetStatus={ruleSetStatus}
+              priceOverrideFilters={priceOverrideFilters}
+              setPriceOverrideFilters={setPriceOverrideFilters}
+              refreshPriceOverrides={refreshPriceOverrides}
+              priceOverrideDraft={priceOverrideDraft}
+              setPriceOverrideDraft={setPriceOverrideDraft}
+              priceOverrideErrors={priceOverrideErrors}
+              savePriceOverride={savePriceOverride}
+              toPriceOverrideDraft={toPriceOverrideDraft}
+              priceOverrideStatus={priceOverrideStatus}
+              priceOverrides={priceOverrides}
+            />
+          )}
         />
       ) : null}
 

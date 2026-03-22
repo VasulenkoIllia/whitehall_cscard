@@ -279,17 +279,6 @@ export function createHttpServer(appContext: AppContext) {
     }
   });
 
-  app.put('/admin/api/suppliers/bulk', authMw.requireRole('admin'), async (req: Request, res: Response) => {
-    try {
-      const result = await catalogAdmin.bulkUpdateSuppliers(req.body || {});
-      return res.json(result);
-    } catch (err) {
-      return res
-        .status(readErrorStatus(err))
-        .json({ error: readErrorMessage(err, 'supplier_bulk_update_error') });
-    }
-  });
-
   app.put('/admin/api/suppliers/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
     try {
       const supplierId = parseRequiredPositiveInt(req.params.id, 'supplier id');
@@ -727,7 +716,7 @@ export function createHttpServer(appContext: AppContext) {
       let offset = 0;
 
       startCsvDownload(res, 'merged_export');
-      writeCsvRow(res, ['article', 'size', 'quantity', 'price', 'extra', 'supplier', 'created_at']);
+      writeCsvRow(res, ['article', 'size', 'quantity', 'price', 'extra', 'comment', 'supplier', 'created_at']);
 
       while (true) {
         // eslint-disable-next-line no-await-in-loop
@@ -750,6 +739,7 @@ export function createHttpServer(appContext: AppContext) {
             row.quantity,
             row.price,
             row.extra,
+            row.comment,
             row.supplier_name,
             row.created_at
           ]);
@@ -779,7 +769,7 @@ export function createHttpServer(appContext: AppContext) {
       let offset = 0;
 
       startCsvDownload(res, 'final_export');
-      writeCsvRow(res, ['article', 'size', 'quantity', 'price_base', 'price_final', 'extra', 'supplier']);
+      writeCsvRow(res, ['article', 'size', 'quantity', 'price_base', 'price_final', 'extra', 'comment', 'supplier']);
 
       while (true) {
         // eslint-disable-next-line no-await-in-loop
@@ -804,6 +794,7 @@ export function createHttpServer(appContext: AppContext) {
             row.price_base,
             row.price_final,
             row.extra,
+            row.comment,
             row.supplier_name
           ]);
         }
@@ -842,6 +833,7 @@ export function createHttpServer(appContext: AppContext) {
         'price_base',
         'price_final',
         'extra',
+        'comment',
         'supplier',
         'sku_article',
         'store_article',
@@ -871,6 +863,7 @@ export function createHttpServer(appContext: AppContext) {
             row.price_base,
             row.price_final,
             row.extra,
+            row.comment,
             row.supplier_name,
             row.sku_article,
             row.store_article,

@@ -6,10 +6,7 @@ export function PricingTab({
   pricingApplyRuleSetId,
   setPricingApplyRuleSetId,
   markupRuleSets,
-  pricingApplyScope,
-  setPricingApplyScope,
   isReadOnly,
-  applyMarkupRuleSet,
   setDefaultMarkupRuleSet,
   startCreateRuleSet,
   globalRuleSetId,
@@ -37,13 +34,18 @@ export function PricingTab({
   return (
     <div className="grid">
       <Section
-        title="Rule sets націнки"
-        subtitle="Вибір правила за замовчуванням та застосування до постачальників"
-        extra={<button className="btn" onClick={refreshMarkupRuleSets}>Оновити rule sets</button>}
+        title="Типи націнки (Rule Sets)"
+        subtitle="Створіть правило, відредагуйте діапазони і задайте глобальний default"
+        extra={
+          <div className="actions">
+            <button className="btn" onClick={refreshMarkupRuleSets}>Оновити список</button>
+            <button className="btn primary" onClick={startCreateRuleSet}>Новий тип націнки</button>
+          </div>
+        }
       >
         <div className="form-row">
           <div>
-            <label>Rule set</label>
+            <label>Rule set для default</label>
             <select
               value={pricingApplyRuleSetId}
               onChange={(event) => setPricingApplyRuleSetId(event.target.value)}
@@ -57,18 +59,8 @@ export function PricingTab({
             </select>
           </div>
           <div>
-            <label>Область застосування</label>
-            <select value={pricingApplyScope} onChange={(event) => setPricingApplyScope(event.target.value)}>
-              <option value="suppliers">Вибрані постачальники</option>
-              <option value="all_suppliers">Усі постачальники</option>
-            </select>
-          </div>
-          <div>
             <label>&nbsp;</label>
             <div className="actions">
-              <button className="btn" disabled={isReadOnly} onClick={applyMarkupRuleSet}>
-                Застосувати
-              </button>
               <button
                 className="btn"
                 disabled={isReadOnly || !pricingApplyRuleSetId}
@@ -76,18 +68,10 @@ export function PricingTab({
               >
                 Зробити default
               </button>
-              <button className="btn" onClick={startCreateRuleSet}>
-                Новий rule set
-              </button>
             </div>
           </div>
         </div>
-        <div className="status-line">Поточний default rule set: {globalRuleSetId || '-'}</div>
-        {pricingApplyScope === 'all_suppliers' ? (
-          <div className="preflight-warning">
-            Для scope=all_suppliers система запросить preflight підтвердження.
-          </div>
-        ) : null}
+        <div className="status-line">Поточний default rule set: #{globalRuleSetId || '-'}</div>
         <div className="status-line">{pricingStatus}</div>
 
         <table>
@@ -121,8 +105,12 @@ export function PricingTab({
                     <button className="btn" onClick={() => startEditRuleSet(ruleSet.id)}>
                       Редагувати
                     </button>
-                    <button className="btn" onClick={() => setPricingApplyRuleSetId(String(ruleSet.id))}>
-                      Обрати
+                    <button
+                      className="btn"
+                      disabled={isReadOnly}
+                      onClick={() => setDefaultMarkupRuleSet(String(ruleSet.id))}
+                    >
+                      Зробити default
                     </button>
                   </div>
                 </td>

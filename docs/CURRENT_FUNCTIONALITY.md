@@ -6,9 +6,9 @@
 - Frontend перенесення на React закрито по плану (див. `docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md`, Phase 5).
 - У React-адмінці вже реалізовано ключові операторські екрани:
   - `Огляд` (jobs/readiness/actions),
-  - `Постачальники` (search/sort + CRUD + bulk update),
-  - `Джерела та мапінг` (source CRUD + source sheets/preview + mapping builder + JSON),
-  - `Націнки та override` (markup rule sets: list/create/update/default/apply + conditions editor, price overrides: list/upsert/update),
+  - `Постачальники` (search/sort + select-all + CRUD + модалка мапінгу в межах 1 постачальника + масове призначення rule set для вибраних),
+  - `Націнки` (markup rule sets: list/create/update/default + conditions editor),
+  - `Override ціни` (price overrides: list/upsert/update),
   - `Дані` (merged/final/compare preview + export + server filters/sort/paging controls),
   - `Джоби та логи` (list + cancel + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
   - додано form-level валідації і inline помилки для операторських форм.
@@ -27,7 +27,7 @@
 
 ## Catalog admin API (backend)
 - Доступні CRUD-операції для:
-  - `suppliers` (включно з bulk update, search і sort)
+  - `suppliers` (search і sort)
   - `sources`
   - `mappings` (latest get/save per supplier/source, поле `comment`)
 - Доступні API для pricing-керування:
@@ -51,7 +51,10 @@
   - `search=<рядок>` (пошук по `supplier.name`, case-insensitive)
   - `sort=name_asc|name_desc|id_asc` (A-Я / Я-А / дефолт по id)
 - `POST /admin/api/mappings/:supplierId` підтримує поле:
-  - `comment` — операторський коментар до mapping-конфігурації
+  - `comment` — технічна примітка до mapping-конфігурації
+- У mapping JSON підтримується окреме поле `comment` (як бізнес-дані товару):
+  - зберігається у `products_raw.comment_text` / `products_final.comment_text`
+  - відображається у `merged/final/compare preview` та CSV export
 - `POST /admin/api/markup-rule-sets/default` підтримує глобальний default rule set
   - персистенс у `markup_settings`
   - створення нового supplier без explicit `markup_rule_set_id` бере global default (або first active fallback)

@@ -392,73 +392,6 @@ export class CatalogAdminService {
     return result.rows[0];
   }
 
-  async bulkUpdateSuppliers(payload: {
-    supplier_ids: Array<number | string>;
-    markup_percent?: number;
-    min_profit_enabled?: boolean;
-    min_profit_amount?: number;
-  }): Promise<{ updated: number }> {
-    if (!Array.isArray(payload.supplier_ids) || payload.supplier_ids.length === 0) {
-      throw createBadRequest('supplier_ids are required');
-    }
-    const ids = payload.supplier_ids
-      .map((value) => Number(value))
-      .filter((value) => Number.isFinite(value))
-      .map((value) => Math.trunc(value))
-      .filter((value) => value > 0);
-    if (!ids.length) {
-      throw createBadRequest('supplier_ids are invalid');
-    }
-
-    const hasMarkup = Object.prototype.hasOwnProperty.call(payload, 'markup_percent');
-    const hasMinProfitEnabled = Object.prototype.hasOwnProperty.call(payload, 'min_profit_enabled');
-    const hasMinProfitAmount = Object.prototype.hasOwnProperty.call(payload, 'min_profit_amount');
-
-    const updates: Record<string, unknown> = {};
-    if (hasMarkup) {
-      if (!Number.isFinite(Number(payload.markup_percent))) {
-        throw createBadRequest('markup_percent is required');
-      }
-      updates.markup_percent = Number(payload.markup_percent);
-    }
-
-    if (hasMinProfitEnabled && typeof payload.min_profit_enabled !== 'boolean') {
-      throw createBadRequest('min_profit_enabled is invalid');
-    }
-
-    if (payload.min_profit_enabled === false) {
-      updates.min_profit_enabled = false;
-      updates.min_profit_amount = 0;
-    } else {
-      if (payload.min_profit_enabled === true) {
-        updates.min_profit_enabled = true;
-      }
-      if (hasMinProfitAmount) {
-        if (!Number.isFinite(Number(payload.min_profit_amount))) {
-          throw createBadRequest('min_profit_amount is invalid');
-        }
-        updates.min_profit_amount = Math.max(0, Number(payload.min_profit_amount));
-      }
-    }
-
-    const values: unknown[] = [];
-    const updateClauses = buildUpdateClause(updates, values);
-    if (!updateClauses.length) {
-      throw createBadRequest('no fields to update');
-    }
-    values.push(ids);
-    const result = await this.pool.query(
-      `UPDATE suppliers
-       SET ${updateClauses.join(', ')}
-       WHERE id = ANY($${values.length}::bigint[])
-       RETURNING id`,
-      values
-    );
-    return {
-      updated: result.rowCount || 0
-    };
-  }
-
   async updateSupplier(supplierId: number, payload: SupplierUpdatePayload): Promise<Record<string, unknown>> {
     const normalizedId = Math.trunc(Number(supplierId));
     if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
@@ -1550,7 +1483,9 @@ export class CatalogAdminService {
     if (search) {
       values.push(`%${search}%`);
       const index = values.length;
-      whereParts.push(`(pr.article ILIKE $${index} OR pr.extra ILIKE $${index})`);
+      whereParts.push(
+        `(pr.article ILIKE $${index} OR pr.extra ILIKE $${index} OR pr.comment_text ILIKE $${index})`
+      );
     }
 
     const sort = normalizeSort(options.sort, 'article_asc');
@@ -1563,7 +1498,7 @@ export class CatalogAdminService {
 
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     const result = await this.pool.query(
-      `SELECT pr.article, pr.size, pr.quantity, pr.price, pr.extra,
+      `SELECT pr.article, pr.size, pr.quantity, pr.price, pr.extra, pr.comment_text AS comment,
               sp.name AS supplier_name, pr.created_at, pr.job_id,
               COUNT(*) OVER() AS total
        FROM products_raw pr
@@ -1604,7 +1539,10 @@ export class CatalogAdminService {
       values.push(`%${search}%`);
       const index = values.length;
       whereParts.push(
-        `(pf.article ILIKE $${index} OR pf.extra ILIKE $${index} OR sp.name ILIKE $${index})`
+        `(pf.article ILIKE $${index}
+          OR pf.extra ILIKE $${index}
+          OR pf.comment_text ILIKE $${index}
+          OR sp.name ILIKE $${index})`
       );
     }
     if (supplierId) {
@@ -1624,7 +1562,7 @@ export class CatalogAdminService {
     const result = await this.pool.query(
       `SELECT pf.article, pf.size, pf.quantity, pf.price_base,
               COALESCE(po.price_final, pf.price_final) AS price_final,
-              pf.extra, sp.name AS supplier_name, pf.created_at, pf.job_id,
+              pf.extra, pf.comment_text AS comment, sp.name AS supplier_name, pf.created_at, pf.job_id,
               po.id AS override_id, po.price_final AS override_price, po.notes AS override_notes,
               COUNT(*) OVER() AS total
        FROM products_final pf
@@ -1672,6 +1610,7 @@ export class CatalogAdminService {
       whereParts.push(
         `(base.article ILIKE $${index}
           OR base.extra ILIKE $${index}
+          OR base.comment ILIKE $${index}
           OR base.supplier_name ILIKE $${index}
           OR base.sku_article ILIKE $${index})`
       );
@@ -1692,6 +1631,7 @@ export class CatalogAdminService {
            pf.price_base,
            COALESCE(po.price_final, pf.price_final) AS price_final,
            pf.extra,
+           pf.comment_text AS comment,
            sp.name AS supplier_name,
            CASE
              WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
@@ -1715,6 +1655,7 @@ export class CatalogAdminService {
          base.price_base,
          base.price_final,
          base.extra,
+         base.comment,
          base.supplier_name,
          base.sku_article,
          sm_base.article AS store_article,

@@ -43,6 +43,7 @@ export interface ImportBatchRow {
   price: number | null;
   priceWithMarkup: number | null;
   extra: string | null;
+  commentText: string | null;
   rowData: unknown[] | null;
 }
 
@@ -83,7 +84,7 @@ export async function insertRawBatch(pool: Pool, rows: ImportBatchRow[]): Promis
 
   const values: (string | number | null)[] = [];
   const placeholders = rows.map((row, idx) => {
-    const base = idx * 10;
+    const base = idx * 11;
     values.push(
       row.jobId,
       row.supplierId,
@@ -94,14 +95,15 @@ export async function insertRawBatch(pool: Pool, rows: ImportBatchRow[]): Promis
       row.price,
       row.priceWithMarkup,
       row.extra,
+      row.commentText,
       JSON.stringify(row.rowData ?? null)
     );
-    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`;
+    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`;
   });
 
   await pool.query(
     `INSERT INTO products_raw
-       (job_id, supplier_id, source_id, article, size, quantity, price, price_with_markup, extra, row_data)
+       (job_id, supplier_id, source_id, article, size, quantity, price, price_with_markup, extra, comment_text, row_data)
      VALUES ${placeholders.join(',')}
      ON CONFLICT DO NOTHING`,
     values
@@ -715,8 +717,10 @@ export class ImporterDb implements SourceImporter {
 
         const sizeValue = resolveMappingValue(activeMapping.size, rowValues);
         const extraValue = resolveMappingValue(activeMapping.extra, rowValues);
+        const commentValue = resolveMappingValue(activeMapping.comment, rowValues);
         const size = sizeValue ? normalizeSize(sizeValue) : null;
         const extra = extraValue ? String(extraValue || '').trim() : '';
+        const commentText = commentValue ? String(commentValue || '').trim() : '';
 
         batch.push({
           jobId,
@@ -730,6 +734,7 @@ export class ImporterDb implements SourceImporter {
             ? computePriceWithMarkup(priceInfo.value, pricingContext)
             : null,
           extra,
+          commentText: commentText || null,
           rowData: rows[i]
         });
 

@@ -476,6 +476,83 @@ pre {
 .mini-tabs {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.selected-summary {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d9e5f6;
+  border-radius: 12px;
+  background: #f9fbff;
+}
+
+.selected-summary-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.selected-chip-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.supplier-chip {
+  margin-left: 0;
+  color: #21406a;
+  border-color: #c2d4ef;
+  background: #eef5ff;
+}
+
+.inline-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: #466087;
+}
+
+.inline-checkbox input {
+  width: auto;
+  margin: 0;
+}
+
+.column-header-with-sort {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inline-select {
+  width: 130px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.bulk-pricing-inline {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.context-inline {
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #d9e5f6;
+  border-radius: 10px;
+  background: #f9fbff;
 }
 
 .empty-preview {
@@ -524,6 +601,31 @@ pre {
   background: #fffaf1;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 32, 58, 0.38);
+  display: grid;
+  place-items: center;
+  z-index: 1400;
+  padding: 18px;
+}
+
+.modal-card {
+  width: min(920px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid #d6e0f0;
+  border-radius: 14px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 24px 54px rgba(16, 32, 58, 0.24);
+}
+
+.modal-card-wide {
+  width: min(1280px, calc(100vw - 36px));
+}
+
 .details-block {
   border: 1px solid #d7e3f5;
   border-radius: 12px;
@@ -570,6 +672,10 @@ pre {
   }
 
   .mapping-row {
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-pricing-inline {
     grid-template-columns: 1fr;
   }
 }
