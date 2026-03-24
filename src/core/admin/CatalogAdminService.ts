@@ -181,6 +181,46 @@ function normalizeMarkupConditions(value: unknown): NormalizedMarkupCondition[] 
     });
   }
 
+  const activeItems = items
+    .map((item, index) => ({
+      ...item,
+      source_index: index + 1
+    }))
+    .filter((item) => item.is_active === true);
+
+  const priorityMap = new Map<number, number[]>();
+  for (let index = 0; index < activeItems.length; index += 1) {
+    const item = activeItems[index];
+    if (!priorityMap.has(item.priority)) {
+      priorityMap.set(item.priority, [item.source_index]);
+    } else {
+      priorityMap.get(item.priority)?.push(item.source_index);
+    }
+  }
+  for (const [priority, sourceIndexes] of priorityMap.entries()) {
+    if (sourceIndexes.length > 1) {
+      throw createBadRequest(
+        `condition #${sourceIndexes[0]}: duplicate priority ${priority} with condition #${sourceIndexes[1]}`
+      );
+    }
+  }
+
+  for (let leftIndex = 0; leftIndex < activeItems.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < activeItems.length; rightIndex += 1) {
+      const left = activeItems[leftIndex];
+      const right = activeItems[rightIndex];
+      const leftTo = left.price_to === null ? Number.POSITIVE_INFINITY : left.price_to;
+      const rightTo = right.price_to === null ? Number.POSITIVE_INFINITY : right.price_to;
+      const intersects = left.price_from < rightTo && right.price_from < leftTo;
+      if (!intersects) {
+        continue;
+      }
+      throw createBadRequest(
+        `condition #${left.source_index}: overlaps with condition #${right.source_index}`
+      );
+    }
+  }
+
   return items.sort((a, b) => {
     if (a.priority !== b.priority) {
       return a.priority - b.priority;
@@ -658,6 +698,56 @@ export class CatalogAdminService {
        ORDER BY id DESC
        LIMIT 1`,
       [normalizedSupplierId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async listMappings(
+    supplierId: number,
+    sourceId?: number | null
+  ): Promise<Record<string, unknown>[]> {
+    const normalizedSupplierId = Math.trunc(Number(supplierId));
+    if (!Number.isFinite(normalizedSupplierId) || normalizedSupplierId <= 0) {
+      throw createBadRequest('supplierId is invalid');
+    }
+    const normalizedSourceId = toOptionalFiniteNumber(sourceId);
+    if (normalizedSourceId !== null && normalizedSourceId > 0) {
+      const result = await this.pool.query(
+        `SELECT id, supplier_id, source_id, mapping, header_row, mapping_meta, comment, created_at
+         FROM column_mappings
+         WHERE supplier_id = $1 AND source_id = $2
+         ORDER BY id DESC`,
+        [normalizedSupplierId, Math.trunc(normalizedSourceId)]
+      );
+      return result.rows;
+    }
+    const result = await this.pool.query(
+      `SELECT id, supplier_id, source_id, mapping, header_row, mapping_meta, comment, created_at
+       FROM column_mappings
+       WHERE supplier_id = $1
+       ORDER BY id DESC`,
+      [normalizedSupplierId]
+    );
+    return result.rows;
+  }
+
+  async deleteMapping(
+    supplierId: number,
+    mappingId: number
+  ): Promise<Record<string, unknown> | null> {
+    const normalizedSupplierId = Math.trunc(Number(supplierId));
+    const normalizedMappingId = Math.trunc(Number(mappingId));
+    if (!Number.isFinite(normalizedSupplierId) || normalizedSupplierId <= 0) {
+      throw createBadRequest('supplierId is invalid');
+    }
+    if (!Number.isFinite(normalizedMappingId) || normalizedMappingId <= 0) {
+      throw createBadRequest('mappingId is invalid');
+    }
+    const result = await this.pool.query(
+      `DELETE FROM column_mappings
+       WHERE id = $1 AND supplier_id = $2
+       RETURNING id, supplier_id, source_id, mapping, header_row, mapping_meta, comment, created_at`,
+      [normalizedMappingId, normalizedSupplierId]
     );
     return result.rows[0] || null;
   }

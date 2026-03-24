@@ -266,6 +266,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         name: 'update_pipeline',
         enabled: config.scheduler.updatePipeline.enabled,
         intervalMs: config.scheduler.updatePipeline.intervalMinutes * 60 * 1000,
+        cron: null,
         runOnStartup: config.scheduler.updatePipeline.runOnStartup,
         action: () => jobRunner.runUpdatePipeline(schedulerRuntimeState.updatePipelineSupplier)
       },
@@ -273,6 +274,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         name: 'store_mirror_sync',
         enabled: config.scheduler.storeMirrorSync.enabled,
         intervalMs: config.scheduler.storeMirrorSync.intervalMinutes * 60 * 1000,
+        cron: null,
         runOnStartup: config.scheduler.storeMirrorSync.runOnStartup,
         action: () => jobRunner.runStoreMirrorSync()
       },
@@ -280,6 +282,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         name: 'cleanup',
         enabled: config.scheduler.cleanup.enabled,
         intervalMs: config.scheduler.cleanup.intervalMinutes * 60 * 1000,
+        cron: null,
         runOnStartup: config.scheduler.cleanup.runOnStartup,
         action: () => jobRunner.runCleanup(config.base.cleanupRetentionDays)
       }

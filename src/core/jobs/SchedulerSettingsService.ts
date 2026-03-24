@@ -80,6 +80,16 @@ function cronToIntervalMinutes(cron: string): number | null {
     return 24 * 60;
   }
 
+  const multiDaily = normalized.match(/^(\d+)\s+(\d+(?:,\d+)+)\s+\*\s+\*\s+\*$/);
+  if (multiDaily) {
+    return 24 * 60;
+  }
+
+  const weeklyHours = normalized.match(/^(\d+)\s+(\d+(?:,\d+)*)\s+\*\s+\*\s+(\d+(?:,\d+)*)$/);
+  if (weeklyHours) {
+    return 24 * 60;
+  }
+
   return null;
 }
 
@@ -190,6 +200,7 @@ export class SchedulerSettingsService {
       intervalMinutes: Number.isFinite(Number(row.interval_minutes))
         ? Math.max(1, Math.trunc(Number(row.interval_minutes)))
         : 60,
+      cron: String(row.cron || '').trim() || null,
       runOnStartup: row.run_on_startup === true
     }));
     await this.scheduler.updateTasks(updates);

@@ -5,12 +5,14 @@
 - `Horoshop` тимчасово винесено за межі поточного етапу.
 - Frontend перенесення на React закрито по плану (див. `docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md`, Phase 5).
 - У React-адмінці вже реалізовано ключові операторські екрани:
-  - `Огляд` (jobs/readiness/actions),
+  - `Огляд` (системні KPI/readiness + технічний JSON snapshot без операторських дій),
+  - `Ручне керування` (покроковий pipeline-run + розширені операторські дії),
   - `Постачальники` (search/sort + select-all + CRUD + модалка мапінгу в межах 1 постачальника + масове призначення rule set для вибраних),
   - `Націнки` (markup rule sets: list/create/update/default + conditions editor),
   - `Override ціни` (price overrides: list/upsert/update),
   - `Дані` (merged/final/compare preview + export + server filters/sort/paging controls),
-  - `Джоби та логи` (list + cancel + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
+  - `Крон` (runtime-настройки scheduler: `update_pipeline`, `store_mirror_sync`, `cleanup`; режими `кожні N годин`, `щодня у вибрані години`, `по днях тижня і годинах`),
+  - `Моніторинг` (jobs/logs + 5 останніх `error` з датою + modal-деталі помилки + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
   - додано form-level валідації і inline помилки для операторських форм.
   - додано preflight-підтвердження для destructive дій (`cleanup`, `delete supplier/source`, `apply all_suppliers`).
   - додано retry UX для критичних mutating API дій (збереження/апдейти/джоби).
@@ -33,6 +35,13 @@
 - Доступні API для pricing-керування:
   - `markup rule sets` (list/create/update/default/apply to suppliers)
   - `price overrides` (list/upsert/update)
+  - Правила націнки працюють з інтервалами у форматі `[price_from; price_to)`:
+    - нижня межа включена, верхня межа не включена;
+    - `price_to = null` означає відкритий інтервал `до +∞`.
+  - Для активних умов rule set діють guardrails (frontend + backend):
+    - заборонено перетин активних діапазонів;
+    - заборонено дублювання `priority` між активними умовами.
+  - Валідація блокує збереження неоднозначної конфігурації і повертає помилку з номером умови (`condition #N ...`).
 - Доступні операційні read API:
   - `logs` (global/by job/by level)
   - `stats` (counts + last pipeline/import jobs)

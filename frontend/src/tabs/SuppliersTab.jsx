@@ -1,6 +1,73 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Section, Tag } from '../components/ui';
 
+const CYRILLIC_TO_LATIN = {
+  а: 'a',
+  б: 'b',
+  в: 'v',
+  г: 'h',
+  ґ: 'g',
+  д: 'd',
+  е: 'e',
+  є: 'ye',
+  ж: 'zh',
+  з: 'z',
+  и: 'y',
+  і: 'i',
+  ї: 'yi',
+  й: 'y',
+  к: 'k',
+  л: 'l',
+  м: 'm',
+  н: 'n',
+  о: 'o',
+  п: 'p',
+  р: 'r',
+  с: 's',
+  т: 't',
+  у: 'u',
+  ф: 'f',
+  х: 'kh',
+  ц: 'ts',
+  ч: 'ch',
+  ш: 'sh',
+  щ: 'shch',
+  ь: '',
+  ю: 'yu',
+  я: 'ya',
+  ё: 'yo',
+  э: 'e',
+  ы: 'y',
+  ъ: ''
+};
+
+const normalizeSupplierSortKey = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split('')
+    .map((char) => CYRILLIC_TO_LATIN[char] ?? char)
+    .join('')
+    .replace(/\s+/g, ' ');
+
+const compareSupplierNameAsc = (left, right) => {
+  const leftKey = normalizeSupplierSortKey(left?.name);
+  const rightKey = normalizeSupplierSortKey(right?.name);
+  const byKey = leftKey.localeCompare(rightKey, 'en', {
+    sensitivity: 'base',
+    numeric: true
+  });
+  if (byKey !== 0) {
+    return byKey;
+  }
+  return String(left?.name || '').localeCompare(String(right?.name || ''), 'uk', {
+    sensitivity: 'base',
+    numeric: true
+  });
+};
+
 export function SuppliersTab({
   refreshSuppliers,
   supplierSearch,
@@ -34,7 +101,10 @@ export function SuppliersTab({
   const [isSupplierModalOpen, setSupplierModalOpen] = useState(false);
   const [isMappingModalOpen, setMappingModalOpen] = useState(false);
   const [mappingModalSupplier, setMappingModalSupplier] = useState(null);
+  const [isBulkRuleSetModalOpen, setBulkRuleSetModalOpen] = useState(false);
   const [bulkRuleSetId, setBulkRuleSetId] = useState('');
+  const [bulkTargetSupplierIds, setBulkTargetSupplierIds] = useState([]);
+  const [bulkSupplierSearch, setBulkSupplierSearch] = useState('');
   const selectAllRef = useRef(null);
 
   const allSupplierRows = useMemo(() => (Array.isArray(suppliers) ? suppliers : []), [suppliers]);
@@ -48,15 +118,11 @@ export function SuppliersTab({
       );
     }
     if (supplierSort === 'name_desc') {
-      rows.sort((a, b) =>
-        String(b.name || '').localeCompare(String(a.name || ''), 'uk', { sensitivity: 'base' })
-      );
+      rows.sort((a, b) => compareSupplierNameAsc(b, a));
       return rows;
     }
     if (supplierSort === 'name_asc') {
-      rows.sort((a, b) =>
-        String(a.name || '').localeCompare(String(b.name || ''), 'uk', { sensitivity: 'base' })
-      );
+      rows.sort((a, b) => compareSupplierNameAsc(a, b));
       return rows;
     }
     rows.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
@@ -64,7 +130,6 @@ export function SuppliersTab({
   }, [allSupplierRows, supplierSearch, supplierSort]);
 
   const selectedCount = selectedSupplierIds.length;
-
   const selectedSuppliers = useMemo(
     () =>
       allSupplierRows.filter((supplier) =>
@@ -72,6 +137,31 @@ export function SuppliersTab({
       ),
     [allSupplierRows, selectedSupplierIds]
   );
+  const activeVisibleCount = supplierRows.filter((supplier) => Boolean(supplier.is_active)).length;
+  const inactiveVisibleCount = Math.max(supplierRows.length - activeVisibleCount, 0);
+  const uniqueVisibleRuleSets = new Set(
+    supplierRows
+      .map((supplier) => String(supplier.markup_rule_set_name || '').trim())
+      .filter(Boolean)
+  ).size;
+
+  const bulkTargetSuppliers = useMemo(
+    () =>
+      allSupplierRows.filter((supplier) =>
+        bulkTargetSupplierIds.includes(String(supplier.id))
+      ),
+    [allSupplierRows, bulkTargetSupplierIds]
+  );
+
+  const filteredBulkSuppliers = useMemo(() => {
+    const normalizedSearch = String(bulkSupplierSearch || '').trim().toLowerCase();
+    if (!normalizedSearch) {
+      return allSupplierRows;
+    }
+    return allSupplierRows.filter((supplier) =>
+      String(supplier.name || '').toLowerCase().includes(normalizedSearch)
+    );
+  }, [allSupplierRows, bulkSupplierSearch]);
 
   const globalRuleSet = useMemo(
     () =>
@@ -135,6 +225,44 @@ export function SuppliersTab({
     setMappingModalOpen(true);
   };
 
+  const openBulkRuleSetModal = () => {
+    const normalizedSelectedIds = selectedSupplierIds.filter((id) =>
+      allSupplierRows.some((supplier) => String(supplier.id) === String(id))
+    );
+    setBulkTargetSupplierIds(normalizedSelectedIds);
+    setBulkSupplierSearch('');
+    setBulkRuleSetModalOpen(true);
+  };
+
+  const closeBulkRuleSetModal = () => {
+    setBulkRuleSetModalOpen(false);
+  };
+
+  const submitBulkRuleSet = async () => {
+    const success = await applyRuleSetToSelectedSuppliers(bulkRuleSetId, bulkTargetSupplierIds);
+    if (success) {
+      setBulkRuleSetModalOpen(false);
+    }
+  };
+
+  const toggleBulkTargetSupplier = (supplierId, isChecked) => {
+    setBulkTargetSupplierIds((prev) => {
+      const normalizedId = String(supplierId);
+      if (isChecked) {
+        return prev.includes(normalizedId) ? prev : [...prev, normalizedId];
+      }
+      return prev.filter((value) => value !== normalizedId);
+    });
+  };
+
+  const selectAllBulkTargets = () => {
+    setBulkTargetSupplierIds(allSupplierRows.map((supplier) => String(supplier.id)));
+  };
+
+  const clearBulkTargets = () => {
+    setBulkTargetSupplierIds([]);
+  };
+
   const toggleSupplierSelection = (supplierId, isChecked) => {
     setSelectedSupplierIds((prev) => {
       const normalizedId = String(supplierId);
@@ -193,164 +321,175 @@ export function SuppliersTab({
       {activeInnerTab === 'suppliers' ? (
         <Section
           title="Постачальники"
-          subtitle="Керуйте постачальниками та обирайте їх для дій у вкладці Націнки"
-          extra={
-            <div className="actions">
-              <button className="btn" onClick={refreshSuppliers}>Оновити список</button>
-              <button className="btn primary" disabled={isReadOnly} onClick={openCreateSupplierModal}>
-                Новий постачальник
-              </button>
-            </div>
-          }
+          subtitle="Пошук і керування постачальниками"
         >
-          <div className="form-row">
-            <div>
-              <label>Пошук</label>
+          <div className="suppliers-kpi-grid">
+            <div className="suppliers-kpi-card">
+              <div className="suppliers-kpi-label">У списку</div>
+              <div className="suppliers-kpi-value">{supplierRows.length}</div>
+            </div>
+            <div className="suppliers-kpi-card">
+              <div className="suppliers-kpi-label">Активні</div>
+              <div className="suppliers-kpi-value">{activeVisibleCount}</div>
+            </div>
+            <div className="suppliers-kpi-card">
+              <div className="suppliers-kpi-label">Неактивні</div>
+              <div className="suppliers-kpi-value">{inactiveVisibleCount}</div>
+            </div>
+            <div className="suppliers-kpi-card">
+              <div className="suppliers-kpi-label">Типи націнок</div>
+              <div className="suppliers-kpi-value">{uniqueVisibleRuleSets}</div>
+            </div>
+          </div>
+
+          <div className="suppliers-toolbar">
+            <div className="suppliers-toolbar-search">
               <input
-                placeholder="Назва постачальника..."
+                placeholder="Пошук постачальника..."
                 value={supplierSearch}
                 onChange={(event) => setSupplierSearch(event.target.value)}
               />
             </div>
+            <div className="actions suppliers-toolbar-actions">
+              <button className="btn primary" disabled={isReadOnly} onClick={openCreateSupplierModal}>
+                Новий постачальник
+              </button>
+              <button className="btn" disabled={isReadOnly || markupRuleSets.length === 0} onClick={openBulkRuleSetModal}>
+                Застосувати націнку
+              </button>
+            </div>
           </div>
 
-          <div className="selected-summary">
-            <div className="selected-summary-head">
-              <strong>Вибрано постачальників: {selectedCount}</strong>
-              <div className="actions">
-                <button className="btn" onClick={selectAllVisibleSuppliers}>
-                  Обрати всіх
-                </button>
-                <button className="btn" onClick={clearVisibleSuppliersSelection}>
-                  Очистити
-                </button>
+          <div className="suppliers-selection-row">
+            <div className="suppliers-selection-info">
+              <div className="muted">
+                Вибрано постачальників: {selectedCount}
               </div>
-            </div>
-
-            {selectedSuppliers.length > 0 ? (
-              <div className="selected-chip-list">
-                {selectedSuppliers.slice(0, 8).map((supplier) => (
-                  <span className="chip supplier-chip" key={`selected_${supplier.id}`}>
-                    {supplier.name}
-                  </span>
-                ))}
-                {selectedSuppliers.length > 8 ? (
-                  <span className="chip supplier-chip">+{selectedSuppliers.length - 8}</span>
-                ) : null}
-              </div>
-            ) : (
-              <div className="muted">Немає вибраних постачальників</div>
-            )}
-
-            <div className="bulk-pricing-inline">
-              <div>
-                <label>Тип націнки для вибраних</label>
-                <select value={bulkRuleSetId} onChange={(event) => setBulkRuleSetId(event.target.value)}>
-                  <option value="">-- оберіть --</option>
-                  {markupRuleSets.map((ruleSet) => (
-                    <option key={`bulk_ruleset_${ruleSet.id}`} value={ruleSet.id}>
-                      {ruleSet.name}
-                      {Number(globalRuleSetId) === Number(ruleSet.id) ? ' (default)' : ''}
-                    </option>
+              {selectedSuppliers.length > 0 ? (
+                <div className="selected-chip-list suppliers-selection-chips">
+                  {selectedSuppliers.slice(0, 6).map((supplier) => (
+                    <span className="chip supplier-chip" key={`selected_preview_${supplier.id}`}>
+                      {supplier.name}
+                    </span>
                   ))}
-                </select>
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <button
-                  className="btn primary"
-                  disabled={isReadOnly || !bulkRuleSetId || selectedCount === 0}
-                  onClick={() => applyRuleSetToSelectedSuppliers(bulkRuleSetId)}
-                >
-                  Застосувати ({selectedCount})
-                </button>
-              </div>
+                  {selectedSuppliers.length > 6 ? (
+                    <span className="chip supplier-chip">+{selectedSuppliers.length - 6}</span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-            <div className="status-line">{supplierBulkPricingStatus}</div>
+            <div className="actions">
+              <button className="btn" onClick={selectAllVisibleSuppliers}>
+                Обрати всіх
+              </button>
+              <button className="btn" onClick={clearVisibleSuppliersSelection}>
+                Очистити
+              </button>
+            </div>
           </div>
 
-          <table>
-            <thead>
-              <tr>
-                <th>
-                  <label className="inline-checkbox">
-                    <input
-                      ref={selectAllRef}
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={(event) => {
-                        if (event.target.checked) {
-                          selectAllVisibleSuppliers();
-                          return;
-                        }
-                        clearVisibleSuppliersSelection();
-                      }}
-                    />
-                    <span>Всі</span>
-                  </label>
-                </th>
-                <th>
-                  <div className="column-header-with-sort">
-                    <span>Постачальник</span>
-                    <select
-                      className="inline-select"
-                      value={supplierSort}
-                      onChange={(event) => setSupplierSort(event.target.value)}
-                    >
-                      <option value="name_asc">А-Я</option>
-                      <option value="name_desc">Я-А</option>
-                      <option value="id_asc">За ID</option>
-                    </select>
-                  </div>
-                </th>
-                <th>Стан</th>
-                <th>Пріоритет</th>
-                <th>Rule set</th>
-                <th>Дії</th>
-              </tr>
-            </thead>
-            <tbody>
-              {supplierRows.map((supplier) => (
-                <tr key={supplier.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={selectedSupplierIds.includes(String(supplier.id))}
-                      onChange={(event) => toggleSupplierSelection(supplier.id, event.target.checked)}
-                    />
-                  </td>
-                  <td>
-                    <div>{supplier.name}</div>
-                    <div className="muted">ID: {supplier.id}</div>
-                  </td>
-                  <td>
-                    <Tag tone={supplier.is_active ? 'ok' : 'warn'}>
-                      {supplier.is_active ? 'active' : 'paused'}
-                    </Tag>
-                  </td>
-                  <td>{supplier.priority}</td>
-                  <td>{supplier.markup_rule_set_name || '-'}</td>
-                  <td>
-                    <div className="actions">
-                      <button className="btn" onClick={() => openEditSupplierModal(supplier)}>
-                        Редагувати
-                      </button>
-                      <button className="btn" onClick={() => openMappingModal(supplier)}>
-                        Мапінг
-                      </button>
-                      <button
-                        className="btn danger"
-                        disabled={isReadOnly}
-                        onClick={() => deleteSupplier(supplier.id)}
+          <div className="supplier-table-wrap">
+            <table className="supplier-table">
+              <thead>
+                <tr>
+                  <th>
+                    <label className="inline-checkbox">
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            selectAllVisibleSuppliers();
+                            return;
+                          }
+                          clearVisibleSuppliersSelection();
+                        }}
+                      />
+                      <span>Всі</span>
+                    </label>
+                  </th>
+                  <th>
+                    <div className="supplier-header-filter">
+                      <span>Постачальник</span>
+                      <select
+                        className="inline-select supplier-inline-sort"
+                        value={supplierSort}
+                        onChange={(event) => setSupplierSort(event.target.value)}
                       >
-                        Видалити
-                      </button>
+                        <option value="name_asc">А-Я</option>
+                        <option value="name_desc">Я-А</option>
+                        <option value="id_asc">За ID</option>
+                      </select>
                     </div>
-                  </td>
+                  </th>
+                  <th>Стан</th>
+                  <th>Пріоритет</th>
+                  <th>Rule set</th>
+                  <th>Дії</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {supplierRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="supplier-empty-row">
+                      Нічого не знайдено за поточним пошуком
+                    </td>
+                  </tr>
+                ) : (
+                  supplierRows.map((supplier) => {
+                    const isSelected = selectedSupplierIds.includes(String(supplier.id));
+                    return (
+                      <tr
+                        key={supplier.id}
+                        className={isSelected ? 'supplier-row-selected' : ''}
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(event) => toggleSupplierSelection(supplier.id, event.target.checked)}
+                          />
+                        </td>
+                        <td>
+                          <div className="supplier-name-cell">
+                            <div className="supplier-name-title">{supplier.name}</div>
+                            <div className="supplier-name-meta">ID: {supplier.id}</div>
+                          </div>
+                        </td>
+                        <td>
+                          <Tag tone={supplier.is_active ? 'ok' : 'warn'}>
+                            {supplier.is_active ? 'active' : 'paused'}
+                          </Tag>
+                        </td>
+                        <td>{supplier.priority}</td>
+                        <td>
+                          <span className="rule-set-pill">{supplier.markup_rule_set_name || '-'}</span>
+                        </td>
+                        <td>
+                          <div className="actions supplier-row-actions">
+                            <button className="btn" onClick={() => openEditSupplierModal(supplier)}>
+                              Редагувати
+                            </button>
+                            <button className="btn" onClick={() => openMappingModal(supplier)}>
+                              Мапінг
+                            </button>
+                            <button
+                              className="btn danger"
+                              disabled={isReadOnly}
+                              onClick={() => deleteSupplier(supplier.id)}
+                            >
+                              Видалити
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
 
           <div className="status-line">Показано: {supplierRows.length}</div>
           <div className="status-line">{suppliersStatus}</div>
@@ -361,7 +500,7 @@ export function SuppliersTab({
 
       {isSupplierModalOpen ? (
         <div className="modal-backdrop" onClick={closeSupplierModal}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-card supplier-modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="section-head">
               <div>
                 <h3>{editingSupplierId ? `Редагування постачальника #${editingSupplierId}` : 'Новий постачальник'}</h3>
@@ -370,7 +509,7 @@ export function SuppliersTab({
               <button className="btn" onClick={closeSupplierModal}>Закрити</button>
             </div>
 
-            <div className="form-row">
+            <div className="supplier-modal-grid">
               <div>
                 <label>Назва</label>
                 <input
@@ -392,6 +531,9 @@ export function SuppliersTab({
                 />
                 {supplierErrors.priority ? <div className="field-error">{supplierErrors.priority}</div> : null}
               </div>
+            </div>
+
+            <div className="supplier-modal-rule">
               <div>
                 <label>Тип націнки (rule set)</label>
                 <select
@@ -419,8 +561,7 @@ export function SuppliersTab({
               </div>
             </div>
 
-            <div className="checkbox-row">
-              <label>
+            <label className="supplier-modal-checkbox">
                 <input
                   type="checkbox"
                   checked={supplierDraft.is_active}
@@ -429,10 +570,9 @@ export function SuppliersTab({
                   }
                 />
                 Постачальник активний
-              </label>
-            </div>
+            </label>
 
-            <div className="actions" style={{ marginTop: 10 }}>
+            <div className="actions supplier-modal-actions">
               <button
                 className="btn primary"
                 disabled={isReadOnly}
@@ -469,6 +609,99 @@ export function SuppliersTab({
               <button className="btn" onClick={closeMappingModal}>Закрити</button>
             </div>
             {mappingPanel}
+          </div>
+        </div>
+      ) : null}
+
+      {isBulkRuleSetModalOpen ? (
+        <div className="modal-backdrop" onClick={closeBulkRuleSetModal}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="section-head">
+              <div>
+                <h3>Застосувати тип націнки</h3>
+                <p className="muted">Оберіть тип націнки і постачальників</p>
+              </div>
+              <button className="btn" onClick={closeBulkRuleSetModal}>Закрити</button>
+            </div>
+
+            <div className="form-row">
+              <div>
+                <label>Тип націнки</label>
+                <select value={bulkRuleSetId} onChange={(event) => setBulkRuleSetId(event.target.value)}>
+                  <option value="">-- оберіть --</option>
+                  {markupRuleSets.map((ruleSet) => (
+                    <option key={`bulk_modal_ruleset_${ruleSet.id}`} value={ruleSet.id}>
+                      {ruleSet.name}
+                      {Number(globalRuleSetId) === Number(ruleSet.id) ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="actions bulk-modal-toolbar" style={{ marginTop: 8, marginBottom: 8 }}>
+              <input
+                className="bulk-modal-search"
+                placeholder="Пошук постачальника в модалці..."
+                value={bulkSupplierSearch}
+                onChange={(event) => setBulkSupplierSearch(event.target.value)}
+              />
+              <button className="btn" onClick={selectAllBulkTargets}>
+                Обрати всіх
+              </button>
+              <button className="btn" onClick={clearBulkTargets}>
+                Очистити
+              </button>
+            </div>
+            <div className="supplier-picker-list">
+              {filteredBulkSuppliers.map((supplier) => {
+                const id = String(supplier.id);
+                const checked = bulkTargetSupplierIds.includes(id);
+                return (
+                  <label className="supplier-picker-row" key={`bulk_pick_${id}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) => toggleBulkTargetSupplier(id, event.target.checked)}
+                    />
+                    <span>{supplier.name}</span>
+                    <span className="muted">ID: {supplier.id}</span>
+                  </label>
+                );
+              })}
+            </div>
+
+            {bulkTargetSuppliers.length > 0 ? (
+              <div className="selected-chip-list" style={{ marginTop: 8, marginBottom: 8 }}>
+                {bulkTargetSuppliers.map((supplier) => (
+                  <span className="chip supplier-chip" key={`bulk_selected_${supplier.id}`}>
+                    {supplier.name}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="muted" style={{ marginTop: 8, marginBottom: 8 }}>
+                Нікого не обрано
+              </div>
+            )}
+
+            <div className="status-line">
+              До застосування: {bulkTargetSuppliers.length}
+            </div>
+            <div className="status-line">{supplierBulkPricingStatus}</div>
+
+            <div className="actions" style={{ marginTop: 10 }}>
+              <button
+                className="btn primary"
+                disabled={isReadOnly || !bulkRuleSetId || bulkTargetSupplierIds.length === 0}
+                onClick={submitBulkRuleSet}
+              >
+                Застосувати
+              </button>
+              <button className="btn" onClick={closeBulkRuleSetModal}>
+                Скасувати
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

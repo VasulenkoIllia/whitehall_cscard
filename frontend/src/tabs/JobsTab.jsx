@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { toJsonString } from '../lib/api';
 import { Section, Tag } from '../components/ui';
 
@@ -14,9 +14,27 @@ export function JobsTab({
   logsJobId,
   setLogsJobId,
   logs,
+  latestErrorLogs,
   jobDetails,
   closeJobDetails
 }) {
+  const [selectedErrorLog, setSelectedErrorLog] = useState(null);
+  const formatDateTime = (value) => {
+    if (!value) {
+      return '-';
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return String(value);
+    }
+    return parsed.toLocaleString('uk-UA');
+  };
+
+  const topErrorLogs = useMemo(() => {
+    const rows = Array.isArray(latestErrorLogs) ? latestErrorLogs : [];
+    return rows.slice(0, 5);
+  }, [latestErrorLogs]);
+
   return (
     <div className="grid">
       <Section title="Джоби" subtitle="Останні запуски пайплайна" extra={<button className="btn" onClick={refreshCore}>Оновити</button>}>
@@ -58,6 +76,48 @@ export function JobsTab({
             ))}
           </tbody>
         </table>
+      </Section>
+
+      <Section title="Останні помилки" subtitle="5 останніх error-подій">
+        {topErrorLogs.length === 0 ? (
+          <div className="empty-preview">Помилки не знайдено</div>
+        ) : (
+          <div className="preview-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th>Job</th>
+                  <th>Повідомлення</th>
+                  <th>Дія</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topErrorLogs.map((item) => (
+                  <tr key={item.id || `${item.created_at}_${item.message}`}>
+                    <td>{formatDateTime(item.created_at)}</td>
+                    <td>{item.job_id || '-'}</td>
+                    <td className="truncate-cell" title={item.message || '-'}>
+                      {item.message || '-'}
+                    </td>
+                    <td>
+                      <div className="actions">
+                        <button className="btn" onClick={() => setSelectedErrorLog(item)}>
+                          Детальніше
+                        </button>
+                        {item.job_id ? (
+                          <button className="btn" onClick={() => openJobDetails(item.job_id)}>
+                            Job
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       <Section
@@ -107,7 +167,7 @@ export function JobsTab({
               <tbody>
                 {logs.slice(0, 120).map((item) => (
                   <tr key={item.id || `${item.created_at}_${item.message}`}>
-                    <td>{item.created_at || '-'}</td>
+                    <td>{formatDateTime(item.created_at)}</td>
                     <td>
                       <Tag tone={item.level === 'error' ? 'error' : item.level === 'warning' ? 'warn' : 'ok'}>
                         {item.level || '-'}
@@ -163,6 +223,47 @@ export function JobsTab({
             </div>
           ) : null}
         </Section>
+      ) : null}
+
+      {selectedErrorLog ? (
+        <div className="modal-backdrop" onClick={() => setSelectedErrorLog(null)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="section-head">
+              <div>
+                <h3>Деталі помилки</h3>
+                <p className="muted">
+                  {formatDateTime(selectedErrorLog.created_at)} · job #{selectedErrorLog.job_id || '-'}
+                </p>
+              </div>
+              <button className="btn" onClick={() => setSelectedErrorLog(null)}>
+                Закрити
+              </button>
+            </div>
+            <div className="grid">
+              <div>
+                <h4 className="block-title">Повідомлення</h4>
+                <pre>{toJsonString({ message: selectedErrorLog.message || '-' })}</pre>
+              </div>
+              <div>
+                <h4 className="block-title">Повний запис логу</h4>
+                <pre>{toJsonString(selectedErrorLog)}</pre>
+              </div>
+            </div>
+            <div className="actions" style={{ marginTop: 10 }}>
+              {selectedErrorLog.job_id ? (
+                <button
+                  className="btn"
+                  onClick={() => {
+                    openJobDetails(selectedErrorLog.job_id);
+                    setSelectedErrorLog(null);
+                  }}
+                >
+                  Відкрити job
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

@@ -9,16 +9,20 @@ import {
 import { Tag } from './components/ui';
 import { ToastViewport } from './components/toast';
 import { OverviewTab } from './tabs/OverviewTab';
+import { ManualControlTab } from './tabs/ManualControlTab';
 import { SuppliersTab } from './tabs/SuppliersTab';
 import { MappingTab } from './tabs/MappingTab';
 import { PricingTab } from './tabs/PricingTab';
 import { DataTab } from './tabs/DataTab';
+import { CronSettingsTab } from './tabs/CronSettingsTab';
 import { JobsTab } from './tabs/JobsTab';
 
 const TABS = [
   { id: 'overview', label: 'Панель' },
+  { id: 'manual', label: 'Ручне керування' },
   { id: 'suppliers', label: 'Постачальники' },
   { id: 'data', label: 'Дані' },
+  { id: 'cron', label: 'Крон' },
   { id: 'jobs', label: 'Моніторинг' }
 ];
 
@@ -52,6 +56,36 @@ function parsePositiveInt(value) {
     return null;
   }
   return Math.trunc(numeric);
+}
+
+function normalizeSchedulerIntervalMinutes(cronRaw, fallbackValue) {
+  const cron = String(cronRaw || '').trim();
+  if (!cron) {
+    return Math.max(1, Math.trunc(fallbackValue || 60));
+  }
+
+  const everyMinutes = cron.match(/^\*\/(\d+)\s+\*\s+\*\s+\*\s+\*$/);
+  if (everyMinutes) {
+    const value = Number(everyMinutes[1]);
+    if (Number.isFinite(value) && value > 0) {
+      return Math.trunc(value);
+    }
+  }
+
+  const everyHours = cron.match(/^0\s+\*\/(\d+)\s+\*\s+\*\s+\*$/);
+  if (everyHours) {
+    const hours = Number(everyHours[1]);
+    if (Number.isFinite(hours) && hours > 0) {
+      return Math.trunc(hours * 60);
+    }
+  }
+
+  const dailyHours = cron.match(/^0\s+(\d+(?:,\d+)*)\s+\*\s+\*\s+(\*|\d+(?:,\d+)*)$/);
+  if (dailyHours) {
+    return 24 * 60;
+  }
+
+  return Math.max(1, Math.trunc(fallbackValue || 60));
 }
 
 function toSourceDraft(source = null) {
@@ -117,6 +151,31 @@ function toPriceOverrideDraft(row = null) {
     price_final: String(Number(row.price_final || 0)),
     notes: String(row.notes || ''),
     is_active: row.is_active !== false
+  };
+}
+
+function toCronSettingDraft(row = null) {
+  if (!row) {
+    return {
+      name: '',
+      cron: '',
+      interval_minutes: '60',
+      is_enabled: true,
+      run_on_startup: false,
+      supplier: '',
+      updated_at: ''
+    };
+  }
+  const meta = row?.meta && typeof row.meta === 'object' ? row.meta : {};
+  const supplier = typeof meta.supplier === 'string' ? meta.supplier : '';
+  return {
+    name: String(row.name || ''),
+    cron: String(row.cron || ''),
+    interval_minutes: String(Number(row.interval_minutes || 60)),
+    is_enabled: row.is_enabled === true,
+    run_on_startup: row.run_on_startup === true,
+    supplier,
+    updated_at: String(row.updated_at || '')
   };
 }
 
@@ -221,6 +280,48 @@ function normalizeRuleSetPayload(ruleSetDraft) {
     });
   }
 
+  const activeConditions = conditions
+    .map((condition, index) => ({
+      ...condition,
+      sourceIndex: index + 1
+    }))
+    .filter((condition) => condition.is_active !== false);
+
+  const prioritiesMap = new Map();
+  for (let index = 0; index < activeConditions.length; index += 1) {
+    const item = activeConditions[index];
+    if (!prioritiesMap.has(item.priority)) {
+      prioritiesMap.set(item.priority, [item.sourceIndex]);
+    } else {
+      prioritiesMap.get(item.priority).push(item.sourceIndex);
+    }
+  }
+  for (const [priority, sourceIndexes] of prioritiesMap.entries()) {
+    if (sourceIndexes.length > 1) {
+      return {
+        ok: false,
+        error: `condition #${sourceIndexes[0]}: duplicate priority ${priority} with condition #${sourceIndexes[1]}`
+      };
+    }
+  }
+
+  for (let leftIndex = 0; leftIndex < activeConditions.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < activeConditions.length; rightIndex += 1) {
+      const left = activeConditions[leftIndex];
+      const right = activeConditions[rightIndex];
+      const leftTo = left.price_to === null ? Number.POSITIVE_INFINITY : left.price_to;
+      const rightTo = right.price_to === null ? Number.POSITIVE_INFINITY : right.price_to;
+      const intersects = left.price_from < rightTo && right.price_from < leftTo;
+      if (!intersects) {
+        continue;
+      }
+      return {
+        ok: false,
+        error: `condition #${left.sourceIndex}: overlaps with condition #${right.sourceIndex}`
+      };
+    }
+  }
+
   return {
     ok: true,
     payload: {
@@ -241,6 +342,7 @@ export default function App() {
   const [readiness, setReadiness] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [latestErrorLogs, setLatestErrorLogs] = useState([]);
   const [logsLevel, setLogsLevel] = useState('');
   const [logsJobId, setLogsJobId] = useState('');
   const [jobsStatus, setJobsStatus] = useState('');
@@ -284,11 +386,12 @@ export default function App() {
   const [mappingErrors, setMappingErrors] = useState({});
   const [mappingStatus, setMappingStatus] = useState('');
   const [mappingFields, setMappingFields] = useState(() => createEmptyMappingFields());
+  const [mappingRecords, setMappingRecords] = useState([]);
+  const [mappingRecordsStatus, setMappingRecordsStatus] = useState('');
 
   const [markupRuleSets, setMarkupRuleSets] = useState([]);
   const [globalRuleSetId, setGlobalRuleSetId] = useState(null);
   const [pricingStatus, setPricingStatus] = useState('');
-  const [pricingApplyRuleSetId, setPricingApplyRuleSetId] = useState('');
   const [supplierBulkPricingStatus, setSupplierBulkPricingStatus] = useState('');
   const [ruleSetDraft, setRuleSetDraft] = useState(() => toRuleSetDraft(null));
   const [ruleSetErrors, setRuleSetErrors] = useState({});
@@ -323,6 +426,9 @@ export default function App() {
     jobId: null,
     payload: null
   });
+  const [cronSettingsDraft, setCronSettingsDraft] = useState([]);
+  const [cronStatus, setCronStatus] = useState('');
+  const [cronSaving, setCronSaving] = useState(false);
 
   const [actionForm, setActionForm] = useState({
     sourceId: '',
@@ -354,11 +460,6 @@ export default function App() {
     const matched = suppliers.find((supplier) => String(supplier.id) === String(selectedSupplierId));
     return matched?.name || '';
   }, [suppliers, selectedSupplierId]);
-
-  const recentErrorLogs = useMemo(
-    () => logs.filter((item) => String(item.level || '').toLowerCase() === 'error').slice(0, 8),
-    [logs]
-  );
 
   const dismissToast = (id) => {
     setToasts((prev) => prev.filter((item) => item.id !== id));
@@ -448,16 +549,18 @@ export default function App() {
       if (parsedLogJobId) {
         logsQuery.set('jobId', String(parsedLogJobId));
       }
-      const [statsPayload, readinessPayload, jobsPayload, logsPayload] = await Promise.all([
+      const [statsPayload, readinessPayload, jobsPayload, logsPayload, latestErrorsPayload] = await Promise.all([
         apiFetch('/stats'),
         apiFetch('/backend-readiness?store=cscart&maxMirrorAgeMinutes=120'),
         apiFetch('/jobs?limit=25'),
-        apiFetch(`/logs?${logsQuery.toString()}`)
+        apiFetch(`/logs?${logsQuery.toString()}`),
+        apiFetch('/logs?limit=5&level=error')
       ]);
       setStats(statsPayload);
       setReadiness(readinessPayload);
       setJobs(Array.isArray(jobsPayload?.items) ? jobsPayload.items : []);
       setLogs(Array.isArray(logsPayload) ? logsPayload : []);
+      setLatestErrorLogs(Array.isArray(latestErrorsPayload) ? latestErrorsPayload : []);
       setJobsStatus(`Оновлено: ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       setJobsStatus(formatError(error));
@@ -496,6 +599,8 @@ export default function App() {
       setSelectedSourceId('');
       setSourceDraft(toSourceDraft(null));
       setEditingSourceId('');
+      setMappingRecords([]);
+      setMappingRecordsStatus('');
       setSourceSheets([]);
       setSelectedSheetName('');
       setSourcePreview({
@@ -531,19 +636,61 @@ export default function App() {
       setMappingFields(createEmptyMappingFields());
       return;
     }
+    const applyLoadedMapping = (mappingRow, statusLabel = 'Мапінг завантажено') => {
+      const mapping = mappingRow?.mapping && typeof mappingRow.mapping === 'object' ? mappingRow.mapping : {};
+      setMappingText(toJsonString(mapping));
+      setMappingComment(String(mappingRow?.comment || ''));
+      setMappingHeaderRow(String(Number(mappingRow?.header_row || 1)));
+      setMappingFields(parseMappingToFields(mapping));
+      setMappingErrors({});
+      setMappingStatus(statusLabel);
+    };
     setMappingStatus('Завантаження мапінгу...');
     try {
       const data = await apiFetch(`/mappings/${supplierId}?sourceId=${sourceId}`);
-      const mapping = data?.mapping && typeof data.mapping === 'object' ? data.mapping : {};
-      setMappingText(toJsonString(mapping));
-      setMappingComment(String(data?.comment || ''));
-      setMappingHeaderRow(String(Number(data?.header_row || 1)));
-      setMappingFields(parseMappingToFields(mapping));
-      setMappingErrors({});
-      setMappingStatus('Мапінг завантажено');
+      applyLoadedMapping(data, 'Мапінг завантажено');
     } catch (error) {
       setMappingStatus(formatError(error));
     }
+  };
+
+  const refreshMappingRecords = async (supplierIdRaw, sourceIdRaw) => {
+    const supplierId = Number(supplierIdRaw);
+    if (!Number.isFinite(supplierId) || supplierId <= 0) {
+      setMappingRecords([]);
+      setMappingRecordsStatus('');
+      return;
+    }
+    const sourceId = Number(sourceIdRaw);
+    const query = new URLSearchParams();
+    if (Number.isFinite(sourceId) && sourceId > 0) {
+      query.set('sourceId', String(Math.trunc(sourceId)));
+    }
+    setMappingRecordsStatus('Завантаження списку мапінгів...');
+    try {
+      const rows = await apiFetch(
+        `/mappings/${supplierId}/list${query.toString() ? `?${query.toString()}` : ''}`
+      );
+      const normalizedRows = Array.isArray(rows) ? rows : [];
+      setMappingRecords(normalizedRows);
+      setMappingRecordsStatus(`Мапінгів: ${normalizedRows.length}`);
+    } catch (error) {
+      setMappingRecords([]);
+      setMappingRecordsStatus(formatError(error));
+    }
+  };
+
+  const loadMappingFromRecord = (record) => {
+    const mapping = record?.mapping && typeof record.mapping === 'object' ? record.mapping : {};
+    setMappingText(toJsonString(mapping));
+    setMappingComment(String(record?.comment || ''));
+    setMappingHeaderRow(String(Number(record?.header_row || 1)));
+    setMappingFields(parseMappingToFields(mapping));
+    setMappingErrors({});
+    const mappingId = Number(record?.id || 0);
+    setMappingStatus(
+      mappingId > 0 ? `Завантажено мапінг #${mappingId} для редагування` : 'Мапінг завантажено для редагування'
+    );
   };
 
   const refreshMarkupRuleSets = async () => {
@@ -557,9 +704,6 @@ export default function App() {
           : Number(data.global_rule_set_id);
       setMarkupRuleSets(rows);
       setGlobalRuleSetId(globalId);
-      if (!pricingApplyRuleSetId && rows.length > 0) {
-        setPricingApplyRuleSetId(String(rows[0].id));
-      }
       if (ruleSetDraft.id) {
         const matched = rows.find((item) => String(item.id) === String(ruleSetDraft.id));
         if (matched) {
@@ -589,6 +733,102 @@ export default function App() {
       });
     } catch (error) {
       setPriceOverrides((prev) => ({ ...prev, status: formatError(error) }));
+    }
+  };
+
+  const refreshCronSettings = async () => {
+    setCronStatus('Завантаження cron налаштувань...');
+    try {
+      const data = await apiFetch('/cron-settings');
+      const rows = Array.isArray(data) ? data : [];
+      const normalizedRows = rows.map((row) => toCronSettingDraft(row));
+      const orderedNames = ['update_pipeline', 'store_mirror_sync', 'cleanup'];
+      normalizedRows.sort((left, right) => {
+        const leftIndex = orderedNames.indexOf(left.name);
+        const rightIndex = orderedNames.indexOf(right.name);
+        if (leftIndex === -1 && rightIndex === -1) {
+          return left.name.localeCompare(right.name);
+        }
+        if (leftIndex === -1) {
+          return 1;
+        }
+        if (rightIndex === -1) {
+          return -1;
+        }
+        return leftIndex - rightIndex;
+      });
+      setCronSettingsDraft(normalizedRows);
+      setCronStatus(`Крон задач: ${normalizedRows.length}`);
+    } catch (error) {
+      setCronStatus(formatError(error));
+    }
+  };
+
+  const updateCronDraftField = (name, field, value) => {
+    setCronSettingsDraft((prev) =>
+      prev.map((row) =>
+        row.name === name
+          ? {
+              ...row,
+              [field]: value
+            }
+          : row
+      )
+    );
+  };
+
+  const saveCronSettings = async () => {
+    if (!Array.isArray(cronSettingsDraft) || cronSettingsDraft.length === 0) {
+      setCronStatus('Немає змін для збереження');
+      return;
+    }
+
+    const payload = [];
+    for (let index = 0; index < cronSettingsDraft.length; index += 1) {
+      const row = cronSettingsDraft[index];
+      const fallbackInterval = parsePositiveInt(row.interval_minutes);
+      const cron = String(row.cron || '').trim();
+      const intervalMinutes = normalizeSchedulerIntervalMinutes(cron, fallbackInterval || 60);
+      if (!intervalMinutes) {
+        setCronStatus(`Невірний interval_minutes для задачі "${row.name}"`);
+        return;
+      }
+      const entry = {
+        name: row.name,
+        interval_minutes: intervalMinutes,
+        cron,
+        is_enabled: row.is_enabled === true,
+        run_on_startup: row.run_on_startup === true
+      };
+      if (row.name === 'update_pipeline') {
+        entry.supplier = String(row.supplier || '').trim();
+      }
+      payload.push(entry);
+    }
+
+    setCronSaving(true);
+    setCronStatus('Збереження cron налаштувань...');
+    try {
+      const data = await runMutationWithRetryUX('save_cron_settings', () =>
+        apiFetchWithRetry(
+          '/cron-settings',
+          {
+            method: 'PUT',
+            body: JSON.stringify({
+              settings: payload
+            })
+          },
+          { retries: 1 }
+        )
+      );
+      const rows = Array.isArray(data) ? data : [];
+      setCronSettingsDraft(rows.map((row) => toCronSettingDraft(row)));
+      setCronStatus('Cron налаштування збережено');
+      await refreshCore();
+    } catch (error) {
+      setCronStatus(formatError(error));
+    } finally {
+      setCronSaving(false);
     }
   };
 
@@ -625,18 +865,6 @@ export default function App() {
     const headerRow = parsePositiveInt(mappingHeaderRow);
     if (!headerRow) {
       errors.header_row = 'Header row має бути додатнім числом';
-    }
-    if (!mappingText.trim()) {
-      errors.mapping = 'Mapping JSON обовʼязковий';
-      return errors;
-    }
-    try {
-      const parsed = JSON.parse(mappingText);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        errors.mapping = 'Mapping має бути JSON object';
-      }
-    } catch (_error) {
-      errors.mapping = 'Некоректний JSON';
     }
     return errors;
   };
@@ -766,7 +994,7 @@ export default function App() {
 
     setSourceFormStatus('Збереження джерела...');
     try {
-      await runMutationWithRetryUX(
+      const savedSource = await runMutationWithRetryUX(
         editingSourceId ? `save_source_${editingSourceId}` : 'create_source',
         () =>
           editingSourceId
@@ -792,6 +1020,12 @@ export default function App() {
       setSourceDraft(toSourceDraft(null));
       setEditingSourceId('');
       await refreshSources(selectedSupplierId);
+      if (!editingSourceId && savedSource?.id) {
+        setSelectedSourceId(String(savedSource.id));
+        if (savedSource.sheet_name) {
+          setSelectedSheetName(String(savedSource.sheet_name));
+        }
+      }
     } catch (error) {
       setSourceFormStatus(formatError(error));
     }
@@ -901,13 +1135,8 @@ export default function App() {
       return;
     }
 
-    let parsedMapping;
-    try {
-      parsedMapping = JSON.parse(mappingText);
-    } catch (error) {
-      setMappingStatus(`JSON помилка: ${formatError(error)}`);
-      return;
-    }
+    const parsedMapping = buildMappingFromFields(mappingFields);
+    setMappingText(toJsonString(parsedMapping));
 
     setMappingStatus('Збереження мапінгу...');
     try {
@@ -933,8 +1162,48 @@ export default function App() {
       );
       setMappingStatus('Мапінг збережено');
       setMappingErrors({});
+      await refreshMappingRecords(selectedSupplierId, sourceId);
     } catch (error) {
       setMappingStatus(formatError(error));
+    }
+  };
+
+  const deleteMapping = async (mappingIdRaw) => {
+    const supplierId = Number(selectedSupplierId);
+    const mappingId = Number(mappingIdRaw);
+    if (!Number.isFinite(supplierId) || supplierId <= 0) {
+      setMappingStatus('Оберіть постачальника');
+      return false;
+    }
+    if (!Number.isFinite(mappingId) || mappingId <= 0) {
+      setMappingStatus('Некоректний ID мапінгу');
+      return false;
+    }
+    const keyword = `DELETE_MAPPING_${mappingId}`;
+    const confirmed = confirmWithKeyword({
+      title: `Видалення мапінгу #${mappingId}`,
+      details: 'Видалений мапінг не буде використовуватись у наступних імпортах.',
+      keyword
+    });
+    if (!confirmed) {
+      setMappingStatus('Видалення скасовано (не пройдено preflight)');
+      return false;
+    }
+    setMappingStatus(`Видалення мапінгу #${mappingId}...`);
+    try {
+      await runMutationWithRetryUX(`delete_mapping_${mappingId}`, () =>
+        apiFetchWithRetry(
+          `/mappings/${supplierId}/${mappingId}`,
+          { method: 'DELETE' },
+          { retries: 1 }
+        )
+      );
+      setMappingStatus(`Мапінг #${mappingId} видалено`);
+      await refreshMappingRecords(supplierId, selectedSourceId);
+      return true;
+    } catch (error) {
+      setMappingStatus(formatError(error));
+      return false;
     }
   };
 
@@ -945,13 +1214,6 @@ export default function App() {
     setMappingFields(createEmptyMappingFields());
     setMappingErrors({});
     setMappingStatus('Новий мапінг: заповніть поля і збережіть');
-  };
-
-  const applyBuilderToJson = () => {
-    const mapping = buildMappingFromFields(mappingFields);
-    setMappingText(toJsonString(mapping));
-    setMappingErrors((prev) => ({ ...prev, mapping: undefined }));
-    setMappingStatus('Builder перенесено в JSON');
   };
 
   const updateMappingField = (key, patch) => {
@@ -1038,15 +1300,18 @@ export default function App() {
     }
   };
 
-  const applyRuleSetToSelectedSuppliers = async (ruleSetIdRaw) => {
+  const applyRuleSetToSelectedSuppliers = async (ruleSetIdRaw, supplierIdsRaw = null) => {
     const ruleSetId = Number(ruleSetIdRaw);
+    const targetSupplierIds = Array.isArray(supplierIdsRaw)
+      ? supplierIdsRaw.map((id) => String(id)).filter(Boolean)
+      : selectedSupplierIds;
     if (!Number.isFinite(ruleSetId) || ruleSetId <= 0) {
       setSupplierBulkPricingStatus('Оберіть тип націнки');
-      return;
+      return false;
     }
-    if (selectedSupplierIds.length === 0) {
+    if (targetSupplierIds.length === 0) {
       setSupplierBulkPricingStatus('Оберіть хоча б одного постачальника');
-      return;
+      return false;
     }
     setSupplierBulkPricingStatus('Застосування типу націнки...');
     try {
@@ -1057,7 +1322,7 @@ export default function App() {
             method: 'POST',
             body: JSON.stringify({
               scope: 'suppliers',
-              supplier_ids: selectedSupplierIds,
+              supplier_ids: targetSupplierIds,
               rule_set_id: ruleSetId
             })
           },
@@ -1068,12 +1333,13 @@ export default function App() {
       const statusText = `Тип націнки застосовано: updated=${updatedSuppliers}`;
       setSupplierBulkPricingStatus(statusText);
       setPricingStatus(statusText);
-      setPricingApplyRuleSetId(String(ruleSetId));
       await refreshSuppliers();
+      return true;
     } catch (error) {
       const errorText = formatError(error);
       setSupplierBulkPricingStatus(errorText);
       setPricingStatus(errorText);
+      return false;
     }
   };
 
@@ -1173,7 +1439,6 @@ export default function App() {
       const savedId = Number(result?.rule_set?.id || 0);
       await refreshMarkupRuleSets();
       if (savedId > 0) {
-        setPricingApplyRuleSetId(String(savedId));
         startEditRuleSet(savedId);
       } else {
         startCreateRuleSet();
@@ -1401,7 +1666,8 @@ export default function App() {
         refreshCore(),
         refreshSuppliers(),
         refreshMarkupRuleSets(),
-        refreshPriceOverrides()
+        refreshPriceOverrides(),
+        refreshCronSettings()
       ]);
       setAuthReady(true);
     };
@@ -1414,6 +1680,10 @@ export default function App() {
 
   useEffect(() => {
     void refreshMapping(selectedSupplierId, selectedSourceId);
+  }, [selectedSupplierId, selectedSourceId]);
+
+  useEffect(() => {
+    void refreshMappingRecords(selectedSupplierId, selectedSourceId);
   }, [selectedSupplierId, selectedSourceId]);
 
   if (!authReady) {
@@ -1486,8 +1756,11 @@ export default function App() {
         <OverviewTab
           readiness={readiness}
           stats={stats}
-          recentErrorLogs={recentErrorLogs}
-          openJobDetails={openJobDetails}
+        />
+      ) : null}
+
+      {tab === 'manual' ? (
+        <ManualControlTab
           suppliers={suppliers}
           selectedSupplierId={selectedSupplierId}
           setSelectedSupplierId={setSelectedSupplierId}
@@ -1539,21 +1812,8 @@ export default function App() {
               selectedSourceId={selectedSourceId}
               setSelectedSourceId={setSelectedSourceId}
               sources={sources}
-              refreshSources={refreshSources}
-              setEditingSourceId={setEditingSourceId}
-              setSourceDraft={setSourceDraft}
-              setSourceErrors={setSourceErrors}
-              toSourceDraft={toSourceDraft}
-              deleteSource={deleteSource}
               isReadOnly={isReadOnly}
               sourcesStatus={sourcesStatus}
-              editingSourceId={editingSourceId}
-              sourceDraft={sourceDraft}
-              sourceTypes={SOURCE_TYPES}
-              sourceErrors={sourceErrors}
-              parseSourceUrlHint={parseSourceUrlHint}
-              saveSource={saveSource}
-              sourceFormStatus={sourceFormStatus}
               sourceSheets={sourceSheets}
               selectedSheetName={selectedSheetName}
               setSelectedSheetName={setSelectedSheetName}
@@ -1567,14 +1827,13 @@ export default function App() {
               mappingFields={mappingFields}
               updateMappingField={updateMappingField}
               mappingColumnOptions={mappingColumnOptions}
-              applyBuilderToJson={applyBuilderToJson}
-              refreshMapping={refreshMapping}
+              refreshMappingRecords={refreshMappingRecords}
+              mappingRecords={mappingRecords}
+              mappingRecordsStatus={mappingRecordsStatus}
+              loadMappingFromRecord={loadMappingFromRecord}
               mappingErrors={mappingErrors}
-              mappingComment={mappingComment}
-              setMappingComment={setMappingComment}
-              mappingText={mappingText}
-              setMappingText={setMappingText}
               saveMapping={saveMapping}
+              deleteMapping={deleteMapping}
               mappingStatus={mappingStatus}
               resetMappingDraft={resetMappingDraft}
               supplierLocked
@@ -1584,8 +1843,6 @@ export default function App() {
           pricingPanel={(
             <PricingTab
               refreshMarkupRuleSets={refreshMarkupRuleSets}
-              pricingApplyRuleSetId={pricingApplyRuleSetId}
-              setPricingApplyRuleSetId={setPricingApplyRuleSetId}
               markupRuleSets={markupRuleSets}
               isReadOnly={isReadOnly}
               setDefaultMarkupRuleSet={setDefaultMarkupRuleSet}
@@ -1601,16 +1858,6 @@ export default function App() {
               addRuleCondition={addRuleCondition}
               saveRuleSet={saveRuleSet}
               ruleSetStatus={ruleSetStatus}
-              priceOverrideFilters={priceOverrideFilters}
-              setPriceOverrideFilters={setPriceOverrideFilters}
-              refreshPriceOverrides={refreshPriceOverrides}
-              priceOverrideDraft={priceOverrideDraft}
-              setPriceOverrideDraft={setPriceOverrideDraft}
-              priceOverrideErrors={priceOverrideErrors}
-              savePriceOverride={savePriceOverride}
-              toPriceOverrideDraft={toPriceOverrideDraft}
-              priceOverrideStatus={priceOverrideStatus}
-              priceOverrides={priceOverrides}
             />
           )}
         />
@@ -1632,6 +1879,19 @@ export default function App() {
         />
       ) : null}
 
+      {tab === 'cron' ? (
+        <CronSettingsTab
+          cronSettingsDraft={cronSettingsDraft}
+          cronStatus={cronStatus}
+          cronSaving={cronSaving}
+          isReadOnly={isReadOnly}
+          suppliers={suppliers}
+          refreshCronSettings={refreshCronSettings}
+          updateCronDraftField={updateCronDraftField}
+          saveCronSettings={saveCronSettings}
+        />
+      ) : null}
+
       {tab === 'jobs' ? (
         <JobsTab
           refreshCore={refreshCore}
@@ -1645,6 +1905,7 @@ export default function App() {
           logsJobId={logsJobId}
           setLogsJobId={setLogsJobId}
           logs={logs}
+          latestErrorLogs={latestErrorLogs}
           jobDetails={jobDetails}
           closeJobDetails={closeJobDetails}
         />

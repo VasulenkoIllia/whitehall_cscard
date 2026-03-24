@@ -8,21 +8,20 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/lib/mapping.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/lib/mapping.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/styles.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/JobsTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/JobsTab.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/tabs/MappingTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/MappingTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/tabs/PricingTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/PricingTab.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/tabs/SuppliersTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/SuppliersTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-B0KCWxxJ.js" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-Bm3-kHHV.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-BELIdFE0.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-YqUZiCKR.js" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/public/admin/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/public/admin/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/app/createApplication.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/createApplication.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/app/http/server.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/http/server.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/finalizerDb.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/finalizerDb.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/importerDb.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/importerDb.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/importerUtils.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/importerUtils.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/mapping.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/mapping.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/jobs/JobScheduler.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/jobs/JobScheduler.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/jobs/SchedulerSettingsService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/jobs/SchedulerSettingsService.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -30,7 +29,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="213" />
+    <option name="cachedIndexableFilesCount" value="214" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="Git.Settings">
@@ -124,6 +123,13 @@
       <workItem from="1774115258599" duration="3921000" />
       <workItem from="1774121500051" duration="6324000" />
       <workItem from="1774129959290" duration="1295000" />
+      <workItem from="1774171175599" duration="703000" />
+      <workItem from="1774172897646" duration="156000" />
+      <workItem from="1774201502842" duration="344000" />
+      <workItem from="1774202276564" duration="1030000" />
+      <workItem from="1774212040630" duration="861000" />
+      <workItem from="1774217953385" duration="1876000" />
+      <workItem from="1774294987933" duration="3255000" />
     </task>
     <servers />
   </component>

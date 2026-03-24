@@ -468,6 +468,24 @@ export function createHttpServer(appContext: AppContext) {
     }
   );
 
+  app.get(
+    '/admin/api/mappings/:supplierId/list',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const supplierId = parseRequiredPositiveInt(req.params.supplierId, 'supplierId');
+        const sourceId =
+          typeof req.query.sourceId === 'string' ? Number(req.query.sourceId) : null;
+        const mappings = await catalogAdmin.listMappings(supplierId, sourceId);
+        return res.json(mappings);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'mappings_list_error') });
+      }
+    }
+  );
+
   app.post(
     '/admin/api/mappings/:supplierId',
     authMw.requireRole('admin'),
@@ -480,6 +498,26 @@ export function createHttpServer(appContext: AppContext) {
         return res
           .status(readErrorStatus(err))
           .json({ error: readErrorMessage(err, 'mapping_save_error') });
+      }
+    }
+  );
+
+  app.delete(
+    '/admin/api/mappings/:supplierId/:mappingId',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const supplierId = parseRequiredPositiveInt(req.params.supplierId, 'supplierId');
+        const mappingId = parseRequiredPositiveInt(req.params.mappingId, 'mappingId');
+        const deleted = await catalogAdmin.deleteMapping(supplierId, mappingId);
+        if (!deleted) {
+          return res.status(404).json({ error: 'mapping not found' });
+        }
+        return res.json(deleted);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'mapping_delete_error') });
       }
     }
   );
