@@ -13,6 +13,8 @@
   - `Дані` (merged/final/compare preview + export + server filters/sort/paging controls),
   - `Крон` (runtime-настройки scheduler: `update_pipeline`, `store_mirror_sync`, `cleanup`; режими `кожні N годин`, `щодня у вибрані години`, `по днях тижня і годинах`),
   - `Моніторинг` (jobs/logs + 5 останніх `error` з датою + modal-деталі помилки + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
+  - Активна вкладка зберігається між перезавантаженнями (URL `?tab=` + localStorage).
+  - Дані на ключових екранах підтягуються автоматично (polling + автопідвантаження при зміні фільтрів), без обовʼязкового ручного refresh.
   - додано form-level валідації і inline помилки для операторських форм.
   - додано preflight-підтвердження для destructive дій (`cleanup`, `delete supplier/source`, `apply all_suppliers`).
   - додано retry UX для критичних mutating API дій (збереження/апдейти/джоби).

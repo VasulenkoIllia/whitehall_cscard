@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, apiFetchWithRetry, formatError, toJsonString } from './lib/api';
 import {
   buildMappingFromFields,
@@ -25,11 +25,56 @@ const TABS = [
   { id: 'cron', label: 'Крон' },
   { id: 'jobs', label: 'Моніторинг' }
 ];
+const TAB_IDS = new Set(TABS.map((item) => item.id));
+const TAB_STORAGE_KEY = 'whitehall_admin_active_tab';
+const AUTO_REFRESH_INTERVAL_MS = 30000;
 
 const SOURCE_TYPES = ['google_sheet', 'csv', 'xml', 'json'];
 const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra', 'comment'];
 const TOAST_LIMIT = 6;
 const TOAST_TTL_MS = 5500;
+
+function readTabFromLocation() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  const url = new URL(window.location.href);
+  const tabValue = String(url.searchParams.get('tab') || '').trim();
+  return TAB_IDS.has(tabValue) ? tabValue : '';
+}
+
+function readInitialTab() {
+  if (typeof window === 'undefined') {
+    return 'overview';
+  }
+  const tabFromUrl = readTabFromLocation();
+  if (tabFromUrl) {
+    return tabFromUrl;
+  }
+  try {
+    const saved = String(window.localStorage.getItem(TAB_STORAGE_KEY) || '').trim();
+    if (TAB_IDS.has(saved)) {
+      return saved;
+    }
+  } catch (_error) {
+    // ignore localStorage read errors
+  }
+  return 'overview';
+}
+
+function syncTabToLocation(tab) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (tab === 'overview') {
+    url.searchParams.delete('tab');
+  } else {
+    url.searchParams.set('tab', tab);
+  }
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState(null, '', nextUrl);
+}
 
 function normalizeOptionalNumber(value) {
   if (value === null || typeof value === 'undefined') {
@@ -333,10 +378,11 @@ function normalizeRuleSetPayload(ruleSetDraft) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState(() => readInitialTab());
   const [apiStatus, setApiStatus] = useState('checking');
   const [authReady, setAuthReady] = useState(false);
   const [meRole, setMeRole] = useState(null);
+  const autoRefreshInFlightRef = useRef(false);
 
   const [stats, setStats] = useState(null);
   const [readiness, setReadiness] = useState(null);
@@ -442,6 +488,13 @@ export default function App() {
 
   const isReadOnly = meRole === 'viewer';
   const readyForImport = readiness?.gates?.ready_for_store_import === true;
+  const setActiveTab = (nextTab) => {
+    const normalized = String(nextTab || '').trim();
+    if (!TAB_IDS.has(normalized)) {
+      return;
+    }
+    setTab(normalized);
+  };
 
   const mappingColumnOptions = useMemo(() => {
     if (sourcePreview.headers.length > 0) {
@@ -1675,6 +1728,123 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!TAB_IDS.has(tab)) {
+      return;
+    }
+    syncTabToLocation(tab);
+    try {
+      window.localStorage.setItem(TAB_STORAGE_KEY, tab);
+    } catch (_error) {
+      // ignore localStorage write errors
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    if (!authReady || !meRole) {
+      return undefined;
+    }
+
+    const runAutoRefreshTick = async () => {
+      if (document.hidden || autoRefreshInFlightRef.current) {
+        return;
+      }
+      autoRefreshInFlightRef.current = true;
+      try {
+        if (tab === 'overview' || tab === 'manual' || tab === 'jobs') {
+          await refreshCore();
+          return;
+        }
+        if (tab === 'suppliers') {
+          await Promise.all([refreshSuppliers(), refreshMarkupRuleSets()]);
+          if (selectedSupplierId) {
+            await refreshSources(selectedSupplierId);
+          }
+          if (selectedSupplierId && selectedSourceId) {
+            await refreshMappingRecords(selectedSupplierId, selectedSourceId);
+          }
+          return;
+        }
+        if (tab === 'cron') {
+          await refreshCronSettings();
+          return;
+        }
+        if (tab === 'data') {
+          if (activeDataView === 'merged') {
+            await loadMerged();
+            return;
+          }
+          if (activeDataView === 'final') {
+            await loadFinal();
+            return;
+          }
+          await loadCompare();
+        }
+      } finally {
+        autoRefreshInFlightRef.current = false;
+      }
+    };
+
+    void runAutoRefreshTick();
+    const intervalId = window.setInterval(() => {
+      void runAutoRefreshTick();
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [authReady, meRole, tab, activeDataView, selectedSupplierId, selectedSourceId]);
+
+  useEffect(() => {
+    if (!authReady || !meRole || tab !== 'suppliers') {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      void refreshSuppliers();
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [authReady, meRole, tab, supplierSearch, supplierSort]);
+
+  useEffect(() => {
+    if (!authReady || !meRole || tab !== 'jobs') {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      void refreshCore();
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [authReady, meRole, tab, logsLevel, logsJobId]);
+
+  useEffect(() => {
+    if (!authReady || !meRole || tab !== 'data') {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      if (activeDataView === 'merged') {
+        void loadMerged();
+        return;
+      }
+      if (activeDataView === 'final') {
+        void loadFinal();
+        return;
+      }
+      void loadCompare();
+    }, 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    authReady,
+    meRole,
+    tab,
+    activeDataView,
+    dataFilters.search,
+    dataFilters.supplierId,
+    dataFilters.limit,
+    dataFilters.offset,
+    dataFilters.missingOnly,
+    dataFilters.mergedSort,
+    dataFilters.finalSort
+  ]);
+
+  useEffect(() => {
     void refreshSources(selectedSupplierId);
   }, [selectedSupplierId]);
 
@@ -1745,7 +1915,7 @@ export default function App() {
           <button
             key={item.id}
             className={`tab ${tab === item.id ? 'active' : ''}`}
-            onClick={() => setTab(item.id)}
+            onClick={() => setActiveTab(item.id)}
           >
             {item.label}
           </button>
