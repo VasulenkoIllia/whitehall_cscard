@@ -97,6 +97,21 @@ type ComparePreviewOptions = {
   store: string;
 };
 
+type StoreMirrorPreviewOptions = {
+  limit: number;
+  offset: number;
+  search: string | null;
+  store: string;
+};
+
+type StoreImportPreviewOptions = {
+  limit: number;
+  offset: number;
+  search: string | null;
+  supplierId: number | null;
+  store: string;
+};
+
 type BackendReadinessOptions = {
   store: string;
   maxMirrorAgeMinutes: number;
@@ -430,6 +445,22 @@ export class CatalogAdminService {
       [name, markupPercent, priority, minProfitEnabled, minProfitAmount, markupRuleSetId]
     );
     return result.rows[0];
+  }
+
+  async getSupplierNameById(supplierId: number): Promise<string | null> {
+    const normalizedId = Math.trunc(Number(supplierId));
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+      throw createBadRequest('supplier id is invalid');
+    }
+    const result = await this.pool.query(
+      `SELECT name
+       FROM suppliers
+       WHERE id = $1
+       LIMIT 1`,
+      [normalizedId]
+    );
+    const value = String(result.rows[0]?.name || '').trim();
+    return value || null;
   }
 
   async updateSupplier(supplierId: number, payload: SupplierUpdatePayload): Promise<Record<string, unknown>> {
@@ -1770,5 +1801,144 @@ export class CatalogAdminService {
     const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
     const rows = result.rows.map(({ total: ignored, ...row }) => row);
     return { total, rows };
+  }
+
+  async listStoreMirrorPreview(
+    options: StoreMirrorPreviewOptions
+  ): Promise<{ total: number; rows: Record<string, unknown>[] }> {
+    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const search = String(options.search || '').trim();
+    const store = String(options.store || 'cscart').trim().toLowerCase() || 'cscart';
+
+    const values: unknown[] = [store];
+    const whereParts: string[] = [`sm.store = $1`];
+    if (search) {
+      values.push(`%${search}%`);
+      const index = values.length;
+      whereParts.push(
+        `(sm.article ILIKE $${index}
+          OR COALESCE(sm.supplier, '') ILIKE $${index}
+          OR COALESCE(sm.parent_article, '') ILIKE $${index})`
+      );
+    }
+    const whereClause = `WHERE ${whereParts.join(' AND ')}`;
+
+    const result = await this.pool.query(
+      `SELECT
+         sm.article,
+         sm.supplier,
+         sm.parent_article,
+         sm.visibility,
+         sm.price,
+         sm.seen_at,
+         sm.synced_at,
+         COUNT(*) OVER() AS total
+       FROM store_mirror sm
+       ${whereClause}
+       ORDER BY sm.article ASC
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
+    );
+
+    const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
+    const rows = result.rows.map(({ total: ignored, ...row }) => row);
+    return { total, rows };
+  }
+
+  async listStoreImportPreview(
+    options: StoreImportPreviewOptions
+  ): Promise<{ store: string; jobId: number | null; total: number; rows: Record<string, unknown>[] }> {
+    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const search = String(options.search || '').trim();
+    const store = String(options.store || 'cscart').trim().toLowerCase() || 'cscart';
+    let jobId = await this.getLatestJobId('finalize');
+    if (!jobId) {
+      return {
+        store,
+        jobId: null,
+        total: 0,
+        rows: []
+      };
+    }
+
+    const supplierId =
+      options.supplierId && Number.isFinite(options.supplierId) && options.supplierId > 0
+        ? Math.trunc(options.supplierId)
+        : null;
+
+    const values: unknown[] = [jobId];
+    const whereParts: string[] = [`pf.job_id = $1`];
+    if (supplierId) {
+      values.push(supplierId);
+      whereParts.push(`pf.supplier_id = $${values.length}`);
+    }
+    if (search) {
+      values.push(`%${search}%`);
+      const index = values.length;
+      whereParts.push(
+        `(pf.article ILIKE $${index}
+          OR pf.extra ILIKE $${index}
+          OR pf.comment_text ILIKE $${index}
+          OR sp.name ILIKE $${index})`
+      );
+    }
+    const whereClause = `WHERE ${whereParts.join(' AND ')}`;
+
+    const result = await this.pool.query(
+      `SELECT
+         pf.article,
+         pf.size,
+         pf.quantity,
+         pf.price_base,
+         COALESCE(po.price_final, pf.price_final) AS price_final,
+         TRUE AS visibility,
+         CASE
+           WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
+           WHEN right(lower(pf.article), length(replace(btrim(pf.size), ',', '.'))) =
+                lower(replace(btrim(pf.size), ',', '.'))
+             THEN pf.article
+           ELSE pf.article || '-' || replace(btrim(pf.size), ',', '.')
+         END AS sku_article,
+         CASE
+           WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN NULL
+           WHEN right(lower(pf.article), length(replace(btrim(pf.size), ',', '.'))) =
+                lower(replace(btrim(pf.size), ',', '.'))
+             THEN NULLIF(
+               btrim(
+                 left(
+                   pf.article,
+                   char_length(pf.article) - char_length(replace(btrim(pf.size), ',', '.'))
+                 ),
+                 ' -_/'
+               ),
+               ''
+             )
+           ELSE pf.article
+         END AS parent_article,
+         pf.extra,
+         pf.comment_text AS comment,
+         sp.name AS supplier_name,
+         pf.created_at,
+         COUNT(*) OVER() AS total
+       FROM products_final pf
+       LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
+       LEFT JOIN price_overrides po
+         ON po.article = pf.article
+        AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
+        AND po.is_active = TRUE
+       ${whereClause}
+       ORDER BY pf.id ASC
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
+    );
+
+    const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
+    const rows = result.rows.map(({ total: ignored, ...row }) => row);
+    return {
+      store,
+      jobId,
+      total,
+      rows
+    };
   }
 }

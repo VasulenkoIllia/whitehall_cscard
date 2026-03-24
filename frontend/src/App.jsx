@@ -456,6 +456,16 @@ export default function App() {
   const [mergedState, setMergedState] = useState({ rows: [], total: 0, status: '' });
   const [finalState, setFinalState] = useState({ rows: [], total: 0, status: '' });
   const [compareState, setCompareState] = useState({ rows: [], total: 0, status: '' });
+  const [storeMirrorState, setStoreMirrorState] = useState({ rows: [], total: 0, status: '' });
+  const [storePreviewState, setStorePreviewState] = useState({
+    rows: [],
+    total: 0,
+    status: '',
+    jobId: null,
+    mode: 'candidates',
+    previewTotal: 0,
+    batchTotal: null
+  });
   const [dataFilters, setDataFilters] = useState({
     limit: '50',
     offset: '0',
@@ -463,7 +473,8 @@ export default function App() {
     supplierId: '',
     missingOnly: true,
     mergedSort: 'article_asc',
-    finalSort: 'article_asc'
+    finalSort: 'article_asc',
+    storePreviewMode: 'candidates'
   });
   const [activeDataView, setActiveDataView] = useState('merged');
   const [jobDetails, setJobDetails] = useState({
@@ -1627,6 +1638,69 @@ export default function App() {
     }
   };
 
+  const loadStoreMirror = async () => {
+    setStoreMirrorState((prev) => ({ ...prev, status: 'Завантаження...' }));
+    try {
+      const query = new URLSearchParams();
+      query.set('store', 'cscart');
+      query.set('limit', dataFilters.limit || '50');
+      query.set('offset', dataFilters.offset || '0');
+      if (dataFilters.search.trim()) {
+        query.set('search', dataFilters.search.trim());
+      }
+      const result = await apiFetch(`/store-mirror-preview?${query.toString()}`);
+      setStoreMirrorState({
+        rows: Array.isArray(result?.rows) ? result.rows : [],
+        total: Number(result?.total || 0),
+        status: `total=${Number(result?.total || 0)}`
+      });
+    } catch (error) {
+      setStoreMirrorState((prev) => ({ ...prev, status: formatError(error) }));
+    }
+  };
+
+  const loadStorePreview = async () => {
+    setStorePreviewState((prev) => ({ ...prev, status: 'Завантаження...' }));
+    try {
+      const query = new URLSearchParams();
+      query.set('store', 'cscart');
+      query.set('limit', dataFilters.limit || '50');
+      query.set('offset', dataFilters.offset || '0');
+      query.set(
+        'mode',
+        dataFilters.storePreviewMode === 'delta' ? 'delta' : 'candidates'
+      );
+      if (dataFilters.search.trim()) {
+        query.set('search', dataFilters.search.trim());
+      }
+      if (dataFilters.supplierId.trim()) {
+        query.set('supplierId', dataFilters.supplierId.trim());
+      }
+      const result = await apiFetch(`/store-preview?${query.toString()}`);
+      const parsedJobId = Number(result?.jobId || 0);
+      const parsedPreviewTotal = Number(result?.previewTotal || 0);
+      const rawBatchTotal = result?.batchTotal;
+      const parsedBatchTotal =
+        rawBatchTotal === null || typeof rawBatchTotal === 'undefined'
+          ? null
+          : Number(rawBatchTotal);
+      setStorePreviewState({
+        rows: Array.isArray(result?.rows) ? result.rows : [],
+        total: Number(result?.total || 0),
+        status: `total=${Number(result?.total || 0)}`,
+        jobId: Number.isFinite(parsedJobId) && parsedJobId > 0 ? parsedJobId : null,
+        mode: String(result?.mode || dataFilters.storePreviewMode || 'candidates'),
+        previewTotal: Number.isFinite(parsedPreviewTotal) ? parsedPreviewTotal : 0,
+        batchTotal:
+          parsedBatchTotal !== null && Number.isFinite(parsedBatchTotal) && parsedBatchTotal >= 0
+            ? parsedBatchTotal
+            : null
+      });
+    } catch (error) {
+      setStorePreviewState((prev) => ({ ...prev, status: formatError(error) }));
+    }
+  };
+
   const runJob = async (label, path, payload = {}) => {
     setActionStatus(`${label}: запуск...`);
     try {
@@ -1777,7 +1851,15 @@ export default function App() {
             await loadFinal();
             return;
           }
-          await loadCompare();
+          if (activeDataView === 'compare') {
+            await loadCompare();
+            return;
+          }
+          if (activeDataView === 'store_now') {
+            await loadStoreMirror();
+            return;
+          }
+          await loadStorePreview();
         }
       } finally {
         autoRefreshInFlightRef.current = false;
@@ -1827,7 +1909,15 @@ export default function App() {
         void loadFinal();
         return;
       }
-      void loadCompare();
+      if (activeDataView === 'compare') {
+        void loadCompare();
+        return;
+      }
+      if (activeDataView === 'store_now') {
+        void loadStoreMirror();
+        return;
+      }
+      void loadStorePreview();
     }, 350);
     return () => window.clearTimeout(timeoutId);
   }, [
@@ -1841,7 +1931,8 @@ export default function App() {
     dataFilters.offset,
     dataFilters.missingOnly,
     dataFilters.mergedSort,
-    dataFilters.finalSort
+    dataFilters.finalSort,
+    dataFilters.storePreviewMode
   ]);
 
   useEffect(() => {
@@ -2042,10 +2133,14 @@ export default function App() {
           loadMerged={loadMerged}
           loadFinal={loadFinal}
           loadCompare={loadCompare}
+          loadStoreMirror={loadStoreMirror}
+          loadStorePreview={loadStorePreview}
           shiftDataOffset={shiftDataOffset}
           mergedState={mergedState}
           finalState={finalState}
           compareState={compareState}
+          storeMirrorState={storeMirrorState}
+          storePreviewState={storePreviewState}
         />
       ) : null}
 

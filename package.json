@@ -15,6 +15,8 @@
     "seed:users": "node dist/scripts/seedUsers.js",
     "migrate": "node dist/scripts/runMigrations.js",
     "mirror:sync": "node dist/scripts/runStoreMirrorSync.js",
+    "benchmark:store-price": "node dist/scripts/runCsCartPriceBenchmark.js",
+    "rollback:store-file": "node dist/scripts/runCsCartRollbackFromFile.js",
     "store:sku-audit": "node dist/scripts/runStoreSkuAudit.js",
     "backend:readiness": "node dist/scripts/runBackendReadiness.js",
     "audit:load": "node dist/scripts/runLoadAudit.js",

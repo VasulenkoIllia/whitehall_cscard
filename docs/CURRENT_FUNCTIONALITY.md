@@ -10,7 +10,7 @@
   - `Постачальники` (search/sort + select-all + CRUD + модалка мапінгу в межах 1 постачальника + масове призначення rule set для вибраних),
   - `Націнки` (markup rule sets: list/create/update/default + conditions editor),
   - `Override ціни` (price overrides: list/upsert/update),
-  - `Дані` (merged/final/compare preview + export + server filters/sort/paging controls),
+  - `Дані` (merged/final/compare preview + `зараз в магазині` (store mirror) + `відправка в магазин` (store preview) + server filters/sort/paging controls),
   - `Крон` (runtime-настройки scheduler: `update_pipeline`, `store_mirror_sync`, `cleanup`; режими `кожні N годин`, `щодня у вибрані години`, `по днях тижня і годинах`),
   - `Моніторинг` (jobs/logs + 5 останніх `error` з датою + modal-деталі помилки + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
   - Активна вкладка зберігається між перезавантаженнями (URL `?tab=` + localStorage).
@@ -53,7 +53,12 @@
   - `source-preview` (headers + sampleRows для mapping UI)
 - Доступні review/export API для операторського контролю:
   - `merged-preview`, `final-preview`, `compare-preview`
+  - `store-mirror-preview`, `store-preview`
   - `merged-export`, `final-export`, `compare-export` (CSV)
+- `GET /admin/api/store-preview` підтримує режими:
+  - `mode=candidates` — всі кандидати з `products_final` (+ `price_overrides`) перед optimizer.
+  - `mode=delta` — фактичний список рядків, які реально підуть у `store_import` після optimizer (`feature scope` + auto-hide missing для full import + delta against `store_mirror`).
+  - у `mode=delta` повертаються також `previewTotal` (кандидати до optimizer) і `batchTotal` (фактично оновиться).
 - `GET /admin/api/preview` і `POST /admin/api/store-import` повертають:
   - `previewTotal` (до optimizer),
   - `batchTotal` (після feature-scope + missing-hide + delta),

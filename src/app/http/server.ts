@@ -672,6 +672,124 @@ export function createHttpServer(appContext: AppContext) {
     }
   });
 
+  app.get('/admin/api/store-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = parseLimit(req.query.limit, 100);
+      const offset = parseOffset(req.query.offset);
+      const supplierId = parseOptionalPositiveInt(req.query.supplierId);
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
+      const mode =
+        typeof req.query.mode === 'string' && req.query.mode.trim().toLowerCase() === 'delta'
+          ? 'delta'
+          : 'candidates';
+
+      if (mode === 'delta') {
+        let supplierFilter: string | null = null;
+        if (supplierId) {
+          const supplierName = await catalogAdmin.getSupplierNameById(supplierId);
+          if (!supplierName) {
+            return res.status(404).json({ error: 'supplier not found' });
+          }
+          supplierFilter = supplierName;
+        }
+
+        const exportResult = await pipeline.runStoreExport(0, supplierFilter);
+        const preparedRows = (Array.isArray(exportResult.batch?.rows) ? exportResult.batch.rows : []).map(
+          (row) => {
+            const payload = (row || {}) as Record<string, unknown>;
+            return {
+              article: String(payload.productCode || ''),
+              size: payload.size === null || typeof payload.size === 'undefined' ? null : String(payload.size),
+              supplier_name:
+                payload.supplier === null || typeof payload.supplier === 'undefined'
+                  ? null
+                  : String(payload.supplier),
+              parent_article:
+                payload.parentProductCode === null || typeof payload.parentProductCode === 'undefined'
+                  ? null
+                  : String(payload.parentProductCode),
+              visibility: payload.visibility === true,
+              price_final:
+                payload.price === null || typeof payload.price === 'undefined'
+                  ? null
+                  : Number(payload.price),
+              quantity: null,
+              price_base: null,
+              comment: null
+            };
+          }
+        );
+
+        const searchLower = String(search || '').trim().toLowerCase();
+        const filteredRows = searchLower
+          ? preparedRows.filter((row) => {
+              const article = String(row.article || '').toLowerCase();
+              const supplierName = String(row.supplier_name || '').toLowerCase();
+              const parentArticle = String(row.parent_article || '').toLowerCase();
+              return (
+                article.includes(searchLower) ||
+                supplierName.includes(searchLower) ||
+                parentArticle.includes(searchLower)
+              );
+            })
+          : preparedRows;
+
+        const total = filteredRows.length;
+        const rows = filteredRows.slice(offset, offset + limit);
+        return res.json({
+          mode,
+          store: appContext.connector.store,
+          supplier: supplierFilter,
+          total,
+          previewTotal: Number(exportResult.preview?.total || 0),
+          batchTotal: Array.isArray(exportResult.batch?.rows) ? exportResult.batch.rows.length : 0,
+          batchMeta: exportResult.batch?.meta || null,
+          rows
+        });
+      }
+
+      const result = await catalogAdmin.listStoreImportPreview({
+        limit,
+        offset,
+        supplierId,
+        search,
+        store
+      });
+      return res.json({
+        mode,
+        ...result,
+        previewTotal: result.total,
+        batchTotal: null,
+        batchMeta: null
+      });
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'store_preview_error') });
+    }
+  });
+
+  app.get('/admin/api/store-mirror-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = parseLimit(req.query.limit, 100);
+      const offset = parseOffset(req.query.offset);
+      const search = typeof req.query.search === 'string' ? req.query.search : null;
+      const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
+      const result = await catalogAdmin.listStoreMirrorPreview({
+        limit,
+        offset,
+        search,
+        store
+      });
+      return res.json(result);
+    } catch (err) {
+      return res
+        .status(readErrorStatus(err))
+        .json({ error: readErrorMessage(err, 'store_mirror_preview_error') });
+    }
+  });
+
   app.get('/admin/api/merged-preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
     try {
       const limit = parseLimit(req.query.limit, 100);
