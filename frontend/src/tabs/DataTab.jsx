@@ -1,6 +1,34 @@
 import React from 'react';
 import { Section } from '../components/ui';
 
+function formatDateTimeCell(value) {
+  if (!value) {
+    return '-';
+  }
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString('uk-UA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function formatPriceCell(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return '-';
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  return numeric.toLocaleString('uk-UA');
+}
+
 const VIEW_CONFIG = {
   merged: {
     title: 'Зведені дані (merged)',
@@ -8,13 +36,15 @@ const VIEW_CONFIG = {
     loadLabel: 'Завантажити зведені',
     exportHref: '/admin/api/merged-export',
     columns: [
-      { key: 'article', label: 'Артикул' },
+      { key: 'article', label: 'Артикул (raw)' },
       { key: 'size', label: 'Розмір' },
+      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'supplier_sku_prefix', label: 'SKU префікс' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price', label: 'Ціна' },
-      { key: 'supplier_name', label: 'Постачальник' },
       { key: 'extra', label: 'Назва' },
-      { key: 'comment', label: 'Коментар' }
+      { key: 'comment', label: 'Коментар' },
+      { key: 'created_at', label: 'Створено' }
     ],
     supportsSupplierFilter: false,
     supportsMissingOnly: false,
@@ -27,13 +57,16 @@ const VIEW_CONFIG = {
     loadLabel: 'Завантажити фінальні',
     exportHref: '/admin/api/final-export',
     columns: [
-      { key: 'article', label: 'Артикул' },
+      { key: 'article', label: 'SKU (ефективний)' },
       { key: 'size', label: 'Розмір' },
+      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'supplier_sku_prefix', label: 'SKU префікс' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
-      { key: 'supplier_name', label: 'Постачальник' },
-      { key: 'comment', label: 'Коментар' }
+      { key: 'extra', label: 'Назва' },
+      { key: 'comment', label: 'Коментар' },
+      { key: 'created_at', label: 'Створено' }
     ],
     supportsSupplierFilter: true,
     supportsMissingOnly: false,
@@ -46,13 +79,21 @@ const VIEW_CONFIG = {
     loadLabel: 'Завантажити порівняння',
     exportHref: '/admin/api/compare-export?store=cscart',
     columns: [
-      { key: 'article', label: 'Артикул' },
+      { key: 'article', label: 'SKU (ефективний)' },
       { key: 'size', label: 'Розмір' },
+      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'supplier_sku_prefix', label: 'SKU префікс' },
+      { key: 'quantity', label: 'К-сть' },
+      { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
-      { key: 'comment', label: 'Коментар' },
-      { key: 'sku_article', label: 'SKU артикул' },
+      { key: 'sku_article', label: 'SKU з розміром' },
+      { key: 'store_article', label: 'Артикул в магазині' },
       { key: 'store_sku', label: 'SKU магазину' },
-      { key: 'store_visibility', label: 'Видимість' }
+      { key: 'store_price', label: 'Ціна в магазині' },
+      { key: 'store_visibility', label: 'Видимість в магазині' },
+      { key: 'store_supplier', label: 'Постачальник в магазині' },
+      { key: 'comment', label: 'Коментар' },
+      { key: 'extra', label: 'Назва' }
     ],
     supportsSupplierFilter: true,
     supportsMissingOnly: true,
@@ -70,7 +111,8 @@ const VIEW_CONFIG = {
       { key: 'parent_article', label: 'Батьківський артикул' },
       { key: 'price', label: 'Ціна' },
       { key: 'visibility', label: 'Видимість' },
-      { key: 'seen_at', label: 'Оновлено' }
+      { key: 'seen_at', label: 'Останній snapshot' },
+      { key: 'synced_at', label: 'Останнє sync-оновлення' }
     ],
     supportsSupplierFilter: false,
     supportsMissingOnly: false,
@@ -83,14 +125,19 @@ const VIEW_CONFIG = {
     loadLabel: 'Завантажити preview відправки',
     exportHref: null,
     columns: [
-      { key: 'article', label: 'Артикул' },
+      { key: 'article', label: 'SKU (ефективний)' },
       { key: 'size', label: 'Розмір' },
+      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'supplier_sku_prefix', label: 'SKU префікс' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
-      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'sku_article', label: 'SKU з розміром' },
       { key: 'parent_article', label: 'Батьківський артикул' },
-      { key: 'comment', label: 'Коментар' }
+      { key: 'visibility', label: 'Видимість' },
+      { key: 'extra', label: 'Назва' },
+      { key: 'comment', label: 'Коментар' },
+      { key: 'created_at', label: 'Створено' }
     ],
     supportsSupplierFilter: true,
     supportsMissingOnly: false,
@@ -159,8 +206,10 @@ export function DataTab({
   const storePreviewColumns =
     storePreviewMode === 'delta'
       ? [
-          { key: 'article', label: 'Артикул' },
+          { key: 'article', label: 'SKU (до імпорту)' },
+          { key: 'size', label: 'Розмір' },
           { key: 'supplier_name', label: 'Постачальник' },
+          { key: 'supplier_sku_prefix', label: 'SKU префікс' },
           { key: 'parent_article', label: 'Батьківський артикул' },
           { key: 'price_final', label: 'Ціна для оновлення' },
           { key: 'visibility', label: 'Видимість' }
@@ -204,7 +253,9 @@ export function DataTab({
               >
                 <option value="">Всі</option>
                 {supplierOptions.map((s) => (
-                  <option key={s.id} value={String(s.id)}>{s.name}</option>
+                  <option key={s.id} value={String(s.id)}>
+                    {s.name}{s.sku_prefix ? ` (SKU: ${s.sku_prefix})` : ''}
+                  </option>
                 ))}
               </select>
             </div>
@@ -356,16 +407,35 @@ export function DataTab({
                   return (
                     <tr key={`row_${rowIndex}`} style={isHiding ? { opacity: 0.55 } : undefined}>
                       {currentColumns.map((column) => {
-                        if (column.key === 'visibility') {
+                        if (column.key === 'visibility' || column.key === 'store_visibility') {
                           return (
                             <td key={`${rowIndex}_${column.key}`}>
                               {row[column.key] === true ? (
                                 <span style={{ color: '#0f8a4b', fontWeight: 600 }}>Активний</span>
                               ) : row[column.key] === false ? (
-                                <span style={{ color: '#c22727' }}>→ Приховати</span>
+                                <span style={{ color: '#c22727' }}>{column.key === 'visibility' ? '→ Приховати' : 'Прихований'}</span>
                               ) : '-'}
                             </td>
                           );
+                        }
+                        if (
+                          column.key === 'price' ||
+                          column.key === 'price_base' ||
+                          column.key === 'price_final' ||
+                          column.key === 'store_price'
+                        ) {
+                          return <td key={`${rowIndex}_${column.key}`}>{formatPriceCell(row[column.key])}</td>;
+                        }
+                        if (
+                          column.key === 'created_at' ||
+                          column.key === 'seen_at' ||
+                          column.key === 'synced_at'
+                        ) {
+                          return <td key={`${rowIndex}_${column.key}`}>{formatDateTimeCell(row[column.key])}</td>;
+                        }
+                        if (column.key === 'supplier_sku_prefix') {
+                          const value = String(row[column.key] || '').trim();
+                          return <td key={`${rowIndex}_${column.key}`}>{value || '-'}</td>;
                         }
                         return (
                           <td key={`${rowIndex}_${column.key}`}>{String(row[column.key] ?? '-')}</td>

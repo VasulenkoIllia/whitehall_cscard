@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Pool, type PoolClient } from 'pg';
+import { normalizeSkuPrefixRaw as normalizeSkuPrefix } from '../core/admin/supplierValidation';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -230,6 +231,7 @@ async function main() {
         ? Math.trunc(Number(supplier.priority))
         : 100;
       const isActive = toBoolean(supplier.is_active, true);
+      const skuPrefix = normalizeSkuPrefix(supplier.sku_prefix);
       const legacyRuleSetId = toInt(supplier.markup_rule_set_id);
       const targetRuleSetId = legacyRuleSetId ? (ruleSetIdMap.get(legacyRuleSetId) ?? null) : null;
 
@@ -253,8 +255,9 @@ async function main() {
                min_profit_amount = $4,
                priority = $5,
                is_active = $6,
-               markup_rule_set_id = $7
-           WHERE id = $8`,
+               markup_rule_set_id = $7,
+               sku_prefix = $8
+           WHERE id = $9`,
           [
             name,
             markupPercent,
@@ -263,6 +266,7 @@ async function main() {
             priority,
             isActive,
             targetRuleSetId,
+            skuPrefix,
             targetSupplierId
           ]
         );
@@ -270,10 +274,10 @@ async function main() {
       } else {
         const inserted = await client.query(
           `INSERT INTO suppliers
-             (name, markup_percent, min_profit_enabled, min_profit_amount, priority, is_active, markup_rule_set_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+             (name, markup_percent, min_profit_enabled, min_profit_amount, priority, is_active, markup_rule_set_id, sku_prefix)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id`,
-          [name, markupPercent, minProfitEnabled, minProfitAmount, priority, isActive, targetRuleSetId]
+          [name, markupPercent, minProfitEnabled, minProfitAmount, priority, isActive, targetRuleSetId, skuPrefix]
         );
         targetSupplierId = Number(inserted.rows[0].id);
         suppliersCreated += 1;

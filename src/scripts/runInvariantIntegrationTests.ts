@@ -53,6 +53,7 @@ async function createTables(pool: Pool): Promise<void> {
       min_profit_amount NUMERIC(10,2) DEFAULT 0,
       priority INT DEFAULT 100,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      sku_prefix TEXT,
       markup_rule_set_id BIGINT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -87,6 +88,7 @@ async function createTables(pool: Pool): Promise<void> {
       price NUMERIC(12,2),
       price_with_markup NUMERIC(12,2),
       extra TEXT,
+      comment_text TEXT,
       row_data JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -100,6 +102,7 @@ async function createTables(pool: Pool): Promise<void> {
       price_base NUMERIC(12,2),
       price_final NUMERIC(12,2),
       extra TEXT,
+      comment_text TEXT,
       supplier_id BIGINT REFERENCES suppliers(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -252,6 +255,72 @@ async function testOverridePrecedenceInvariant(
   assert.equal(row?.priceFinal, 777, 'active override must replace final price in preview');
 }
 
+async function testSupplierPrefixIsolationInvariant(
+  pool: Pool,
+  context: {
+    supplierA: number;
+    supplierB: number;
+    supplierC: number;
+  }
+): Promise<void> {
+  await pool.query(`UPDATE suppliers SET sku_prefix = 'SUPA' WHERE id = $1`, [context.supplierA]);
+  await pool.query(`UPDATE suppliers SET sku_prefix = 'SUPB' WHERE id = $1`, [context.supplierB]);
+  await pool.query(`UPDATE suppliers SET sku_prefix = NULL WHERE id = $1`, [context.supplierC]);
+
+  const importJob = await pool.query<{ id: number }>(
+    `INSERT INTO jobs (type, status, meta, started_at, finished_at)
+     VALUES ('import_all', 'success', '{}'::jsonb, NOW(), NOW())
+     RETURNING id::int AS id`
+  );
+  const finalizeJob = await pool.query<{ id: number }>(
+    `INSERT INTO jobs (type, status, meta, started_at)
+     VALUES ('finalize', 'running', '{}'::jsonb, NOW())
+     RETURNING id::int AS id`
+  );
+
+  await pool.query(
+    `INSERT INTO products_raw
+       (job_id, supplier_id, source_id, article, size, quantity, price, price_with_markup, extra)
+     VALUES
+       ($1, $2, 1, '123123', NULL, 4, 100, NULL, 'supplier a'),
+       ($1, $3, 1, '123123', NULL, 2, 90, NULL, 'supplier b'),
+       ($1, $4, 1, '123123', NULL, 1, 80, NULL, 'supplier c')`,
+    [importJob.rows[0].id, context.supplierA, context.supplierB, context.supplierC]
+  );
+
+  const finalizer = new FinalizerDb(pool, {
+    finalizeDeleteEnabled: true,
+    priceAtImportEnabled: false
+  });
+  const summary = await finalizer.buildFinalDataset(finalizeJob.rows[0].id);
+  assert.equal(summary.finalCount, 3, 'same article must be isolated by supplier sku prefixes');
+
+  const rows = await pool.query<{ article: string }>(
+    `SELECT article
+     FROM products_final
+     ORDER BY article ASC`
+  );
+  const articles = rows.rows.map((row) => row.article);
+  assert.deepEqual(
+    articles,
+    ['123123', 'SUPA-123123', 'SUPB-123123'],
+    'products_final must contain prefixed and plain sku variants'
+  );
+
+  await pool.query(`UPDATE jobs SET status = 'success', finished_at = NOW() WHERE id = $1`, [
+    finalizeJob.rows[0].id
+  ]);
+
+  const previewProvider = new ExportPreviewDb(pool);
+  const preview = await previewProvider.buildNeutralPreview(0, { supplier: null });
+  const previewArticles = preview.rows.map((item) => item.article).sort();
+  assert.deepEqual(
+    previewArticles,
+    ['123123', 'SUPA-123123', 'SUPB-123123'],
+    'export preview must use effective prefixed sku values'
+  );
+}
+
 async function testResumeMismatchGuards(pool: Pool): Promise<void> {
   const failedStoreImport = await pool.query<{ id: number }>(
     `INSERT INTO jobs (type, status, meta, started_at, finished_at)
@@ -331,6 +400,7 @@ async function main(): Promise<void> {
     const seeded = await seedCoreData(pool);
     await testFinalizeDedupInvariant(pool, seeded);
     await testOverridePrecedenceInvariant(pool, seeded);
+    await testSupplierPrefixIsolationInvariant(pool, seeded);
     await testResumeMismatchGuards(pool);
 
     // eslint-disable-next-line no-console
@@ -339,7 +409,13 @@ async function main(): Promise<void> {
         ok: true,
         suite: 'invariant-integration',
         schema,
-        checks: ['mapping', 'dedup-winner', 'override-precedence', 'resume-guards']
+        checks: [
+          'mapping',
+          'dedup-winner',
+          'override-precedence',
+          'supplier-sku-prefix-isolation',
+          'resume-guards'
+        ]
       })
     );
   } finally {

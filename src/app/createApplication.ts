@@ -130,6 +130,7 @@ function createImportBatchOptimizer(
     String(env.CSCART_API_UPDATE_FEATURE_ENABLED || 'true').toLowerCase() !== 'false';
   const featureScopeId = String(readEnvPositiveInt(env.CSCART_API_UPDATE_FEATURE_ID, 564));
   const featureScopeValue = String(env.CSCART_API_UPDATE_FEATURE_VALUE || 'Y').trim() || 'Y';
+  const allowCreateInStore = config.connectors.cscart.allowCreate;
 
   return async (batch: StoreImportBatch<unknown>): Promise<StoreImportBatch<unknown>> => {
     if (batch.store !== 'cscart') {
@@ -162,14 +163,31 @@ function createImportBatchOptimizer(
         expectedValue: featureScopeValue,
         inputTotal: rows.length,
         matchedInput: rows.length,
+        matchedManagedInput: rows.length,
+        matchedMissingInMirrorInput: 0,
         droppedInput: 0
       };
     }
 
     let rowsForDelta: CsCartImportRow[] = scopedRows;
     let deactivateMissingSummary: unknown;
+    const matchedMissingInMirrorInput = Number(
+      (featureScopeSummary as Record<string, unknown>)?.matchedMissingInMirrorInput || 0
+    );
+    const matchedManagedInput = Number(
+      (featureScopeSummary as Record<string, unknown>)?.matchedManagedInput || 0
+    );
+    // Skip deactivation only when the batch is a *mix* of known-managed rows and
+    // genuinely-new rows that require allowCreate.  If matchedManagedInput === 0
+    // every row is absent from the mirror — most likely a supplier prefix change —
+    // and deactivation must run so old (pre-prefix) products are hidden in the store.
+    const skipDeactivationWithoutCreate =
+      featureScopeEnabled &&
+      matchedMissingInMirrorInput > 0 &&
+      matchedManagedInput > 0 &&
+      !allowCreateInStore;
 
-    if (disableMissingOnFullImport && !supplierFilter) {
+    if (disableMissingOnFullImport && !supplierFilter && !skipDeactivationWithoutCreate) {
       const deactivateMissing = await storeMirrorService.appendCsCartMissingAsHidden(
         scopedRows,
         maxMirrorAgeMinutes,
@@ -177,6 +195,16 @@ function createImportBatchOptimizer(
       );
       rowsForDelta = deactivateMissing.rows as CsCartImportRow[];
       deactivateMissingSummary = deactivateMissing.summary;
+    } else if (skipDeactivationWithoutCreate) {
+      deactivateMissingSummary = {
+        enabled: false,
+        reason: 'allow_create_required_for_missing_in_mirror',
+        supplier: supplierFilter,
+        inputTotal: scopedRows.length,
+        appended: 0,
+        matchedMissingInMirrorInput,
+        allowCreateInStore
+      };
     } else {
       deactivateMissingSummary = {
         enabled: false,

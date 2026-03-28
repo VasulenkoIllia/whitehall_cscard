@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { SUPPLIER_SKU_PREFIX_RE } from './supplierValidation';
 
 type SupplierUpdatePayload = {
   name?: string;
@@ -8,6 +9,7 @@ type SupplierUpdatePayload = {
   min_profit_amount?: number;
   is_active?: boolean;
   markup_rule_set_id?: number | null;
+  sku_prefix?: string | null;
 };
 
 type SourceUpdatePayload = {
@@ -138,6 +140,36 @@ function toOptionalFiniteNumber(value: unknown): number | null {
     return null;
   }
   return numeric;
+}
+
+function normalizeSkuPrefix(value: unknown): string | null {
+  if (value === null || typeof value === 'undefined') {
+    return null;
+  }
+  const normalized = String(value).trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+  if (!SUPPLIER_SKU_PREFIX_RE.test(normalized)) {
+    throw createBadRequest(
+      'sku_prefix is invalid (allowed: A-Z, 0-9, "-", "_" and max length 24)'
+    );
+  }
+  return normalized;
+}
+
+function isSupplierSkuPrefixConflict(err: unknown): boolean {
+  return (
+    (err as any)?.code === '23505' &&
+    String((err as any)?.constraint || '') === 'suppliers_sku_prefix_uq'
+  );
+}
+
+function isSupplierSkuPrefixFormatViolation(err: unknown): boolean {
+  return (
+    (err as any)?.code === '23514' &&
+    String((err as any)?.constraint || '') === 'suppliers_sku_prefix_format_chk'
+  );
 }
 
 function buildUpdateClause(
@@ -365,7 +397,7 @@ export class CatalogAdminService {
     const whereParts: string[] = [];
     if (search) {
       values.push(`%${search}%`);
-      whereParts.push(`s.name ILIKE $${values.length}`);
+      whereParts.push(`(s.name ILIKE $${values.length} OR COALESCE(s.sku_prefix, '') ILIKE $${values.length})`);
     }
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
@@ -385,6 +417,7 @@ export class CatalogAdminService {
          s.min_profit_enabled,
          s.min_profit_amount,
          s.is_active,
+         s.sku_prefix,
          s.created_at,
          s.markup_rule_set_id,
          rs.name AS markup_rule_set_name
@@ -414,6 +447,9 @@ export class CatalogAdminService {
     const minProfitAmount = minProfitEnabled
       ? Math.max(0, Number.isFinite(Number(payload.min_profit_amount)) ? Number(payload.min_profit_amount) : 0)
       : 0;
+    // For CREATE: absent key and explicit null are both treated as "no prefix".
+    // normalizeSkuPrefix(undefined) → null, so no hasOwnProperty guard needed here.
+    const skuPrefix = normalizeSkuPrefix(payload.sku_prefix ?? null);
 
     let markupRuleSetId: number | null = null;
     if (Object.prototype.hasOwnProperty.call(payload, 'markup_rule_set_id')) {
@@ -437,14 +473,26 @@ export class CatalogAdminService {
       markupRuleSetId = await this.resolveDefaultMarkupRuleSetId();
     }
 
-    const result = await this.pool.query(
-      `INSERT INTO suppliers
-         (name, markup_percent, priority, min_profit_enabled, min_profit_amount, markup_rule_set_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [name, markupPercent, priority, minProfitEnabled, minProfitAmount, markupRuleSetId]
-    );
-    return result.rows[0];
+    try {
+      const result = await this.pool.query(
+        `INSERT INTO suppliers
+           (name, markup_percent, priority, min_profit_enabled, min_profit_amount, markup_rule_set_id, sku_prefix)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [name, markupPercent, priority, minProfitEnabled, minProfitAmount, markupRuleSetId, skuPrefix]
+      );
+      return result.rows[0];
+    } catch (err) {
+      if (isSupplierSkuPrefixConflict(err)) {
+        throw createBadRequest('sku_prefix must be unique');
+      }
+      if (isSupplierSkuPrefixFormatViolation(err)) {
+        throw createBadRequest(
+          'sku_prefix is invalid (allowed: A-Z, 0-9, "-", "_" and max length 24)'
+        );
+      }
+      throw err;
+    }
   }
 
   async getSupplierNameById(supplierId: number): Promise<string | null> {
@@ -492,6 +540,9 @@ export class CatalogAdminService {
         markupRuleSetId = normalized;
       }
     }
+    const skuPrefix = Object.prototype.hasOwnProperty.call(payload, 'sku_prefix')
+      ? normalizeSkuPrefix(payload.sku_prefix)
+      : undefined;
 
     const minProfitEnabledIsFalse =
       typeof payload.min_profit_enabled === 'boolean' && payload.min_profit_enabled === false;
@@ -513,7 +564,8 @@ export class CatalogAdminService {
           typeof payload.min_profit_enabled === 'boolean' ? payload.min_profit_enabled : undefined,
         min_profit_amount: minProfitAmount,
         is_active: typeof payload.is_active === 'boolean' ? payload.is_active : undefined,
-        markup_rule_set_id: markupRuleSetId
+        markup_rule_set_id: markupRuleSetId,
+        sku_prefix: skuPrefix
       },
       values
     );
@@ -521,14 +573,26 @@ export class CatalogAdminService {
       throw createBadRequest('no fields to update');
     }
     values.push(normalizedId);
-    const result = await this.pool.query(
-      `UPDATE suppliers
-       SET ${updates.join(', ')}
-       WHERE id = $${values.length}
-       RETURNING *`,
-      values
-    );
-    return result.rows[0];
+    try {
+      const result = await this.pool.query(
+        `UPDATE suppliers
+         SET ${updates.join(', ')}
+         WHERE id = $${values.length}
+         RETURNING *`,
+        values
+      );
+      return result.rows[0];
+    } catch (err) {
+      if (isSupplierSkuPrefixConflict(err)) {
+        throw createBadRequest('sku_prefix must be unique');
+      }
+      if (isSupplierSkuPrefixFormatViolation(err)) {
+        throw createBadRequest(
+          'sku_prefix is invalid (allowed: A-Z, 0-9, "-", "_" and max length 24)'
+        );
+      }
+      throw err;
+    }
   }
 
   async deleteSupplier(supplierId: number): Promise<Record<string, unknown> | null> {
@@ -1398,6 +1462,10 @@ export class CatalogAdminService {
          WHERE store = $1`,
         [store]
       ),
+      // NOTE: coverage is computed from products_final, which stores the already-prefixed
+      // article (e.g. "SUPA-123").  This is correct as long as products_final is current.
+      // After changing a supplier's sku_prefix, coverage stats will be stale until the
+      // next finalize run re-bakes the new prefix into products_final.
       this.pool.query(
         `WITH base AS (
            SELECT
@@ -1620,7 +1688,7 @@ export class CatalogAdminService {
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     const result = await this.pool.query(
       `SELECT pr.article, pr.size, pr.quantity, pr.price, pr.extra, pr.comment_text AS comment,
-              sp.name AS supplier_name, pr.created_at, pr.job_id,
+              sp.name AS supplier_name, sp.sku_prefix AS supplier_sku_prefix, pr.created_at, pr.job_id,
               COUNT(*) OVER() AS total
        FROM products_raw pr
        JOIN suppliers sp ON sp.id = pr.supplier_id
@@ -1663,7 +1731,8 @@ export class CatalogAdminService {
         `(pf.article ILIKE $${index}
           OR pf.extra ILIKE $${index}
           OR pf.comment_text ILIKE $${index}
-          OR sp.name ILIKE $${index})`
+          OR sp.name ILIKE $${index}
+          OR COALESCE(sp.sku_prefix, '') ILIKE $${index})`
       );
     }
     if (supplierId) {
@@ -1683,7 +1752,8 @@ export class CatalogAdminService {
     const result = await this.pool.query(
       `SELECT pf.article, pf.size, pf.quantity, pf.price_base,
               COALESCE(po.price_final, pf.price_final) AS price_final,
-              pf.extra, pf.comment_text AS comment, sp.name AS supplier_name, pf.created_at, pf.job_id,
+              pf.extra, pf.comment_text AS comment, sp.name AS supplier_name, sp.sku_prefix AS supplier_sku_prefix,
+              pf.created_at, pf.job_id,
               po.id AS override_id, po.price_final AS override_price, po.notes AS override_notes,
               COUNT(*) OVER() AS total
        FROM products_final pf
@@ -1733,6 +1803,7 @@ export class CatalogAdminService {
           OR base.extra ILIKE $${index}
           OR base.comment ILIKE $${index}
           OR base.supplier_name ILIKE $${index}
+          OR base.supplier_sku_prefix ILIKE $${index}
           OR base.sku_article ILIKE $${index})`
       );
     }
@@ -1754,6 +1825,8 @@ export class CatalogAdminService {
            pf.extra,
            pf.comment_text AS comment,
            sp.name AS supplier_name,
+           COALESCE(sp.sku_prefix, '') AS supplier_sku_prefix,
+           (sp.sku_prefix IS NOT NULL) AS supplier_has_sku_prefix,
            CASE
              WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
              WHEN right(lower(pf.article), length(replace(btrim(pf.size), ',', '.'))) =
@@ -1778,6 +1851,8 @@ export class CatalogAdminService {
          base.extra,
          base.comment,
          base.supplier_name,
+         NULLIF(base.supplier_sku_prefix, '') AS supplier_sku_prefix,
+         base.supplier_has_sku_prefix,
          base.sku_article,
          sm_base.article AS store_article,
          sm_sku.article AS store_sku,
@@ -1879,7 +1954,8 @@ export class CatalogAdminService {
         `(pf.article ILIKE $${index}
           OR pf.extra ILIKE $${index}
           OR pf.comment_text ILIKE $${index}
-          OR sp.name ILIKE $${index})`
+          OR sp.name ILIKE $${index}
+          OR COALESCE(sp.sku_prefix, '') ILIKE $${index})`
       );
     }
     const whereClause = `WHERE ${whereParts.join(' AND ')}`;
@@ -1918,6 +1994,7 @@ export class CatalogAdminService {
          pf.extra,
          pf.comment_text AS comment,
          sp.name AS supplier_name,
+         sp.sku_prefix AS supplier_sku_prefix,
          pf.created_at,
          COUNT(*) OVER() AS total
        FROM products_final pf

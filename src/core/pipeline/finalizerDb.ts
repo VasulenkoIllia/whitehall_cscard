@@ -4,7 +4,10 @@ import type { FinalizeSummary, Finalizer } from './contracts';
 const stageFromPrecomputedSql = `
   WITH rounded AS (
     SELECT
-      pr.article,
+      CASE
+        WHEN s.sku_prefix IS NULL OR btrim(s.sku_prefix) = '' THEN pr.article
+        ELSE s.sku_prefix || '-' || pr.article
+      END AS article,
       pr.size,
       pr.quantity,
       pr.price AS price_base,
@@ -51,7 +54,10 @@ const stageFromPrecomputedSql = `
 const stageWithFinalizePricingSql = `
   WITH base AS (
     SELECT
-      pr.article,
+      CASE
+        WHEN s.sku_prefix IS NULL OR btrim(s.sku_prefix) = '' THEN pr.article
+        ELSE s.sku_prefix || '-' || pr.article
+      END AS article,
       pr.size,
       pr.quantity,
       pr.price AS price_base,

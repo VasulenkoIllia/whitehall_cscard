@@ -50,7 +50,8 @@ export class ExportPreviewDb implements ExportPreviewProvider {
          pf.size,
          COALESCE(po.price_final, pf.price_final) AS price_final,
          pf.supplier_id,
-         sp.name AS supplier_name
+         sp.name AS supplier_name,
+         sp.sku_prefix AS supplier_sku_prefix
        FROM products_final pf
        LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
        LEFT JOIN price_overrides po
@@ -70,7 +71,8 @@ export class ExportPreviewDb implements ExportPreviewProvider {
         priceFinal: row.price_final === null ? null : Number(row.price_final),
         visibility: true,
         parentArticle,
-        supplier: row.supplier_name || null
+        supplier: row.supplier_name || null,
+        supplierSkuPrefix: row.supplier_sku_prefix || null
       };
     });
 

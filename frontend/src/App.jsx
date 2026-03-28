@@ -33,6 +33,7 @@ const SOURCE_TYPES = ['google_sheet', 'csv', 'xml', 'json'];
 const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra', 'comment'];
 const TOAST_LIMIT = 6;
 const TOAST_TTL_MS = 5500;
+const SUPPLIER_SKU_PREFIX_RE = /^[A-Z0-9][A-Z0-9_-]{0,23}$/;
 
 function readTabFromLocation() {
   if (typeof window === 'undefined') {
@@ -103,6 +104,11 @@ function parsePositiveInt(value) {
   return Math.trunc(numeric);
 }
 
+function normalizeSupplierSkuPrefix(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return text || '';
+}
+
 function normalizeSchedulerIntervalMinutes(cronRaw, fallbackValue) {
   const cron = String(cronRaw || '').trim();
   if (!cron) {
@@ -161,7 +167,8 @@ function toSupplierDraft(supplier = null) {
       min_profit_enabled: true,
       min_profit_amount: '0',
       is_active: true,
-      markup_rule_set_id: ''
+      markup_rule_set_id: '',
+      sku_prefix: ''
     };
   }
   return {
@@ -174,7 +181,8 @@ function toSupplierDraft(supplier = null) {
     markup_rule_set_id:
       supplier.markup_rule_set_id === null || typeof supplier.markup_rule_set_id === 'undefined'
         ? ''
-        : String(supplier.markup_rule_set_id)
+        : String(supplier.markup_rule_set_id),
+    sku_prefix: String(supplier.sku_prefix || '')
   };
 }
 
@@ -918,6 +926,10 @@ export default function App() {
         errors.markup_rule_set_id = 'Оберіть коректний тип націнки';
       }
     }
+    const skuPrefix = normalizeSupplierSkuPrefix(supplierDraft.sku_prefix);
+    if (skuPrefix && !SUPPLIER_SKU_PREFIX_RE.test(skuPrefix)) {
+      errors.sku_prefix = 'Префікс: A-Z, 0-9, "-", "_" (до 24 символів)';
+    }
     return errors;
   };
 
@@ -971,7 +983,11 @@ export default function App() {
       markup_rule_set_id:
         supplierDraft.markup_rule_set_id.trim() === ''
           ? null
-          : Number(supplierDraft.markup_rule_set_id)
+          : Number(supplierDraft.markup_rule_set_id),
+      sku_prefix: (() => {
+        const normalizedPrefix = normalizeSupplierSkuPrefix(supplierDraft.sku_prefix);
+        return normalizedPrefix || null;
+      })()
     };
     setSupplierFormStatus('Збереження постачальника...');
     try {

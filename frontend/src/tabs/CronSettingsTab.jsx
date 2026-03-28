@@ -343,7 +343,9 @@ export function CronSettingsTab({
                       >
                         <option value="">Усі постачальники</option>
                         {supplierOptions.map((s) => (
-                          <option key={`cron_s_${s.id}`} value={s.name}>{s.name}</option>
+                          <option key={`cron_s_${s.id}`} value={s.name}>
+                            {s.name}{s.sku_prefix ? ` (SKU: ${s.sku_prefix})` : ''}
+                          </option>
                         ))}
                       </select>
                     </div>

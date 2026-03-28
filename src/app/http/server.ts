@@ -695,16 +695,35 @@ export function createHttpServer(appContext: AppContext) {
         }
 
         const exportResult = await pipeline.runStoreExport(0, supplierFilter);
+        const suppliersForPrefix = await catalogAdmin.listSuppliers({
+          search: null,
+          sort: 'id_asc'
+        });
+        const prefixBySupplierName = new Map<string, string>();
+        for (let index = 0; index < suppliersForPrefix.length; index += 1) {
+          const row = suppliersForPrefix[index] as Record<string, unknown>;
+          const name = String(row.name || '').trim().toLowerCase();
+          const prefix = String(row.sku_prefix || '').trim();
+          if (!name || !prefix) {
+            continue;
+          }
+          prefixBySupplierName.set(name, prefix);
+        }
         const preparedRows = (Array.isArray(exportResult.batch?.rows) ? exportResult.batch.rows : []).map(
           (row) => {
             const payload = (row || {}) as Record<string, unknown>;
+            const supplierName =
+              payload.supplier === null || typeof payload.supplier === 'undefined'
+                ? null
+                : String(payload.supplier);
+            const supplierPrefix = supplierName
+              ? prefixBySupplierName.get(supplierName.trim().toLowerCase()) || null
+              : null;
             return {
               article: String(payload.productCode || ''),
               size: payload.size === null || typeof payload.size === 'undefined' ? null : String(payload.size),
-              supplier_name:
-                payload.supplier === null || typeof payload.supplier === 'undefined'
-                  ? null
-                  : String(payload.supplier),
+              supplier_name: supplierName,
+              supplier_sku_prefix: supplierPrefix,
               parent_article:
                 payload.parentProductCode === null || typeof payload.parentProductCode === 'undefined'
                   ? null
@@ -726,10 +745,12 @@ export function createHttpServer(appContext: AppContext) {
           ? preparedRows.filter((row) => {
               const article = String(row.article || '').toLowerCase();
               const supplierName = String(row.supplier_name || '').toLowerCase();
+              const supplierPrefix = String(row.supplier_sku_prefix || '').toLowerCase();
               const parentArticle = String(row.parent_article || '').toLowerCase();
               return (
                 article.includes(searchLower) ||
                 supplierName.includes(searchLower) ||
+                supplierPrefix.includes(searchLower) ||
                 parentArticle.includes(searchLower)
               );
             })
@@ -872,7 +893,17 @@ export function createHttpServer(appContext: AppContext) {
       let offset = 0;
 
       startCsvDownload(res, 'merged_export');
-      writeCsvRow(res, ['article', 'size', 'quantity', 'price', 'extra', 'comment', 'supplier', 'created_at']);
+      writeCsvRow(res, [
+        'article',
+        'size',
+        'quantity',
+        'price',
+        'extra',
+        'comment',
+        'supplier',
+        'supplier_sku_prefix',
+        'created_at'
+      ]);
 
       while (true) {
         // eslint-disable-next-line no-await-in-loop
@@ -897,6 +928,7 @@ export function createHttpServer(appContext: AppContext) {
             row.extra,
             row.comment,
             row.supplier_name,
+            row.supplier_sku_prefix,
             row.created_at
           ]);
         }
@@ -925,7 +957,17 @@ export function createHttpServer(appContext: AppContext) {
       let offset = 0;
 
       startCsvDownload(res, 'final_export');
-      writeCsvRow(res, ['article', 'size', 'quantity', 'price_base', 'price_final', 'extra', 'comment', 'supplier']);
+      writeCsvRow(res, [
+        'article',
+        'size',
+        'quantity',
+        'price_base',
+        'price_final',
+        'extra',
+        'comment',
+        'supplier',
+        'supplier_sku_prefix'
+      ]);
 
       while (true) {
         // eslint-disable-next-line no-await-in-loop
@@ -951,7 +993,8 @@ export function createHttpServer(appContext: AppContext) {
             row.price_final,
             row.extra,
             row.comment,
-            row.supplier_name
+            row.supplier_name,
+            row.supplier_sku_prefix
           ]);
         }
 
@@ -991,6 +1034,7 @@ export function createHttpServer(appContext: AppContext) {
         'extra',
         'comment',
         'supplier',
+        'supplier_sku_prefix',
         'sku_article',
         'store_article',
         'store_sku',
@@ -1021,6 +1065,7 @@ export function createHttpServer(appContext: AppContext) {
             row.extra,
             row.comment,
             row.supplier_name,
+            row.supplier_sku_prefix,
             row.sku_article,
             row.store_article,
             row.store_sku,

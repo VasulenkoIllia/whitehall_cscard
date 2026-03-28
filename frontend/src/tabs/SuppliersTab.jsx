@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Section, Tag } from '../components/ui';
 
+// Must match the number of <th> columns in the suppliers table header.
+const SUPPLIER_TABLE_COL_COUNT = 7;
+
 const CYRILLIC_TO_LATIN = {
   а: 'a', б: 'b', в: 'v', г: 'h', ґ: 'g', д: 'd', е: 'e', є: 'ye',
   ж: 'zh', з: 'z', и: 'y', і: 'i', ї: 'yi', й: 'y', к: 'k', л: 'l',
@@ -91,6 +94,7 @@ export function SuppliersTab({
 
   const activeTotal = allSupplierRows.filter((s) => Boolean(s.is_active)).length;
   const inactiveTotal = allSupplierRows.length - activeTotal;
+  const prefixedTotal = allSupplierRows.filter((s) => String(s.sku_prefix || '').trim().length > 0).length;
   const uniqueRuleSets = new Set(
     allSupplierRows.map((s) => String(s.markup_rule_set_name || '').trim()).filter(Boolean)
   ).size;
@@ -214,6 +218,8 @@ export function SuppliersTab({
             <span className="suppliers-stat-sep">·</span>
             <span className="suppliers-stat"><strong className={inactiveTotal > 0 ? 'stat-warn' : ''}>{inactiveTotal}</strong> неактивних</span>
             <span className="suppliers-stat-sep">·</span>
+            <span className="suppliers-stat"><strong>{prefixedTotal}</strong> з префіксом SKU</span>
+            <span className="suppliers-stat-sep">·</span>
             <span className="suppliers-stat"><strong>{uniqueRuleSets}</strong> типів націнок</span>
           </div>
 
@@ -289,6 +295,7 @@ export function SuppliersTab({
                   </th>
                   <th>Постачальник</th>
                   <th>Стан</th>
+                  <th>SKU префікс</th>
                   <th>Пріоритет</th>
                   <th>Тип націнки</th>
                   <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Дії</th>
@@ -297,7 +304,7 @@ export function SuppliersTab({
               <tbody>
                 {supplierRows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="supplier-empty-row">
+                    <td colSpan={SUPPLIER_TABLE_COL_COUNT} className="supplier-empty-row">
                       Нічого не знайдено за поточним пошуком
                     </td>
                   </tr>
@@ -323,6 +330,11 @@ export function SuppliersTab({
                           <Tag tone={supplier.is_active ? 'ok' : 'warn'}>
                             {supplier.is_active ? 'Активний' : 'Призупинено'}
                           </Tag>
+                        </td>
+                        <td>
+                          <span className="rule-set-pill">
+                            {supplier.sku_prefix ? supplier.sku_prefix : '—'}
+                          </span>
                         </td>
                         <td>{supplier.priority}</td>
                         <td>
@@ -392,6 +404,18 @@ export function SuppliersTab({
                   onChange={(event) => setSupplierDraft((prev) => ({ ...prev, priority: event.target.value }))}
                 />
                 {supplierErrors.priority ? <div className="field-error">{supplierErrors.priority}</div> : null}
+              </div>
+              <div>
+                <label>SKU префікс (необовʼязково)</label>
+                <input
+                  placeholder="Напр.: SUPA"
+                  value={supplierDraft.sku_prefix}
+                  onChange={(event) =>
+                    setSupplierDraft((prev) => ({ ...prev, sku_prefix: event.target.value.toUpperCase() }))
+                  }
+                />
+                <div className="hint">Формат: A-Z, 0-9, "-", "_" (до 24 символів).</div>
+                {supplierErrors.sku_prefix ? <div className="field-error">{supplierErrors.sku_prefix}</div> : null}
               </div>
             </div>
 

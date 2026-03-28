@@ -50,6 +50,8 @@ export interface CsCartFeatureScopeSummary {
   mirrorTotal: number;
   managedInMirror: number;
   matchedInput: number;
+  matchedManagedInput: number;
+  matchedMissingInMirrorInput: number;
   droppedInput: number;
 }
 
@@ -330,6 +332,8 @@ export class StoreMirrorService {
           mirrorTotal: mirrorRowsCount,
           managedInMirror: 0,
           matchedInput: 0,
+          matchedManagedInput: 0,
+          matchedMissingInMirrorInput: 0,
           droppedInput: inputTotal
         }
       };
@@ -350,12 +354,15 @@ export class StoreMirrorService {
           mirrorTotal: mirrorRowsCount,
           managedInMirror: 0,
           matchedInput: 0,
+          matchedManagedInput: 0,
+          matchedMissingInMirrorInput: 0,
           droppedInput: inputTotal
         }
       };
     }
 
     const managedCodes = new Set<string>();
+    const mirrorCodes = new Set<string>();
     if (normalizedFeatureId) {
       const mirrorResult = await this.pool.query<{ article: string; raw: unknown }>(
         `SELECT article, raw
@@ -369,6 +376,7 @@ export class StoreMirrorService {
         if (!article) {
           continue;
         }
+        mirrorCodes.add(article);
         const raw = row.raw as Record<string, unknown> | null;
         const features =
           raw && typeof raw === 'object' && !Array.isArray(raw)
@@ -387,8 +395,25 @@ export class StoreMirrorService {
         }
       }
     }
-
-    const filteredRows = rows.filter((row) => managedCodes.has(normalizeArticle(row.productCode)));
+    const filteredRows: CsCartDeltaInputRow[] = [];
+    let matchedManagedInput = 0;
+    let matchedMissingInMirrorInput = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const code = normalizeArticle(row.productCode);
+      if (!code) {
+        continue;
+      }
+      if (managedCodes.has(code)) {
+        matchedManagedInput += 1;
+        filteredRows.push(row);
+        continue;
+      }
+      if (!mirrorCodes.has(code)) {
+        matchedMissingInMirrorInput += 1;
+        filteredRows.push(row);
+      }
+    }
     return {
       rows: filteredRows,
       managedCodes,
@@ -403,6 +428,8 @@ export class StoreMirrorService {
         mirrorTotal: mirrorRowsCount,
         managedInMirror: managedCodes.size,
         matchedInput: filteredRows.length,
+        matchedManagedInput,
+        matchedMissingInMirrorInput,
         droppedInput: Math.max(0, inputTotal - filteredRows.length)
       }
     };

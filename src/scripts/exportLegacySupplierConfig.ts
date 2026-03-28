@@ -64,6 +64,7 @@ async function main() {
          min_profit_amount,
          priority,
          is_active,
+         sku_prefix,
          markup_rule_set_id
        FROM suppliers
        WHERE LOWER(name) = ANY($1::text[])

@@ -72,7 +72,9 @@ export function ManualControlTab({
                   <option value="">-- оберіть постачальника --</option>
                   {supplierOptions.map((supplier) => (
                     <option key={supplier.id} value={supplier.id}>
-                      {supplier.name} {supplier.is_active ? '' : '(призупинено)'}
+                      {supplier.name}
+                      {supplier.sku_prefix ? ` (SKU: ${supplier.sku_prefix})` : ''}
+                      {supplier.is_active ? '' : ' (призупинено)'}
                     </option>
                   ))}
                 </select>
@@ -135,7 +137,7 @@ export function ManualControlTab({
                   <option value="">Усі постачальники</option>
                   {supplierOptions.map((supplier) => (
                     <option key={`store_${supplier.id}`} value={supplier.name}>
-                      {supplier.name}
+                      {supplier.name}{supplier.sku_prefix ? ` (SKU: ${supplier.sku_prefix})` : ''}
                     </option>
                   ))}
                 </select>
@@ -172,7 +174,7 @@ export function ManualControlTab({
                   <option value="">Усі постачальники</option>
                   {supplierOptions.map((supplier) => (
                     <option key={`pipeline_${supplier.id}`} value={supplier.name}>
-                      {supplier.name}
+                      {supplier.name}{supplier.sku_prefix ? ` (SKU: ${supplier.sku_prefix})` : ''}
                     </option>
                   ))}
                 </select>
