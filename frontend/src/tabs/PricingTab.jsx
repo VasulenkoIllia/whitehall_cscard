@@ -14,10 +14,12 @@ const formatNumeric = (value) => {
 
 const formatRangeLabel = (condition) => {
   const from = toFiniteNumber(condition?.price_from);
-  const to = toFiniteNumber(condition?.price_to);
+  const toRaw = toFiniteNumber(condition?.price_to);
+  // price_to = 0 is a legacy sentinel meaning "no upper limit" (∞)
+  const to = toRaw === 0 ? null : toRaw;
   if (from === null && to === null) return 'без діапазону';
-  if (from !== null && to !== null) return `${formatNumeric(from)} - ${formatNumeric(to)}`;
-  if (from !== null) return `від ${formatNumeric(from)}`;
+  if (from !== null && to !== null) return `${formatNumeric(from)} – ${formatNumeric(to)}`;
+  if (from !== null) return `${formatNumeric(from)}+`;
   return `до ${formatNumeric(to)}`;
 };
 
@@ -31,9 +33,11 @@ const formatActionLabel = (condition) => {
 };
 
 const formatIntervalLabel = (priceFrom, priceTo) => {
+  // price_to = 0 is a legacy sentinel meaning "no upper limit" (∞)
+  const effectiveTo = priceTo === 0 ? null : priceTo;
   if (!Number.isFinite(priceFrom)) return '[?; ?)';
-  if (priceTo === null || !Number.isFinite(priceTo)) return `[${formatNumeric(priceFrom)}; +∞)`;
-  return `[${formatNumeric(priceFrom)}; ${formatNumeric(priceTo)})`;
+  if (effectiveTo === null || !Number.isFinite(effectiveTo)) return `[${formatNumeric(priceFrom)}; +∞)`;
+  return `[${formatNumeric(priceFrom)}; ${formatNumeric(effectiveTo)})`;
 };
 
 const detectRuleSetDraftConflicts = (draftConditions) => {
@@ -45,7 +49,9 @@ const detectRuleSetDraftConflicts = (draftConditions) => {
       const priority = Number(condition?.priority);
       const priceFrom = Number(condition?.price_from);
       const priceToRaw = String(condition?.price_to ?? '').trim();
-      const priceTo = priceToRaw === '' ? null : Number(priceToRaw);
+      const priceToNum = priceToRaw === '' ? null : Number(priceToRaw);
+      // price_to = 0 is a legacy sentinel meaning "no upper limit" (∞)
+      const priceTo = priceToNum === 0 ? null : priceToNum;
       return {
         row: index + 1,
         priority,
@@ -189,11 +195,12 @@ export function PricingTab({
             {activeDefaultConditions.length === 0 ? (
               <div className="muted pricing-kpi-empty">Немає активних умов</div>
             ) : (
-              <div className="pricing-default-rules">
+              <div className="pricing-rule-chips">
                 {activeDefaultConditions.map((condition, index) => (
-                  <div key={`default_condition_${condition.id || index}`} className="pricing-default-rule">
-                    <span className="pricing-default-rule-priority">#{Number(condition.priority || 0)}</span>
-                    <span>{formatRangeLabel(condition)} → {formatActionLabel(condition)}</span>
+                  <div key={`default_condition_${condition.id || index}`} className="pricing-rule-chip">
+                    <span className="pricing-rule-chip-range">{formatRangeLabel(condition)}</span>
+                    <span className="pricing-rule-chip-sep">→</span>
+                    <span className="pricing-rule-chip-action">{formatActionLabel(condition)}</span>
                   </div>
                 ))}
               </div>

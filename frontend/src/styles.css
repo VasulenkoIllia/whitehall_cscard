@@ -1014,64 +1014,72 @@ pre {
   border: 1px solid #d9e5f6;
   border-radius: 12px;
   background: linear-gradient(130deg, #f8fbff, #ffffff);
-  padding: 10px;
+  padding: 10px 12px;
 }
 
 .pricing-kpi-label {
-  font-size: 12px;
-  color: #577197;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7a9ac0;
 }
 
 .pricing-kpi-value {
-  margin-top: 4px;
-  font-size: 18px;
+  margin-top: 3px;
+  font-size: 16px;
   font-weight: 700;
   color: #1f3658;
 }
 
 .pricing-kpi-meta {
-  margin-top: 6px;
+  margin-top: 5px;
   display: inline-flex;
   gap: 8px;
   align-items: center;
 }
 
 .pricing-kpi-rules-card {
-  min-height: 100%;
+  /* height is natural (align-items: start on grid parent) */
 }
 
-.pricing-default-rules {
-  margin-top: 6px;
-  display: grid;
-  gap: 6px;
+/* Horizontal wrapping chips for conditions summary */
+.pricing-rule-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
 }
 
-.pricing-default-rule {
-  display: grid;
-  grid-template-columns: 54px 1fr;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 8px;
-  border: 1px solid #e2ebf8;
-  border-radius: 10px;
-  background: #fbfdff;
-  font-size: 13px;
-  color: #1f3557;
-}
-
-.pricing-default-rule-priority {
+.pricing-rule-chip {
   display: inline-flex;
-  justify-content: center;
-  border: 1px solid #cde0f8;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid #c8ddf8;
   border-radius: 999px;
-  padding: 2px 8px;
-  color: #325780;
-  background: #eff5ff;
+  background: #eef5ff;
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.pricing-rule-chip-range {
+  color: #4a6a8e;
+}
+
+.pricing-rule-chip-sep {
+  color: #92b0d0;
+  font-size: 11px;
+}
+
+.pricing-rule-chip-action {
+  font-weight: 700;
+  color: #1a3558;
 }
 
 .pricing-kpi-empty {
   margin-top: 6px;
+  font-size: 13px;
 }
 
 .pricing-table-wrap {
