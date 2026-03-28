@@ -6,13 +6,25 @@
   <component name="ChangeListManager">
     <list default="true" id="e2539e80-4d9b-492c-a689-139fb23c07d4" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/ARCHITECTURE_BASELINE_2026_03.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/ARCHITECTURE_BASELINE_2026_03.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/PLAN_MODULAR_SINGLE_REPO_2026_03.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/ui.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/ui.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/styles.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/CronSettingsTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/CronSettingsTab.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-CtHVbWLN.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/JobsTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/JobsTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/ManualControlTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/ManualControlTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/MappingTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/MappingTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/SuppliersTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/SuppliersTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-CqiN6jU7.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-DSsUxloy.css" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/public/admin/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/public/admin/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/http/server.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/http/server.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/jobs/PipelineJobRunner.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/jobs/PipelineJobRunner.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/pipeline/contracts.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/contracts.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -20,7 +32,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="214" />
+    <option name="cachedIndexableFilesCount" value="219" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="Git.Settings">
@@ -120,7 +132,8 @@
       <workItem from="1774202276564" duration="1030000" />
       <workItem from="1774212040630" duration="861000" />
       <workItem from="1774217953385" duration="1876000" />
-      <workItem from="1774294987933" duration="3868000" />
+      <workItem from="1774294987933" duration="5431000" />
+      <workItem from="1774689004538" duration="3868000" />
     </task>
     <servers />
   </component>

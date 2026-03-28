@@ -3,12 +3,13 @@ import { Section } from '../components/ui';
 
 const VIEW_CONFIG = {
   merged: {
-    title: 'Merged preview',
-    loadLabel: 'Завантажити merged',
+    title: 'Зведені дані (merged)',
+    tabLabel: 'Зведені',
+    loadLabel: 'Завантажити зведені',
     exportHref: '/admin/api/merged-export',
     columns: [
-      { key: 'article', label: 'Article' },
-      { key: 'size', label: 'Size' },
+      { key: 'article', label: 'Артикул' },
+      { key: 'size', label: 'Розмір' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price', label: 'Ціна' },
       { key: 'supplier_name', label: 'Постачальник' },
@@ -21,12 +22,13 @@ const VIEW_CONFIG = {
     supportsFinalSort: false
   },
   final: {
-    title: 'Final preview',
-    loadLabel: 'Завантажити final',
+    title: 'Фінальні товари (final)',
+    tabLabel: 'Фінальні',
+    loadLabel: 'Завантажити фінальні',
     exportHref: '/admin/api/final-export',
     columns: [
-      { key: 'article', label: 'Article' },
-      { key: 'size', label: 'Size' },
+      { key: 'article', label: 'Артикул' },
+      { key: 'size', label: 'Розмір' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
@@ -39,16 +41,17 @@ const VIEW_CONFIG = {
     supportsFinalSort: true
   },
   compare: {
-    title: 'Compare preview (CS-Cart)',
-    loadLabel: 'Завантажити compare',
+    title: 'Порівняння з магазином (CS-Cart)',
+    tabLabel: 'Порівняння',
+    loadLabel: 'Завантажити порівняння',
     exportHref: '/admin/api/compare-export?store=cscart',
     columns: [
-      { key: 'article', label: 'Article' },
-      { key: 'size', label: 'Size' },
+      { key: 'article', label: 'Артикул' },
+      { key: 'size', label: 'Розмір' },
       { key: 'price_final', label: 'Фінальна ціна' },
       { key: 'comment', label: 'Коментар' },
-      { key: 'sku_article', label: 'SKU article' },
-      { key: 'store_sku', label: 'Store SKU' },
+      { key: 'sku_article', label: 'SKU артикул' },
+      { key: 'store_sku', label: 'SKU магазину' },
       { key: 'store_visibility', label: 'Видимість' }
     ],
     supportsSupplierFilter: true,
@@ -57,16 +60,17 @@ const VIEW_CONFIG = {
     supportsFinalSort: false
   },
   store_now: {
-    title: 'Зараз в магазині (store mirror)',
+    title: 'Зараз в магазині (дзеркало)',
+    tabLabel: 'В магазині',
     loadLabel: 'Завантажити дзеркало магазину',
     exportHref: null,
     columns: [
-      { key: 'article', label: 'Article' },
-      { key: 'supplier', label: 'Постачальник в магазині' },
-      { key: 'parent_article', label: 'Parent article' },
-      { key: 'price', label: 'Ціна в магазині' },
+      { key: 'article', label: 'Артикул' },
+      { key: 'supplier', label: 'Постачальник' },
+      { key: 'parent_article', label: 'Батьківський артикул' },
+      { key: 'price', label: 'Ціна' },
       { key: 'visibility', label: 'Видимість' },
-      { key: 'seen_at', label: 'Seen at' }
+      { key: 'seen_at', label: 'Оновлено' }
     ],
     supportsSupplierFilter: false,
     supportsMissingOnly: false,
@@ -75,16 +79,17 @@ const VIEW_CONFIG = {
   },
   store_preview: {
     title: 'Відправка в магазин (preview)',
+    tabLabel: 'До відправки',
     loadLabel: 'Завантажити preview відправки',
     exportHref: null,
     columns: [
-      { key: 'article', label: 'Article' },
-      { key: 'size', label: 'Size' },
+      { key: 'article', label: 'Артикул' },
+      { key: 'size', label: 'Розмір' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
       { key: 'supplier_name', label: 'Постачальник' },
-      { key: 'parent_article', label: 'Parent article' },
+      { key: 'parent_article', label: 'Батьківський артикул' },
       { key: 'comment', label: 'Коментар' }
     ],
     supportsSupplierFilter: true,
@@ -109,8 +114,10 @@ export function DataTab({
   finalState,
   compareState,
   storeMirrorState,
-  storePreviewState
+  storePreviewState,
+  suppliers
 }) {
+  const supplierOptions = Array.isArray(suppliers) ? suppliers : [];
   const runLoadActive = () => {
     if (activeDataView === 'merged') {
       void loadMerged();
@@ -147,18 +154,14 @@ export function DataTab({
     }
     return storePreviewState;
   })();
-  const hasAdvancedFilters =
-    currentConfig.supportsMergedSort ||
-    currentConfig.supportsFinalSort ||
-    currentConfig.supportsMissingOnly;
   const isStorePreview = activeDataView === 'store_preview';
   const storePreviewMode = dataFilters.storePreviewMode === 'delta' ? 'delta' : 'candidates';
   const storePreviewColumns =
     storePreviewMode === 'delta'
       ? [
-          { key: 'article', label: 'Article' },
+          { key: 'article', label: 'Артикул' },
           { key: 'supplier_name', label: 'Постачальник' },
-          { key: 'parent_article', label: 'Parent article' },
+          { key: 'parent_article', label: 'Батьківський артикул' },
           { key: 'price_final', label: 'Ціна для оновлення' },
           { key: 'visibility', label: 'Видимість' }
         ]
@@ -172,57 +175,42 @@ export function DataTab({
         subtitle="Merged / Final / Compare / Зараз в магазині / Відправка в магазин"
       >
         <div className="mini-tabs">
-          <button
-            className={`tab ${activeDataView === 'merged' ? 'active' : ''}`}
-            onClick={() => setActiveDataView('merged')}
-          >
-            merged
-          </button>
-          <button
-            className={`tab ${activeDataView === 'final' ? 'active' : ''}`}
-            onClick={() => setActiveDataView('final')}
-          >
-            final
-          </button>
-          <button
-            className={`tab ${activeDataView === 'compare' ? 'active' : ''}`}
-            onClick={() => setActiveDataView('compare')}
-          >
-            compare
-          </button>
-          <button
-            className={`tab ${activeDataView === 'store_now' ? 'active' : ''}`}
-            onClick={() => setActiveDataView('store_now')}
-          >
-            зараз в магазині
-          </button>
-          <button
-            className={`tab ${activeDataView === 'store_preview' ? 'active' : ''}`}
-            onClick={() => setActiveDataView('store_preview')}
-          >
-            відправка в магазин
-          </button>
+          {Object.entries(VIEW_CONFIG).map(([viewId, config]) => (
+            <button
+              key={viewId}
+              className={`tab ${activeDataView === viewId ? 'active' : ''}`}
+              onClick={() => setActiveDataView(viewId)}
+            >
+              {config.tabLabel}
+            </button>
+          ))}
         </div>
 
-        <div className="form-row" style={{ marginTop: 10 }}>
-          <div>
-            <label>Пошук (article / SKU)</label>
+        <div className="form-row" style={{ marginTop: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 180px', minWidth: 140 }}>
+            <label>Пошук</label>
             <input
               value={dataFilters.search}
               onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value }))}
+              placeholder="артикул / SKU"
             />
           </div>
           {currentConfig.supportsSupplierFilter ? (
-            <div>
-              <label>supplierId</label>
-              <input
+            <div style={{ flex: '1 1 160px', minWidth: 130 }}>
+              <label>Постачальник</label>
+              <select
                 value={dataFilters.supplierId}
-                onChange={(event) => setDataFilters((prev) => ({ ...prev, supplierId: event.target.value }))}
-              />
+                onChange={(event) => setDataFilters((prev) => ({ ...prev, supplierId: event.target.value, offset: '0' }))}
+              >
+                <option value="">Всі</option>
+                {supplierOptions.map((s) => (
+                  <option key={s.id} value={String(s.id)}>{s.name}</option>
+                ))}
+              </select>
             </div>
           ) : null}
           {isStorePreview ? (
-            <div>
+            <div style={{ flex: '1 1 180px', minWidth: 150 }}>
               <label>Режим</label>
               <select
                 value={storePreviewMode}
@@ -234,124 +222,158 @@ export function DataTab({
                   }))
                 }
               >
-                <option value="candidates">Усі кандидати</option>
-                <option value="delta">Лише оновиться (дельта)</option>
+                <option value="delta">Реальне оновлення (дельта)</option>
+                <option value="candidates">Всі кандидати (до фільтрів)</option>
               </select>
             </div>
           ) : null}
-          <div>
-            <label>Розмір сторінки (limit)</label>
-            <input
-              value={dataFilters.limit}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, limit: event.target.value }))}
-            />
-          </div>
-          <div>
-            <label>offset</label>
-            <input
-              value={dataFilters.offset}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, offset: event.target.value }))}
-            />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexShrink: 0, flexWrap: 'wrap' }}>
+            {currentConfig.supportsMergedSort ? (
+              <div>
+                <label>Сортування</label>
+                <select
+                  style={{ width: 'auto' }}
+                  value={dataFilters.mergedSort}
+                  onChange={(event) => setDataFilters((prev) => ({ ...prev, mergedSort: event.target.value }))}
+                >
+                  <option value="article_asc">Артикул А→Я</option>
+                  <option value="article_desc">Артикул Я→А</option>
+                  <option value="created_desc">Нові спочатку</option>
+                </select>
+              </div>
+            ) : null}
+            {currentConfig.supportsFinalSort ? (
+              <div>
+                <label>Сортування</label>
+                <select
+                  style={{ width: 'auto' }}
+                  value={dataFilters.finalSort}
+                  onChange={(event) => setDataFilters((prev) => ({ ...prev, finalSort: event.target.value }))}
+                >
+                  <option value="article_asc">Артикул А→Я</option>
+                  <option value="article_desc">Артикул Я→А</option>
+                  <option value="created_desc">Нові спочатку</option>
+                </select>
+              </div>
+            ) : null}
+            {currentConfig.supportsMissingOnly ? (
+              <div style={{ paddingBottom: 4 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input
+                    type="checkbox"
+                    checked={dataFilters.missingOnly}
+                    onChange={(event) => setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))}
+                    style={{ width: 'auto', margin: 0 }}
+                  />
+                  Лише missing
+                </label>
+              </div>
+            ) : null}
+            <div>
+              <label>На сторінці</label>
+              <select
+                style={{ width: 'auto' }}
+                value={dataFilters.limit}
+                onChange={(event) => setDataFilters((prev) => ({ ...prev, limit: event.target.value, offset: '0' }))}
+              >
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </div>
           </div>
         </div>
-
-        {hasAdvancedFilters ? (
-          <details className="details-block">
-            <summary>Розширені фільтри</summary>
-            <div className="form-row" style={{ marginTop: 10 }}>
-              {currentConfig.supportsMergedSort ? (
-                <div>
-                  <label>Merged sort</label>
-                  <select
-                    value={dataFilters.mergedSort}
-                    onChange={(event) => setDataFilters((prev) => ({ ...prev, mergedSort: event.target.value }))}
-                  >
-                    <option value="article_asc">article asc</option>
-                    <option value="article_desc">article desc</option>
-                    <option value="created_desc">created desc</option>
-                  </select>
-                </div>
-              ) : null}
-              {currentConfig.supportsFinalSort ? (
-                <div>
-                  <label>Final sort</label>
-                  <select
-                    value={dataFilters.finalSort}
-                    onChange={(event) => setDataFilters((prev) => ({ ...prev, finalSort: event.target.value }))}
-                  >
-                    <option value="article_asc">article asc</option>
-                    <option value="article_desc">article desc</option>
-                    <option value="created_desc">created desc</option>
-                  </select>
-                </div>
-              ) : null}
-              {currentConfig.supportsMissingOnly ? (
-                <div>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={dataFilters.missingOnly}
-                      onChange={(event) =>
-                        setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))
-                      }
-                      style={{ width: 'auto', marginRight: 8 }}
-                    />
-                    compare: лише missing
-                  </label>
-                </div>
-              ) : null}
-            </div>
-          </details>
-        ) : null}
 
         <div className="actions" style={{ marginTop: 10 }}>
-          <button className="btn primary" onClick={runLoadActive}>
-            {currentConfig.loadLabel}
-          </button>
-          <button className="btn" onClick={() => shiftDataOffset(-1)}>Попередня сторінка</button>
-          <button className="btn" onClick={() => shiftDataOffset(1)}>Наступна сторінка</button>
-          {currentConfig.exportHref ? (
-            <a className="btn" href={currentConfig.exportHref}>Export CSV</a>
+          {(() => {
+            const limit = Math.max(1, Number(dataFilters.limit || 50));
+            const offset = Math.max(0, Number(dataFilters.offset || 0));
+            const total = currentState.total;
+            const page = Math.floor(offset / limit) + 1;
+            const totalPages = total > 0 ? Math.ceil(total / limit) : 1;
+            const isFirst = offset === 0;
+            const isLast = total > 0 ? page >= totalPages : false;
+            return (
+              <>
+                <button className="btn primary" onClick={runLoadActive}>
+                  {currentConfig.loadLabel}
+                </button>
+                <button className="btn" onClick={() => shiftDataOffset(-1)} disabled={isFirst}>← Назад</button>
+                <button className="btn" onClick={() => shiftDataOffset(1)} disabled={isLast}>Вперед →</button>
+                <span className="chip">сторінка {page} з {totalPages}</span>
+                <span className="chip">всього: {total}</span>
+              </>
+            );
+          })()}
+          {isStorePreview && storePreviewMode === 'delta' && currentState.batchTotal !== null ? (
+            <>
+              <span className="chip">оновлень цін/к-сті: {Number(currentState.previewTotal || 0)}</span>
+              <span className="chip">будуть приховані: {Math.max(0, Number(currentState.batchTotal || 0) - Number(currentState.previewTotal || 0))}</span>
+              <span className="chip">всього відправиться: {Number(currentState.batchTotal || 0)}</span>
+            </>
           ) : null}
-          <span className="chip">total: {currentState.total}</span>
-          <span className="chip">offset: {dataFilters.offset}</span>
-          {isStorePreview ? (
-            <span className="chip">
-              mode: {storePreviewMode === 'delta' ? 'лише оновиться' : 'усі кандидати'}
-            </span>
+          {isStorePreview && storePreviewMode === 'candidates' ? (
+            <span className="chip">кандидати: {currentState.total}</span>
           ) : null}
-          {isStorePreview && Number.isFinite(Number(currentState.previewTotal)) ? (
-            <span className="chip">кандидати: {Number(currentState.previewTotal || 0)}</span>
-          ) : null}
-          {isStorePreview && currentState.batchTotal !== null ? (
-            <span className="chip">оновиться: {Number(currentState.batchTotal || 0)}</span>
-          ) : null}
-          {currentState.jobId ? <span className="chip">jobId: {currentState.jobId}</span> : null}
+          {currentState.jobId ? <span className="chip">job: {currentState.jobId}</span> : null}
         </div>
+
+        {isStorePreview && storePreviewMode === 'delta' && currentState.batchTotal !== null ? (
+          <div className="preflight-warning" style={{ marginTop: 8 }}>
+            <strong>Scope:</strong> тільки товари з характеристикою <strong>«Оновлення товару API» = Y</strong> (feature_id=564) в CS-Cart потрапляють у обробку.
+            {Number(currentState.batchTotal || 0) > Number(currentState.previewTotal || 0) ? (
+              <> {Math.max(0, Number(currentState.batchTotal || 0) - Number(currentState.previewTotal || 0))} з них <strong>будуть приховані</strong> (status=H) — керовані SKU яких більше немає в постачальників. Це штатна поведінка повного імпорту без фільтра постачальника.</>
+            ) : null}
+          </div>
+        ) : null}
       </Section>
 
-      <Section title={currentConfig.title}>
+      <Section
+        title={currentConfig.title}
+        subtitle={isStorePreview && storePreviewMode === 'delta' && currentState.batchTotal !== null
+          ? `Scope: лише SKU з «Оновлення товару API» = Y · оновлень: ${Number(currentState.previewTotal || 0)} · прихувань: ${Math.max(0, Number(currentState.batchTotal || 0) - Number(currentState.previewTotal || 0))}`
+          : undefined}
+      >
         <div className="status-line">{currentState.status}</div>
         {currentState.rows.length === 0 ? (
           <div className="empty-preview">Немає даних для поточного фільтра</div>
         ) : (
-          <div className="preview-table-wrap">
+          <div className="preview-table-wrap" style={isStorePreview ? { maxHeight: 560 } : undefined}>
             <table className="data-table">
               <thead>
                 <tr>
                   {currentColumns.map((column) => (
-                    <th key={column.key}>{column.label}</th>
+                    <th key={column.key} style={{ position: 'sticky', top: 0, background: '#f4f8ff', zIndex: 1 }}>
+                      {column.label}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {currentState.rows.map((row, rowIndex) => (
-                  <tr key={`row_${rowIndex}`}>
-                    {currentColumns.map((column) => (
-                      <td key={`${rowIndex}_${column.key}`}>{String(row[column.key] ?? '-')}</td>
-                    ))}
-                  </tr>
-                ))}
+                {currentState.rows.map((row, rowIndex) => {
+                  const isHiding = isStorePreview && row.visibility === false;
+                  return (
+                    <tr key={`row_${rowIndex}`} style={isHiding ? { opacity: 0.55 } : undefined}>
+                      {currentColumns.map((column) => {
+                        if (column.key === 'visibility') {
+                          return (
+                            <td key={`${rowIndex}_${column.key}`}>
+                              {row[column.key] === true ? (
+                                <span style={{ color: '#0f8a4b', fontWeight: 600 }}>Активний</span>
+                              ) : row[column.key] === false ? (
+                                <span style={{ color: '#c22727' }}>→ Приховати</span>
+                              ) : '-'}
+                            </td>
+                          );
+                        }
+                        return (
+                          <td key={`${rowIndex}_${column.key}`}>{String(row[column.key] ?? '-')}</td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

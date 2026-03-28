@@ -113,7 +113,7 @@
 
 ## Що залишилось закрити (фактичний backlog)
 - E2E cutover-прогін на staging/production-like даних (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
-- Фіксація tuning baseline на staging для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST`, `CSCART_IMPORT_CONCURRENCY`.
+- Фіксація tuning baseline на staging для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_LIMIT_BURST`, `CSCART_IMPORT_CONCURRENCY`.
 
 ## Пропозиції для прискорення без зміни бізнес-логіки
 - Підтримувати регулярний прогін інваріантного інтеграційного suite:
@@ -126,5 +126,5 @@
 
 ## Короткий execution plan на найближчі кроки
 1. Прогнати staging E2E (`import_supplier -> finalize -> store_import`) і зафіксувати tuning-профіль у runbook.
-2. Зафіксувати параметри `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST`, `CSCART_IMPORT_CONCURRENCY` для target store.
+2. Зафіксувати параметри `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_LIMIT_BURST`, `CSCART_IMPORT_CONCURRENCY` для target store.
 3. Перед production запуском пройти preflight: `store:sku-audit` -> cleanup дублів (якщо є) -> `mirror:sync` -> `backend:readiness`.

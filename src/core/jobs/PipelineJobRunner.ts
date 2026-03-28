@@ -370,7 +370,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
 
   private async runChildStep<T>(
     pipelineJobId: number,
-    type: 'import_all' | 'finalize' | 'store_import',
+    type: 'store_mirror_sync' | 'import_all' | 'finalize' | 'store_import',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<ChildStepResult<T>> {
@@ -497,6 +497,22 @@ export class PipelineJobRunner<MappedRow = unknown> {
       await this.jobs.startJob(parent.id);
       await this.logs.log(parent.id, 'info', 'update_pipeline started', meta);
 
+      const store = this.pipeline.store;
+      const mirrorStep = await this.runChildStep(
+        parent.id,
+        'store_mirror_sync',
+        { store },
+        async (_jobId) => {
+          const seenAt = this.storeMirrorService.createSyncMarker();
+          let upserted = 0;
+          const snapshot = await this.pipeline.forEachStoreMirrorPage(async (items) => {
+            upserted += await this.storeMirrorService.upsertSnapshotChunk(store, items, seenAt);
+          });
+          const deleted = await this.storeMirrorService.pruneSnapshot(store, seenAt);
+          return { store, upserted, deleted, fetched: snapshot.fetched, pages: snapshot.pages };
+        }
+      );
+
       const importStep = await this.runChildStep(parent.id, 'import_all', {}, (jobId) =>
         this.pipeline.runImportAll(jobId)
       );
@@ -518,17 +534,20 @@ export class PipelineJobRunner<MappedRow = unknown> {
       );
 
       const result: UpdatePipelineSummary<MappedRow> = {
+        mirrorSyncSummary: mirrorStep.result,
         importSummary: importStep.result,
         finalizeSummary: finalizeStep.result,
         storeExecution: storeStep.result
       };
       await this.jobs.finishJob(parent.id);
       await this.logs.log(parent.id, 'info', 'update_pipeline finished', {
+        mirrorSyncJobId: mirrorStep.job.id,
         importJobId: importStep.job.id,
         finalizeJobId: finalizeStep.job.id,
         storeImportJobId: storeStep.job.id,
         supplier,
         summary: {
+          mirrorSyncSummary: result.mirrorSyncSummary,
           importSummary: result.importSummary,
           finalizeSummary: result.finalizeSummary,
           storeExecution: summarizeStoreImportResult(result.storeExecution)

@@ -3,16 +3,14 @@ import { Section, Tag } from '../components/ui';
 
 const TASK_META = {
   update_pipeline: {
-    title: 'Оновлення каталогу',
-    description: 'Імпорт джерел, фіналізація та підготовка даних до синхронізації'
-  },
-  store_mirror_sync: {
-    title: 'Оновлення дзеркала магазину',
-    description: 'Знімає актуальний стан товарів із CS-Cart у локальне дзеркало'
+    title: 'Повне оновлення',
+    description: 'Запускає повний цикл: знімок магазину → імпорт від постачальників → фіналізація цін → відправка змін у CS-Cart.',
+    steps: ['① Знімок магазину', '② Імпорт', '③ Фіналізація', '④ Відправка']
   },
   cleanup: {
-    title: 'Очищення історії',
-    description: 'Прибирає старі технічні записи, щоб база працювала швидко'
+    title: 'Очищення старих даних',
+    description: 'Видаляє старі технічні записи, щоб база працювала швидко. Не впливає на товари.',
+    steps: null
   }
 };
 
@@ -31,74 +29,50 @@ const ALL_HOURS = Array.from({ length: 24 }, (_, index) => index);
 const FIVE_RUNS_DEFAULT_HOURS = [9, 12, 15, 18, 21];
 
 function formatDateTime(value) {
-  if (!value) {
-    return '-';
-  }
+  if (!value) return '-';
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return String(value);
-  }
+  if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleString('uk-UA');
 }
 
 function parseHourList(valueRaw) {
   const source = String(valueRaw || '').trim();
-  if (!source) {
-    return [];
-  }
+  if (!source) return [];
   const unique = new Set();
-  const parts = source.split(',');
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index].trim();
-    const number = Number(part);
-    if (!Number.isFinite(number)) {
-      continue;
-    }
-    const normalized = Math.trunc(number);
-    if (normalized >= 0 && normalized <= 23) {
-      unique.add(normalized);
+  for (const part of source.split(',')) {
+    const n = Number(part.trim());
+    if (Number.isFinite(n)) {
+      const norm = Math.trunc(n);
+      if (norm >= 0 && norm <= 23) unique.add(norm);
     }
   }
-  return Array.from(unique).sort((left, right) => left - right);
+  return Array.from(unique).sort((a, b) => a - b);
 }
 
 function parseWeekDayList(valueRaw) {
   const source = String(valueRaw || '').trim();
-  if (!source || source === '*') {
-    return [];
-  }
+  if (!source || source === '*') return [];
   const unique = new Set();
-  const parts = source.split(',');
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index].trim();
-    const number = Number(part);
-    if (!Number.isFinite(number)) {
-      continue;
-    }
-    const normalized = Math.trunc(number) === 7 ? 0 : Math.trunc(number);
-    if (normalized >= 0 && normalized <= 6) {
-      unique.add(normalized);
+  for (const part of source.split(',')) {
+    const n = Number(part.trim());
+    if (Number.isFinite(n)) {
+      const norm = Math.trunc(n) === 7 ? 0 : Math.trunc(n);
+      if (norm >= 0 && norm <= 6) unique.add(norm);
     }
   }
-  return Array.from(unique).sort((left, right) => {
-    const leftOrder = WEEK_DAY_ORDER.get(left) ?? 0;
-    const rightOrder = WEEK_DAY_ORDER.get(right) ?? 0;
-    return leftOrder - rightOrder;
+  return Array.from(unique).sort((a, b) => {
+    return (WEEK_DAY_ORDER.get(a) ?? 0) - (WEEK_DAY_ORDER.get(b) ?? 0);
   });
 }
 
 function parseSchedulePlan(task) {
   const cron = String(task?.cron || '').trim();
+
   const everyHours = cron.match(/^0\s+\*\/(\d+)\s+\*\s+\*\s+\*$/);
   if (everyHours) {
     const hours = Number(everyHours[1]);
     if (Number.isFinite(hours) && hours > 0) {
-      return {
-        mode: 'interval_hours',
-        everyHours: Math.trunc(hours),
-        hours: [],
-        days: []
-      };
+      return { mode: 'interval_hours', everyHours: Math.trunc(hours), hours: [], days: [] };
     }
   }
 
@@ -107,35 +81,17 @@ function parseSchedulePlan(task) {
     const hours = parseHourList(dailyOrWeekly[1]);
     const dayToken = String(dailyOrWeekly[2] || '*');
     if (hours.length > 0) {
-      if (dayToken === '*') {
-        return {
-          mode: 'daily_hours',
-          everyHours: 0,
-          hours,
-          days: []
-        };
-      }
+      if (dayToken === '*') return { mode: 'daily_hours', everyHours: 0, hours, days: [] };
       const days = parseWeekDayList(dayToken);
-      if (days.length > 0) {
-        return {
-          mode: 'weekly_hours',
-          everyHours: 0,
-          hours,
-          days
-        };
-      }
+      if (days.length > 0) return { mode: 'weekly_hours', everyHours: 0, hours, days };
     }
   }
 
   const minutes = Math.max(1, Number(task?.interval_minutes || 60));
-  const normalizedHours =
-    minutes % 60 === 0 ? Math.max(1, Math.trunc(minutes / 60)) : Math.max(1, Math.ceil(minutes / 60));
-  return {
-    mode: 'interval_hours',
-    everyHours: normalizedHours,
-    hours: [],
-    days: []
-  };
+  const normalizedHours = minutes % 60 === 0
+    ? Math.max(1, Math.trunc(minutes / 60))
+    : Math.max(1, Math.ceil(minutes / 60));
+  return { mode: 'interval_hours', everyHours: normalizedHours, hours: [], days: [] };
 }
 
 function toHourLabel(hour) {
@@ -143,41 +99,28 @@ function toHourLabel(hour) {
 }
 
 function formatScheduleSummary(plan) {
-  if (plan.mode === 'interval_hours') {
-    return `Запуск кожні ${plan.everyHours} год`;
-  }
-  if (plan.mode === 'daily_hours') {
-    return `Щодня о ${plan.hours.map((hour) => toHourLabel(hour)).join(', ')}`;
-  }
+  if (plan.mode === 'interval_hours') return `Кожні ${plan.everyHours} год`;
+  if (plan.mode === 'daily_hours') return `Щодня о ${plan.hours.map(toHourLabel).join(', ')}`;
   if (plan.mode === 'weekly_hours') {
-    const dayLabels = WEEK_DAYS.filter((day) => plan.days.includes(day.value))
-      .map((day) => day.label)
-      .join(', ');
-    const hourLabels = plan.hours.map((hour) => toHourLabel(hour)).join(', ');
-    return `${dayLabels}: ${hourLabels}`;
+    const dayLabels = WEEK_DAYS.filter((d) => plan.days.includes(d.value)).map((d) => d.label).join(', ');
+    return `${dayLabels}: ${plan.hours.map(toHourLabel).join(', ')}`;
   }
   return 'Розклад не заданий';
 }
 
 function buildCronByPlan(plan) {
   if (plan.mode === 'interval_hours') {
-    const everyHours = Math.max(1, Math.min(24, Math.trunc(Number(plan.everyHours) || 1)));
-    if (everyHours === 24) {
-      return '0 0 * * *';
-    }
-    return `0 */${everyHours} * * *`;
+    const h = Math.max(1, Math.min(24, Math.trunc(Number(plan.everyHours) || 1)));
+    return h === 24 ? '0 0 * * *' : `0 */${h} * * *`;
   }
   if (plan.mode === 'daily_hours') {
     const hours = parseHourList(plan.hours.join(','));
-    const target = hours.length > 0 ? hours : [9];
-    return `0 ${target.join(',')} * * *`;
+    return `0 ${(hours.length > 0 ? hours : [9]).join(',')} * * *`;
   }
   if (plan.mode === 'weekly_hours') {
     const hours = parseHourList(plan.hours.join(','));
     const days = parseWeekDayList(plan.days.join(','));
-    const targetHours = hours.length > 0 ? hours : [9];
-    const targetDays = days.length > 0 ? days : [1, 2, 3, 4, 5];
-    return `0 ${targetHours.join(',')} * * ${targetDays.join(',')}`;
+    return `0 ${(hours.length > 0 ? hours : [9]).join(',')} * * ${(days.length > 0 ? days : [1, 2, 3, 4, 5]).join(',')}`;
   }
   return '0 */3 * * *';
 }
@@ -188,6 +131,9 @@ function getIntervalMinutesByPlan(plan) {
   }
   return 1440;
 }
+
+// Only these two tasks shown in the UI; store_mirror_sync is now a step inside update_pipeline
+const VISIBLE_TASKS = ['update_pipeline', 'cleanup'];
 
 export function CronSettingsTab({
   cronSettingsDraft,
@@ -202,120 +148,96 @@ export function CronSettingsTab({
   const supplierOptions = Array.isArray(suppliers) ? suppliers : [];
   const [hourPickerByTask, setHourPickerByTask] = useState({});
 
+  const visibleTasks = useMemo(
+    () => cronSettingsDraft.filter((t) => VISIBLE_TASKS.includes(t.name)),
+    [cronSettingsDraft]
+  );
+
   const scheduleByTask = useMemo(() => {
     const output = {};
-    for (let index = 0; index < cronSettingsDraft.length; index += 1) {
-      const task = cronSettingsDraft[index];
+    for (const task of cronSettingsDraft) {
       output[task.name] = parseSchedulePlan(task);
     }
     return output;
   }, [cronSettingsDraft]);
 
   const applyPlanToTask = (taskName, plan) => {
-    const cron = buildCronByPlan(plan);
-    const intervalMinutes = getIntervalMinutesByPlan(plan);
-    updateCronDraftField(taskName, 'cron', cron);
-    updateCronDraftField(taskName, 'interval_minutes', String(intervalMinutes));
+    updateCronDraftField(taskName, 'cron', buildCronByPlan(plan));
+    updateCronDraftField(taskName, 'interval_minutes', String(getIntervalMinutesByPlan(plan)));
   };
 
-  const addHourToTaskPlan = (task, plan) => {
+  const addHour = (task, plan) => {
     const candidate = Number(hourPickerByTask[task.name] ?? 9);
-    if (!Number.isFinite(candidate)) {
-      return;
-    }
-    const nextHours = parseHourList([...plan.hours, Math.trunc(candidate)].join(','));
-    applyPlanToTask(task.name, {
-      ...plan,
-      hours: nextHours
-    });
+    if (!Number.isFinite(candidate)) return;
+    applyPlanToTask(task.name, { ...plan, hours: parseHourList([...plan.hours, Math.trunc(candidate)].join(',')) });
   };
 
-  const removeHourFromTaskPlan = (task, plan, hour) => {
-    const nextHours = plan.hours.filter((value) => value !== hour);
-    applyPlanToTask(task.name, {
-      ...plan,
-      hours: nextHours.length > 0 ? nextHours : [9]
-    });
+  const removeHour = (task, plan, hour) => {
+    const next = plan.hours.filter((h) => h !== hour);
+    applyPlanToTask(task.name, { ...plan, hours: next.length > 0 ? next : [9] });
   };
 
-  const toggleWeekDayForTaskPlan = (task, plan, dayValue) => {
+  const toggleDay = (task, plan, dayValue) => {
     const exists = plan.days.includes(dayValue);
-    const nextDays = exists
-      ? plan.days.filter((value) => value !== dayValue)
-      : [...plan.days, dayValue];
-    applyPlanToTask(task.name, {
-      ...plan,
-      days: nextDays.length > 0 ? nextDays : [1]
-    });
+    const next = exists ? plan.days.filter((d) => d !== dayValue) : [...plan.days, dayValue];
+    applyPlanToTask(task.name, { ...plan, days: next.length > 0 ? next : [1] });
   };
 
   return (
     <div className="data-grid">
       <Section
-        title="Автоматичні задачі"
-        subtitle="Вибирайте зручний розклад: по годинах, щодня або по днях тижня"
+        title="Автоматичний розклад"
+        subtitle="Налаштуйте коли запускати пайплайни. Якщо дві задачі збіглись за часом — друга просто пропуститься без помилки."
         extra={(
           <div className="actions">
-            <button className="btn" onClick={refreshCronSettings}>Оновити дані</button>
+            <button className="btn" onClick={refreshCronSettings}>Оновити</button>
             <button className="btn primary" disabled={isReadOnly || cronSaving} onClick={saveCronSettings}>
-              {cronSaving ? 'Збереження...' : 'Зберегти зміни'}
+              {cronSaving ? 'Збереження...' : 'Зберегти'}
             </button>
           </div>
         )}
       >
-        <div className="cron-intro">
-          Підтримується сценарій “5 запусків на день” з вибором конкретних годин.
-        </div>
-
-        {cronSettingsDraft.length === 0 ? (
+        {visibleTasks.length === 0 ? (
           <div className="empty-preview">Налаштування ще не завантажені</div>
         ) : (
           <div className="cron-grid">
-            {cronSettingsDraft.map((task) => {
+            {visibleTasks.map((task) => {
+              const meta = TASK_META[task.name];
               const plan = scheduleByTask[task.name] || parseSchedulePlan(task);
               return (
                 <div className="cron-card" key={task.name}>
                   <div className="cron-card-head">
                     <div>
-                      <h4 className="block-title">{TASK_META[task.name]?.title || task.name}</h4>
-                      <p className="muted">{TASK_META[task.name]?.description || 'Системна задача'}</p>
+                      <h4 className="block-title">{meta?.title || task.name}</h4>
+                      <p className="muted">{meta?.description || ''}</p>
                     </div>
                     <Tag tone={task.is_enabled ? 'ok' : 'warn'}>
-                      {task.is_enabled ? 'Увімкнено' : 'Пауза'}
+                      {task.is_enabled ? 'Увімкнено' : 'Призупинено'}
                     </Tag>
                   </div>
 
-                  <div className="form-row cron-mode-row">
-                    <div>
+                  {meta?.steps ? (
+                    <div className="cron-steps">
+                      {meta.steps.map((step) => (
+                        <span key={step} className="cron-step-badge">{step}</span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="cron-mode-row">
+                    <div style={{ flex: '1 1 160px', minWidth: 0 }}>
                       <label>Режим розкладу</label>
                       <select
                         value={plan.mode}
                         onChange={(event) => {
                           const mode = event.target.value;
                           if (mode === 'interval_hours') {
-                            applyPlanToTask(task.name, {
-                              mode,
-                              everyHours: plan.everyHours || 3,
-                              hours: [],
-                              days: []
-                            });
-                            return;
+                            applyPlanToTask(task.name, { mode, everyHours: plan.everyHours || 3, hours: [], days: [] });
+                          } else if (mode === 'daily_hours') {
+                            applyPlanToTask(task.name, { mode, everyHours: 0, hours: plan.hours.length > 0 ? plan.hours : [9], days: [] });
+                          } else {
+                            applyPlanToTask(task.name, { mode: 'weekly_hours', everyHours: 0, hours: plan.hours.length > 0 ? plan.hours : [9], days: plan.days.length > 0 ? plan.days : [1, 2, 3, 4, 5] });
                           }
-                          if (mode === 'daily_hours') {
-                            applyPlanToTask(task.name, {
-                              mode,
-                              everyHours: 0,
-                              hours: plan.hours.length > 0 ? plan.hours : [9],
-                              days: []
-                            });
-                            return;
-                          }
-                          applyPlanToTask(task.name, {
-                            mode: 'weekly_hours',
-                            everyHours: 0,
-                            hours: plan.hours.length > 0 ? plan.hours : [9],
-                            days: plan.days.length > 0 ? plan.days : [1, 2, 3, 4, 5]
-                          });
                         }}
                       >
                         <option value="interval_hours">Кожні N годин</option>
@@ -323,16 +245,15 @@ export function CronSettingsTab({
                         <option value="weekly_hours">По днях тижня і годинах</option>
                       </select>
                     </div>
-                  </div>
 
-                  {plan.mode === 'interval_hours' ? (
-                    <div className="form-row">
-                      <div>
+                    {plan.mode === 'interval_hours' ? (
+                      <div style={{ width: 'auto', flexShrink: 0 }}>
                         <label>Кожні (годин)</label>
                         <input
                           type="number"
                           min="1"
                           max="24"
+                          style={{ width: 72 }}
                           value={String(plan.everyHours || 3)}
                           onChange={(event) =>
                             applyPlanToTask(task.name, {
@@ -342,8 +263,8 @@ export function CronSettingsTab({
                           }
                         />
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
 
                   {plan.mode === 'daily_hours' || plan.mode === 'weekly_hours' ? (
                     <>
@@ -351,45 +272,35 @@ export function CronSettingsTab({
                         <label>Години запуску</label>
                         <div className="actions">
                           <select
+                            style={{ width: 'auto' }}
                             value={String(hourPickerByTask[task.name] ?? 9)}
                             onChange={(event) =>
-                              setHourPickerByTask((prev) => ({
-                                ...prev,
-                                [task.name]: event.target.value
-                              }))
+                              setHourPickerByTask((prev) => ({ ...prev, [task.name]: event.target.value }))
                             }
                           >
                             {ALL_HOURS.map((hour) => (
-                              <option key={`${task.name}_hour_${hour}`} value={hour}>
-                                {toHourLabel(hour)}
-                              </option>
+                              <option key={`${task.name}_h_${hour}`} value={hour}>{toHourLabel(hour)}</option>
                             ))}
                           </select>
-                          <button className="btn" type="button" onClick={() => addHourToTaskPlan(task, plan)}>
-                            Додати годину
+                          <button className="btn" type="button" onClick={() => addHour(task, plan)}>
+                            Додати
                           </button>
                           <button
                             className="btn"
                             type="button"
-                            onClick={() =>
-                              applyPlanToTask(task.name, {
-                                ...plan,
-                                hours: FIVE_RUNS_DEFAULT_HOURS
-                              })
-                            }
+                            onClick={() => applyPlanToTask(task.name, { ...plan, hours: FIVE_RUNS_DEFAULT_HOURS })}
                           >
                             5 запусків / день
                           </button>
                         </div>
-
                         <div className="cron-hour-chip-list">
                           {plan.hours.length > 0 ? (
                             plan.hours.map((hour) => (
                               <button
-                                key={`${task.name}_selected_hour_${hour}`}
+                                key={`${task.name}_sel_${hour}`}
                                 type="button"
                                 className="cron-hour-chip"
-                                onClick={() => removeHourFromTaskPlan(task, plan, hour)}
+                                onClick={() => removeHour(task, plan, hour)}
                               >
                                 {toHourLabel(hour)} ×
                               </button>
@@ -405,11 +316,11 @@ export function CronSettingsTab({
                           <label>Дні тижня</label>
                           <div className="cron-weekday-list">
                             {WEEK_DAYS.map((day) => (
-                              <label key={`${task.name}_weekday_${day.value}`} className="cron-weekday-item">
+                              <label key={`${task.name}_wd_${day.value}`} className="cron-weekday-item">
                                 <input
                                   type="checkbox"
                                   checked={plan.days.includes(day.value)}
-                                  onChange={() => toggleWeekDayForTaskPlan(task, plan, day.value)}
+                                  onChange={() => toggleDay(task, plan, day.value)}
                                   style={{ width: 'auto' }}
                                 />
                                 {day.label}
@@ -424,23 +335,17 @@ export function CronSettingsTab({
                   <div className="cron-interval-hint">{formatScheduleSummary(plan)}</div>
 
                   {task.name === 'update_pipeline' ? (
-                    <div className="form-row">
-                      <div>
-                        <label>Постачальник для автооновлення (опційно)</label>
-                        <select
-                          value={task.supplier || ''}
-                          onChange={(event) =>
-                            updateCronDraftField(task.name, 'supplier', event.target.value)
-                          }
-                        >
-                          <option value="">Усі постачальники</option>
-                          {supplierOptions.map((supplier) => (
-                            <option key={`cron_supplier_${supplier.id}`} value={supplier.name}>
-                              {supplier.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    <div>
+                      <label>Постачальник (опційно)</label>
+                      <select
+                        value={task.supplier || ''}
+                        onChange={(event) => updateCronDraftField(task.name, 'supplier', event.target.value)}
+                      >
+                        <option value="">Усі постачальники</option>
+                        {supplierOptions.map((s) => (
+                          <option key={`cron_s_${s.id}`} value={s.name}>{s.name}</option>
+                        ))}
+                      </select>
                     </div>
                   ) : null}
 
@@ -449,9 +354,7 @@ export function CronSettingsTab({
                       <input
                         type="checkbox"
                         checked={task.is_enabled === true}
-                        onChange={(event) =>
-                          updateCronDraftField(task.name, 'is_enabled', event.target.checked)
-                        }
+                        onChange={(event) => updateCronDraftField(task.name, 'is_enabled', event.target.checked)}
                         style={{ width: 'auto' }}
                       />
                       Виконувати автоматично
@@ -460,28 +363,22 @@ export function CronSettingsTab({
                       <input
                         type="checkbox"
                         checked={task.run_on_startup === true}
-                        onChange={(event) =>
-                          updateCronDraftField(task.name, 'run_on_startup', event.target.checked)
-                        }
+                        onChange={(event) => updateCronDraftField(task.name, 'run_on_startup', event.target.checked)}
                         style={{ width: 'auto' }}
                       />
                       Запускати після рестарту сервера
                     </label>
                   </div>
 
-                  <div className="status-line">Оновлено: {formatDateTime(task.updated_at)}</div>
+                  <div className="status-line">
+                    Оновлено: {formatDateTime(task.updated_at)}
+                  </div>
 
                   <details className="details-block cron-technical">
                     <summary>Технічні деталі</summary>
                     <div className="cron-tech-grid">
-                      <div>
-                        <label>Системне імʼя</label>
-                        <code>{task.name}</code>
-                      </div>
-                      <div>
-                        <label>Cron (авто)</label>
-                        <code>{task.cron || '-'}</code>
-                      </div>
+                      <div><label>Системне імʼя</label><code>{task.name}</code></div>
+                      <div><label>Cron вираз</label><code>{task.cron || '-'}</code></div>
                     </div>
                   </details>
                 </div>

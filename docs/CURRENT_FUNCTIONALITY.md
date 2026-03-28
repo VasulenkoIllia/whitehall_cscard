@@ -23,6 +23,7 @@
 
 ## Імпорт даних
 - Імпорт Google Sheets у `products_raw` з перевіркою mapping і skip-логікою.
+- У поточному runtime підтримується тільки `source_type=google_sheet`; інші типи не входять у активний імпортний пайплайн.
 - Підтримані керовані сценарії:
   - `import_all`
   - `import_source`
@@ -140,10 +141,20 @@
   - `GET /admin/api/backend-readiness`
 - Є scripted SKU-audit перед cutover:
   - `npm run store:sku-audit`
+- Є scripted live benchmark write-path для CS-Cart (масовий `+delta` по цінах + auto rollback):
+  - `npm run benchmark:store-price`
+  - `npm run rollback:store-file`
+  - runbook: `docs/RUNBOOK_CSCART_STORE_WRITE_BENCHMARK_2026_03.md`
 - Preflight sign-off контур (`store:sku-audit -> mirror:sync -> backend:readiness`) успішно прогнано на локальному середовищі 2026-03-21:
   - `duplicate_sku_count = 0`
   - `gates.ready_for_store_import = true`
   - `gates.ready_for_continuous_runs = true`
+- Підтверджений live benchmark на тестовому CS-Cart (Kyiv time, 2026-03-25):
+  - Контур: `+100` до `10 000` SKU (`apply_plus_delta`) + rollback до початкових цін.
+  - Параметри: `CSCART_RATE_LIMIT_RPS=30`, `CSCART_RATE_LIMIT_BURST=90`, `CSCART_IMPORT_CONCURRENCY=12`.
+  - `apply_plus_delta`: `452965 ms` (~7m33s), `imported=9999`, `failed=1`, `~22.08 SKU/s`.
+  - `rollback`: `436300 ms` (~7m16s), `imported=9996`, `skipped=1`, `failed=3`, `~22.92 SKU/s`.
+  - Після recovery-pass (`rollback:store-file`) отримано `remainingRows=0` (повний відкат).
 - Є scripted перенос supplier config з legacy:
   - `npm run export:legacy-config`
   - `npm run import:legacy-config`
@@ -151,4 +162,4 @@
 
 ## Ще не закрито до повного parity
 - E2E cutover-прогін на staging/production-like даних по цільових постачальниках (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
-- Зафіксувати staging tuning baseline для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST`, `CSCART_IMPORT_CONCURRENCY`.
+- Зафіксувати staging tuning baseline для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_LIMIT_BURST`, `CSCART_IMPORT_CONCURRENCY`.

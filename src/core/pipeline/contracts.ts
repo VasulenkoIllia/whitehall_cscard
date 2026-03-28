@@ -43,6 +43,7 @@ export interface StoreImportExecution<MappedRow = unknown> extends StoreExportRe
 }
 
 export interface UpdatePipelineSummary<MappedRow = unknown> {
+  mirrorSyncSummary?: { store: string; upserted: number; deleted: number; fetched: number; pages: number };
   importSummary: ImportSummary;
   finalizeSummary: FinalizeSummary;
   storeExecution: StoreImportExecution<MappedRow>;

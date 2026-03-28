@@ -1,6 +1,18 @@
 import React, { useMemo } from 'react';
-import { toJsonString } from '../lib/api';
 import { Section, Tag } from '../components/ui';
+
+const GATE_LABELS = {
+  ready_for_store_import: 'Готово до імпорту в магазин',
+  ready_for_continuous_runs: 'Готово до безперервних запусків',
+  no_running_blocking_jobs: 'Немає активних блокуючих джобів',
+  mirror_is_fresh: 'Дзеркало актуальне',
+  mirror_freshness: 'Свіжість дзеркала',
+  cleanup_scheduled: 'Очищення заплановане',
+  scheduler_active: 'Планувальник активний',
+  has_suppliers: 'Є постачальники',
+  has_sources: 'Є джерела',
+  has_final_products: 'Є фінальні товари'
+};
 
 export function OverviewTab({
   readiness,
@@ -56,7 +68,7 @@ export function OverviewTab({
               <tbody>
                 {gateEntries.map((gate) => (
                   <tr key={gate.key}>
-                    <td>{gate.key}</td>
+                    <td>{GATE_LABELS[gate.key] || gate.key}</td>
                     <td>
                       <Tag tone={gate.isOk ? 'ok' : 'warn'}>
                         {gate.isOk ? 'ok' : String(gate.value)}
@@ -72,21 +84,6 @@ export function OverviewTab({
         )}
       </Section>
 
-      <Section title="Технічний знімок" subtitle="Readiness і Stats для діагностики">
-        <details className="details-block">
-          <summary>Детальний JSON (readiness + stats)</summary>
-          <div className="grid" style={{ marginTop: 10 }}>
-            <div>
-              <h4 className="block-title">Readiness</h4>
-              <pre>{toJsonString(readiness || {})}</pre>
-            </div>
-            <div>
-              <h4 className="block-title">Stats</h4>
-              <pre>{toJsonString(stats || {})}</pre>
-            </div>
-          </div>
-        </details>
-      </Section>
     </div>
   );
 }

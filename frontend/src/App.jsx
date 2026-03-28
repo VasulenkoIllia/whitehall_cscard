@@ -6,7 +6,7 @@ import {
   createEmptyMappingFields,
   parseMappingToFields
 } from './lib/mapping';
-import { Tag } from './components/ui';
+import { ConfirmKeywordModal, Tag } from './components/ui';
 import { ToastViewport } from './components/toast';
 import { OverviewTab } from './tabs/OverviewTab';
 import { ManualControlTab } from './tabs/ManualControlTab';
@@ -22,7 +22,7 @@ const TABS = [
   { id: 'manual', label: 'Ручне керування' },
   { id: 'suppliers', label: 'Постачальники' },
   { id: 'data', label: 'Дані' },
-  { id: 'cron', label: 'Крон' },
+  { id: 'cron', label: 'Розклад' },
   { id: 'jobs', label: 'Моніторинг' }
 ];
 const TAB_IDS = new Set(TABS.map((item) => item.id));
@@ -396,6 +396,7 @@ export default function App() {
   const [topStatus, setTopStatus] = useState('');
   const [lastFailedAction, setLastFailedAction] = useState(null);
   const [toasts, setToasts] = useState([]);
+  const [confirmModal, setConfirmModal] = useState(null);
 
   const [suppliers, setSuppliers] = useState([]);
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -474,7 +475,7 @@ export default function App() {
     missingOnly: true,
     mergedSort: 'article_asc',
     finalSort: 'article_asc',
-    storePreviewMode: 'candidates'
+    storePreviewMode: 'delta'
   });
   const [activeDataView, setActiveDataView] = useState('merged');
   const [jobDetails, setJobDetails] = useState({
@@ -571,17 +572,23 @@ export default function App() {
     }
   };
 
-  const confirmWithKeyword = ({ title, details, keyword }) => {
-    const promptText = [title, details, `Введіть "${keyword}" для підтвердження.`]
-      .filter(Boolean)
-      .join('\n');
-    const answer = window.prompt(promptText);
-    const confirmed = String(answer || '').trim() === keyword;
-    if (!confirmed) {
-      pushToast('warn', 'Дію скасовано', 'Підтвердження не пройдено');
-    }
-    return confirmed;
-  };
+  const confirmWithKeyword = ({ title, details, keyword }) =>
+    new Promise((resolve) => {
+      setConfirmModal({
+        title,
+        details,
+        keyword,
+        onConfirm: () => {
+          setConfirmModal(null);
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal(null);
+          pushToast('warn', 'Дію скасовано', 'Підтвердження не пройдено');
+          resolve(false);
+        }
+      });
+    });
 
   const retryLastFailedAction = async () => {
     if (!lastFailedAction?.run) {
@@ -774,7 +781,7 @@ export default function App() {
           setRuleSetDraft(toRuleSetDraft(matched));
         }
       }
-      setPricingStatus(`Rule sets: ${rows.length}`);
+      setPricingStatus('');
     } catch (error) {
       setPricingStatus(formatError(error));
     }
@@ -822,7 +829,8 @@ export default function App() {
         return leftIndex - rightIndex;
       });
       setCronSettingsDraft(normalizedRows);
-      setCronStatus(`Крон задач: ${normalizedRows.length}`);
+      const visibleCount = normalizedRows.filter((r) => ['update_pipeline', 'cleanup'].includes(r.name)).length;
+      setCronStatus(`Крон задач: ${visibleCount}`);
     } catch (error) {
       setCronStatus(formatError(error));
     }
@@ -1000,13 +1008,13 @@ export default function App() {
 
   const deleteSupplier = async (supplierId) => {
     const keyword = `DELETE_SUPPLIER_${supplierId}`;
-    const confirmed = confirmWithKeyword({
+    const confirmed = await confirmWithKeyword({
       title: `Видалення постачальника #${supplierId}`,
       details: 'Це видалить постачальника і повʼязані налаштування.',
       keyword
     });
     if (!confirmed) {
-      setSupplierFormStatus('Видалення скасовано (не пройдено preflight)');
+      return;
       return;
     }
     setSupplierFormStatus(`Видалення #${supplierId}...`);
@@ -1030,6 +1038,26 @@ export default function App() {
     } catch (error) {
       setSupplierFormStatus(formatError(error));
     }
+  };
+
+  const startCreateSource = () => {
+    setEditingSourceId('');
+    setSourceDraft(toSourceDraft(null));
+    setSourceErrors({});
+    setSourceFormStatus('');
+    setSelectedSheetName('');
+  };
+
+  const startEditSource = (source) => {
+    if (!source) {
+      return;
+    }
+    setEditingSourceId(String(source.id));
+    setSourceDraft(toSourceDraft(source));
+    setSourceErrors({});
+    setSourceFormStatus('');
+    setSelectedSourceId(String(source.id));
+    setSelectedSheetName(String(source.sheet_name || ''));
   };
 
   const saveSource = async () => {
@@ -1097,13 +1125,13 @@ export default function App() {
 
   const deleteSource = async (sourceId) => {
     const keyword = `DELETE_SOURCE_${sourceId}`;
-    const confirmed = confirmWithKeyword({
+    const confirmed = await confirmWithKeyword({
       title: `Видалення джерела #${sourceId}`,
       details: 'Перевірте, що це джерело більше не використовується у pipeline.',
       keyword
     });
     if (!confirmed) {
-      setSourceFormStatus('Видалення скасовано (не пройдено preflight)');
+      return;
       return;
     }
     setSourceFormStatus(`Видалення source #${sourceId}...`);
@@ -1244,13 +1272,13 @@ export default function App() {
       return false;
     }
     const keyword = `DELETE_MAPPING_${mappingId}`;
-    const confirmed = confirmWithKeyword({
+    const confirmed = await confirmWithKeyword({
       title: `Видалення мапінгу #${mappingId}`,
       details: 'Видалений мапінг не буде використовуватись у наступних імпортах.',
       keyword
     });
     if (!confirmed) {
-      setMappingStatus('Видалення скасовано (не пройдено preflight)');
+      return false;
       return false;
     }
     setMappingStatus(`Видалення мапінгу #${mappingId}...`);
@@ -1742,14 +1770,14 @@ export default function App() {
       return;
     }
     const keyword = `CLEANUP_${Math.trunc(retentionDays)}`;
-    const confirmed = confirmWithKeyword({
+    const confirmed = await confirmWithKeyword({
       title: `Cleanup run (retentionDays=${Math.trunc(retentionDays)})`,
       details:
         'Операція видалить старі logs/jobs/дані за правилами retention. Перевірте значення.',
       keyword
     });
     if (!confirmed) {
-      setActionStatus('cleanup: скасовано (не пройдено preflight)');
+      return;
       return;
     }
     await runJob('cleanup', '/jobs/cleanup', {
@@ -1859,7 +1887,9 @@ export default function App() {
             await loadStoreMirror();
             return;
           }
-          await loadStorePreview();
+          // store_preview не auto-refresh: mode залежить від dataFilters (stale closure),
+          // користувач перезавантажує вручну або через зміну фільтрів
+          return;
         }
       } finally {
         autoRefreshInFlightRef.current = false;
@@ -1896,36 +1926,21 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [authReady, meRole, tab, logsLevel, logsJobId]);
 
+  // Immediate reload for pagination/filter changes (no debounce)
   useEffect(() => {
     if (!authReady || !meRole || tab !== 'data') {
-      return undefined;
+      return;
     }
-    const timeoutId = window.setTimeout(() => {
-      if (activeDataView === 'merged') {
-        void loadMerged();
-        return;
-      }
-      if (activeDataView === 'final') {
-        void loadFinal();
-        return;
-      }
-      if (activeDataView === 'compare') {
-        void loadCompare();
-        return;
-      }
-      if (activeDataView === 'store_now') {
-        void loadStoreMirror();
-        return;
-      }
-      void loadStorePreview();
-    }, 350);
-    return () => window.clearTimeout(timeoutId);
+    if (activeDataView === 'merged') { void loadMerged(); return; }
+    if (activeDataView === 'final') { void loadFinal(); return; }
+    if (activeDataView === 'compare') { void loadCompare(); return; }
+    if (activeDataView === 'store_now') { void loadStoreMirror(); return; }
+    void loadStorePreview();
   }, [
     authReady,
     meRole,
     tab,
     activeDataView,
-    dataFilters.search,
     dataFilters.supplierId,
     dataFilters.limit,
     dataFilters.offset,
@@ -1934,6 +1949,22 @@ export default function App() {
     dataFilters.finalSort,
     dataFilters.storePreviewMode
   ]);
+
+  // Debounced reload for search text input only (avoids request-per-keystroke)
+  useEffect(() => {
+    if (!authReady || !meRole || tab !== 'data') {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      if (activeDataView === 'merged') { void loadMerged(); return; }
+      if (activeDataView === 'final') { void loadFinal(); return; }
+      if (activeDataView === 'compare') { void loadCompare(); return; }
+      if (activeDataView === 'store_now') { void loadStoreMirror(); return; }
+      void loadStorePreview();
+    }, 350);
+    return () => window.clearTimeout(timeoutId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady, meRole, tab, dataFilters.search]);
 
   useEffect(() => {
     void refreshSources(selectedSupplierId);
@@ -1985,17 +2016,19 @@ export default function App() {
           </p>
         </div>
         <div className="top-actions">
-          <Tag tone={apiStatus === 'ok' ? 'ok' : 'error'}>API: {apiStatus}</Tag>
+          {apiStatus !== 'ok' ? (
+            <Tag tone="error">API: {apiStatus === 'checking' ? 'перевірка...' : 'недоступний'}</Tag>
+          ) : null}
           <Tag tone={readyForImport ? 'ok' : 'warn'}>
-            store import: {readyForImport ? 'ready' : 'check gates'}
+            Імпорт у магазин: {readyForImport ? 'готово' : 'перевірити гейти'}
           </Tag>
           {lastFailedAction ? (
             <button className="btn danger" disabled={isReadOnly} onClick={retryLastFailedAction}>
-              Retry failed: {lastFailedAction.label}
+              Повторити: {humanizeActionLabel(lastFailedAction.label)}
             </button>
           ) : null}
           <button className="btn" onClick={refreshCore}>Оновити</button>
-          <button className="btn danger" onClick={logout}>Logout</button>
+          <button className="btn danger" onClick={logout}>Вийти</button>
         </div>
       </div>
 
@@ -2060,6 +2093,7 @@ export default function App() {
           supplierDraft={supplierDraft}
           supplierErrors={supplierErrors}
           supplierFormStatus={supplierFormStatus}
+          setSupplierFormStatus={setSupplierFormStatus}
           saveSupplier={saveSupplier}
           markupRuleSets={markupRuleSets}
           globalRuleSetId={globalRuleSetId}
@@ -2073,6 +2107,15 @@ export default function App() {
               selectedSourceId={selectedSourceId}
               setSelectedSourceId={setSelectedSourceId}
               sources={sources}
+              sourceDraft={sourceDraft}
+              setSourceDraft={setSourceDraft}
+              sourceErrors={sourceErrors}
+              sourceFormStatus={sourceFormStatus}
+              editingSourceId={editingSourceId}
+              startCreateSource={startCreateSource}
+              startEditSource={startEditSource}
+              saveSource={saveSource}
+              deleteSource={deleteSource}
               isReadOnly={isReadOnly}
               sourcesStatus={sourcesStatus}
               sourceSheets={sourceSheets}
@@ -2141,6 +2184,7 @@ export default function App() {
           compareState={compareState}
           storeMirrorState={storeMirrorState}
           storePreviewState={storePreviewState}
+          suppliers={suppliers}
         />
       ) : null}
 
@@ -2173,6 +2217,16 @@ export default function App() {
           latestErrorLogs={latestErrorLogs}
           jobDetails={jobDetails}
           closeJobDetails={closeJobDetails}
+          readiness={readiness}
+          stats={stats}
+        />
+      ) : null}
+      {confirmModal ? (
+        <ConfirmKeywordModal
+          title={confirmModal.title}
+          details={confirmModal.details}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={confirmModal.onCancel}
         />
       ) : null}
     </div>

@@ -8,49 +8,31 @@ const toFiniteNumber = (value) => {
 
 const formatNumeric = (value) => {
   const numeric = toFiniteNumber(value);
-  if (numeric === null) {
-    return '-';
-  }
+  if (numeric === null) return '-';
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2);
 };
 
 const formatRangeLabel = (condition) => {
   const from = toFiniteNumber(condition?.price_from);
   const to = toFiniteNumber(condition?.price_to);
-  if (from === null && to === null) {
-    return 'без діапазону';
-  }
-  if (from !== null && to !== null) {
-    return `${formatNumeric(from)} - ${formatNumeric(to)}`;
-  }
-  if (from !== null) {
-    return `від ${formatNumeric(from)}`;
-  }
+  if (from === null && to === null) return 'без діапазону';
+  if (from !== null && to !== null) return `${formatNumeric(from)} - ${formatNumeric(to)}`;
+  if (from !== null) return `від ${formatNumeric(from)}`;
   return `до ${formatNumeric(to)}`;
 };
 
 const formatActionLabel = (condition) => {
   const actionType = String(condition?.action_type || '').trim();
   const actionValue = toFiniteNumber(condition?.action_value);
-  if (actionValue === null) {
-    return actionType || '-';
-  }
-  if (actionType === 'percent') {
-    return `${actionValue >= 0 ? '+' : ''}${formatNumeric(actionValue)}%`;
-  }
-  if (actionType === 'fixed_add') {
-    return `${actionValue >= 0 ? '+' : ''}${formatNumeric(actionValue)} грн`;
-  }
+  if (actionValue === null) return actionType || '-';
+  if (actionType === 'percent') return `${actionValue >= 0 ? '+' : ''}${formatNumeric(actionValue)}%`;
+  if (actionType === 'fixed_add') return `${actionValue >= 0 ? '+' : ''}${formatNumeric(actionValue)} грн`;
   return `${actionType}: ${formatNumeric(actionValue)}`;
 };
 
 const formatIntervalLabel = (priceFrom, priceTo) => {
-  if (!Number.isFinite(priceFrom)) {
-    return '[?; ?)';
-  }
-  if (priceTo === null || !Number.isFinite(priceTo)) {
-    return `[${formatNumeric(priceFrom)}; +∞)`;
-  }
+  if (!Number.isFinite(priceFrom)) return '[?; ?)';
+  if (priceTo === null || !Number.isFinite(priceTo)) return `[${formatNumeric(priceFrom)}; +∞)`;
   return `[${formatNumeric(priceFrom)}; ${formatNumeric(priceTo)})`;
 };
 
@@ -58,65 +40,51 @@ const detectRuleSetDraftConflicts = (draftConditions) => {
   if (!Array.isArray(draftConditions) || draftConditions.length === 0) {
     return { duplicatePriorities: [], overlaps: [] };
   }
-
   const activeRows = draftConditions
     .map((condition, index) => {
       const priority = Number(condition?.priority);
       const priceFrom = Number(condition?.price_from);
       const priceToRaw = String(condition?.price_to ?? '').trim();
       const priceTo = priceToRaw === '' ? null : Number(priceToRaw);
-      const hasValidPriority = Number.isFinite(priority);
-      const hasValidFrom = Number.isFinite(priceFrom) && priceFrom >= 0;
-      const hasValidTo =
-        priceTo === null || (Number.isFinite(priceTo) && priceTo >= priceFrom);
       return {
         row: index + 1,
         priority,
         priceFrom,
         priceTo,
         active: condition?.is_active !== false,
-        valid: hasValidPriority && hasValidFrom && hasValidTo
+        valid:
+          Number.isFinite(priority) &&
+          Number.isFinite(priceFrom) && priceFrom >= 0 &&
+          (priceTo === null || (Number.isFinite(priceTo) && priceTo >= priceFrom))
       };
     })
     .filter((item) => item.active && item.valid);
 
   const duplicatePriorities = [];
   const priorityMap = new Map();
-  for (let index = 0; index < activeRows.length; index += 1) {
-    const item = activeRows[index];
+  for (const item of activeRows) {
     const key = Math.trunc(item.priority);
-    if (!priorityMap.has(key)) {
-      priorityMap.set(key, [item.row]);
-    } else {
-      priorityMap.get(key).push(item.row);
-    }
+    if (!priorityMap.has(key)) { priorityMap.set(key, [item.row]); }
+    else { priorityMap.get(key).push(item.row); }
   }
   for (const [priority, rows] of priorityMap.entries()) {
-    if (rows.length > 1) {
-      duplicatePriorities.push({
-        priority,
-        rows
-      });
-    }
+    if (rows.length > 1) duplicatePriorities.push({ priority, rows });
   }
 
   const overlaps = [];
-  for (let leftIndex = 0; leftIndex < activeRows.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < activeRows.length; rightIndex += 1) {
-      const left = activeRows[leftIndex];
-      const right = activeRows[rightIndex];
+  for (let l = 0; l < activeRows.length; l += 1) {
+    for (let r = l + 1; r < activeRows.length; r += 1) {
+      const left = activeRows[l];
+      const right = activeRows[r];
       const leftTo = left.priceTo === null ? Number.POSITIVE_INFINITY : left.priceTo;
       const rightTo = right.priceTo === null ? Number.POSITIVE_INFINITY : right.priceTo;
-      const intersects = left.priceFrom < rightTo && right.priceFrom < leftTo;
-      if (!intersects) {
-        continue;
+      if (left.priceFrom < rightTo && right.priceFrom < leftTo) {
+        overlaps.push({
+          leftRow: left.row, rightRow: right.row,
+          leftRange: formatIntervalLabel(left.priceFrom, left.priceTo),
+          rightRange: formatIntervalLabel(right.priceFrom, right.priceTo)
+        });
       }
-      overlaps.push({
-        leftRow: left.row,
-        rightRow: right.row,
-        leftRange: formatIntervalLabel(left.priceFrom, left.priceTo),
-        rightRange: formatIntervalLabel(right.priceFrom, right.priceTo)
-      });
     }
   }
 
@@ -147,36 +115,29 @@ export function PricingTab({
 
   const normalizedRuleSets = Array.isArray(markupRuleSets) ? markupRuleSets : [];
   const defaultRuleSet = useMemo(
-    () =>
-      normalizedRuleSets.find((ruleSet) => Number(ruleSet?.id || 0) === Number(globalRuleSetId || 0)) ||
-      null,
+    () => normalizedRuleSets.find((rs) => Number(rs?.id || 0) === Number(globalRuleSetId || 0)) || null,
     [normalizedRuleSets, globalRuleSetId]
   );
   const defaultRuleSetConditions = useMemo(() => {
-    if (!defaultRuleSet || !Array.isArray(defaultRuleSet.conditions)) {
-      return [];
-    }
-    return [...defaultRuleSet.conditions].sort(
-      (left, right) => Number(left?.priority || 0) - Number(right?.priority || 0)
-    );
+    if (!defaultRuleSet || !Array.isArray(defaultRuleSet.conditions)) return [];
+    return [...defaultRuleSet.conditions].sort((a, b) => Number(a?.priority || 0) - Number(b?.priority || 0));
   }, [defaultRuleSet]);
   const activeDefaultConditions = useMemo(
-    () => defaultRuleSetConditions.filter((condition) => condition?.is_active !== false),
+    () => defaultRuleSetConditions.filter((c) => c?.is_active !== false),
     [defaultRuleSetConditions]
   );
 
   const filteredRuleSets = useMemo(() => {
     let rows = [...normalizedRuleSets];
-    const normalizedSearch = String(ruleSetSearch || '').trim().toLowerCase();
-    if (normalizedSearch) {
-      rows = rows.filter((ruleSet) =>
-        `${String(ruleSet?.name || '')} ${String(ruleSet?.id || '')}`
-          .toLowerCase()
-          .includes(normalizedSearch)
+    const q = String(ruleSetSearch || '').trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((rs) =>
+        `${String(rs?.name || '')} ${String(rs?.id || '')}`.toLowerCase().includes(q)
       );
     }
     return rows;
   }, [normalizedRuleSets, ruleSetSearch]);
+
   const ruleSetDraftConflicts = useMemo(
     () => detectRuleSetDraftConflicts(ruleSetDraft?.conditions),
     [ruleSetDraft?.conditions]
@@ -185,59 +146,48 @@ export function PricingTab({
     ruleSetDraftConflicts.duplicatePriorities.length > 0 ||
     ruleSetDraftConflicts.overlaps.length > 0;
 
-  const openCreateRuleSetModal = () => {
-    startCreateRuleSet();
-    setRuleSetModalOpen(true);
-  };
-
-  const openEditRuleSetModal = (ruleSetId) => {
-    startEditRuleSet(ruleSetId);
-    setRuleSetModalOpen(true);
-  };
-
-  const closeRuleSetModal = () => {
-    setRuleSetModalOpen(false);
-  };
+  const openCreateRuleSetModal = () => { startCreateRuleSet(); setRuleSetModalOpen(true); };
+  const openEditRuleSetModal = (id) => { startEditRuleSet(id); setRuleSetModalOpen(true); };
+  const closeRuleSetModal = () => setRuleSetModalOpen(false);
 
   useEffect(() => {
-    const normalized = String(ruleSetStatus || '').toLowerCase();
+    const status = String(ruleSetStatus || '').toLowerCase();
     const wasSaved = previousRuleSetStatusRef.current.includes('rule set збережено');
-    const isSavedNow = normalized.includes('rule set збережено');
-    if (isRuleSetModalOpen && isSavedNow && !wasSaved) {
-      setRuleSetModalOpen(false);
-    }
-    previousRuleSetStatusRef.current = normalized;
+    if (isRuleSetModalOpen && status.includes('rule set збережено') && !wasSaved) closeRuleSetModal();
+    previousRuleSetStatusRef.current = status;
   }, [isRuleSetModalOpen, ruleSetStatus]);
+
+  const isErrorStatus = (value) => /(error|invalid|failed|помилка)/i.test(String(value || ''));
 
   return (
     <div className="data-grid">
-      <Section title="Типи націнки (Rule Sets)" subtitle="Список типів націнки та керування default">
+      <Section title="Типи націнки">
+
+        {/* Default rule set preview */}
         <div className="pricing-kpi-grid">
           <div className="pricing-kpi-card">
-            <div className="pricing-kpi-label">Поточний default rule set</div>
+            <div className="pricing-kpi-label">Основний тип</div>
             <div className="pricing-kpi-value">
-              {defaultRuleSet ? `#${defaultRuleSet.id} ${defaultRuleSet.name}` : `#${globalRuleSetId || '-'}`}
+              {defaultRuleSet ? `#${defaultRuleSet.id} ${defaultRuleSet.name}` : `#${globalRuleSetId || '—'}`}
             </div>
             <div className="pricing-kpi-meta">
               {defaultRuleSet ? (
                 <>
                   <Tag tone={defaultRuleSet.is_active ? 'ok' : 'warn'}>
-                    {defaultRuleSet.is_active ? 'active' : 'paused'}
+                    {defaultRuleSet.is_active ? 'Активний' : 'Призупинено'}
                   </Tag>
-                  <span className="muted">
-                    Умов: {activeDefaultConditions.length}/{defaultRuleSetConditions.length}
-                  </span>
+                  <span className="muted">Умов: {activeDefaultConditions.length}/{defaultRuleSetConditions.length}</span>
                 </>
               ) : (
-                'Rule set не знайдено в списку'
+                <span className="muted">Тип не знайдено в списку</span>
               )}
             </div>
           </div>
 
           <div className="pricing-kpi-card pricing-kpi-rules-card">
-            <div className="pricing-kpi-label">Як формується ціна по default</div>
+            <div className="pricing-kpi-label">Як формується ціна</div>
             {activeDefaultConditions.length === 0 ? (
-              <div className="muted pricing-kpi-empty">Немає активних умов для відображення</div>
+              <div className="muted pricing-kpi-empty">Немає активних умов</div>
             ) : (
               <div className="pricing-default-rules">
                 {activeDefaultConditions.map((condition, index) => (
@@ -251,74 +201,68 @@ export function PricingTab({
           </div>
         </div>
 
+        {/* Toolbar */}
         <div className="pricing-toolbar">
           <div className="pricing-toolbar-search">
             <input
               placeholder="Пошук типу націнки..."
               value={ruleSetSearch}
-              onChange={(event) => setRuleSetSearch(event.target.value)}
+              onChange={(e) => setRuleSetSearch(e.target.value)}
             />
           </div>
           <div className="actions pricing-toolbar-actions">
-            <button className="btn" onClick={refreshMarkupRuleSets}>Оновити список</button>
+            <button className="btn" onClick={refreshMarkupRuleSets}>Оновити</button>
             <button className="btn primary" disabled={isReadOnly} onClick={openCreateRuleSetModal}>
-              Новий тип націнки
+              + Новий тип
             </button>
           </div>
         </div>
 
+        {/* Table */}
         <div className="pricing-table-wrap">
           <table className="pricing-table">
             <thead>
               <tr>
-                <th>Rule set</th>
+                <th>Тип націнки</th>
                 <th>Стан</th>
                 <th>Умов</th>
-                <th>Дії</th>
+                <th style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>Дії</th>
               </tr>
             </thead>
             <tbody>
               {filteredRuleSets.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="supplier-empty-row">
-                    Нічого не знайдено
-                  </td>
+                  <td colSpan={4} className="supplier-empty-row">Нічого не знайдено</td>
                 </tr>
               ) : (
-                filteredRuleSets.map((ruleSet) => {
-                  const isCurrentDefault = Number(globalRuleSetId || 0) === Number(ruleSet.id);
+                filteredRuleSets.map((rs) => {
+                  const isDefault = Number(globalRuleSetId || 0) === Number(rs.id);
                   return (
-                    <tr key={ruleSet.id}>
+                    <tr key={rs.id}>
                       <td>
                         <div className="supplier-name-cell">
-                          <div className="supplier-name-title">
-                            #{ruleSet.id} {ruleSet.name}
-                          </div>
-                          {isCurrentDefault ? (
-                            <div>
-                              <span className="chip">default</span>
-                            </div>
-                          ) : null}
+                          <div className="supplier-name-title">#{rs.id} {rs.name}</div>
+                          {isDefault ? <span className="rule-set-pill">основний</span> : null}
                         </div>
                       </td>
                       <td>
-                        <Tag tone={ruleSet.is_active ? 'ok' : 'warn'}>
-                          {ruleSet.is_active ? 'active' : 'paused'}
+                        <Tag tone={rs.is_active ? 'ok' : 'warn'}>
+                          {rs.is_active ? 'Активний' : 'Призупинено'}
                         </Tag>
                       </td>
-                      <td>{Array.isArray(ruleSet.conditions) ? ruleSet.conditions.length : 0}</td>
-                      <td>
-                        <div className="actions">
-                          <button className="btn" onClick={() => openEditRuleSetModal(ruleSet.id)}>
+                      <td>{Array.isArray(rs.conditions) ? rs.conditions.length : 0}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <div className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                          <button className="btn btn-sm" onClick={() => openEditRuleSetModal(rs.id)}>
                             Редагувати
                           </button>
-                          {!isCurrentDefault ? (
+                          {!isDefault ? (
                             <button
-                              className="btn"
+                              className="btn btn-sm"
                               disabled={isReadOnly}
-                              onClick={() => setDefaultMarkupRuleSet(String(ruleSet.id))}
+                              onClick={() => setDefaultMarkupRuleSet(String(rs.id))}
                             >
-                              Зробити default
+                              Зробити основним
                             </button>
                           ) : null}
                         </div>
@@ -331,26 +275,25 @@ export function PricingTab({
           </table>
         </div>
 
-        <div className="status-line">Показано: {filteredRuleSets.length}</div>
-        <div className={`status-line ${/(error|invalid|failed|помилка)/i.test(String(pricingStatus || '')) ? 'error' : ''}`}>
-          {pricingStatus}
+        <div className={`status-line ${isErrorStatus(pricingStatus) ? 'error' : ''}`}>
+          Показано: {filteredRuleSets.length}
+          {pricingStatus ? ` · ${pricingStatus}` : ''}
         </div>
       </Section>
 
+      {/* Rule set editor modal */}
       {isRuleSetModalOpen ? (
         <div className="modal-backdrop" onClick={closeRuleSetModal}>
-          <div className="modal-card modal-card-wide pricing-modal-card" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-card modal-card-wide pricing-modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="section-head">
               <div>
-                <h3>{ruleSetDraft.id ? `Редагування rule set #${ruleSetDraft.id}` : 'Новий тип націнки'}</h3>
-                <p className="muted">Налаштування діапазонів і дій націнки</p>
+                <h3>{ruleSetDraft.id ? `Редагування типу #${ruleSetDraft.id}` : 'Новий тип націнки'}</h3>
+                <p className="muted">
+                  Діапазон: <strong>[Ціна від; Ціна до)</strong> — права межа не включається.
+                  Приклад: 500–1000 і 1000–2000 не перетинаються.
+                </p>
               </div>
               <button className="btn" onClick={closeRuleSetModal}>Закрити</button>
-            </div>
-
-            <div className="pricing-rule-guidelines">
-              Формат діапазону: <strong>[Ціна від; Ціна до)</strong>. Межа <strong>Ціна до</strong> не включається.
-              Приклад: <strong>500-1000</strong> і <strong>1000-2000</strong> не перетинаються.
             </div>
 
             <div className="form-row pricing-modal-head-grid">
@@ -358,7 +301,7 @@ export function PricingTab({
                 <label>Назва</label>
                 <input
                   value={ruleSetDraft.name}
-                  onChange={(event) => setRuleSetDraft((prev) => ({ ...prev, name: event.target.value }))}
+                  onChange={(e) => setRuleSetDraft((prev) => ({ ...prev, name: e.target.value }))}
                 />
                 {ruleSetErrors.base ? <div className="field-error">{ruleSetErrors.base}</div> : null}
               </div>
@@ -367,11 +310,9 @@ export function PricingTab({
                   <input
                     type="checkbox"
                     checked={ruleSetDraft.is_active}
-                    onChange={(event) =>
-                      setRuleSetDraft((prev) => ({ ...prev, is_active: event.target.checked }))
-                    }
+                    onChange={(e) => setRuleSetDraft((prev) => ({ ...prev, is_active: e.target.checked }))}
                   />
-                  Rule set активний
+                  Тип активний
                 </label>
               </div>
             </div>
@@ -380,12 +321,12 @@ export function PricingTab({
               <div className="pricing-conflicts-box">
                 {ruleSetDraftConflicts.duplicatePriorities.map((item, index) => (
                   <div key={`priority_conflict_${index}`} className="field-error">
-                    Дубль priority {item.priority} в умовах #{item.rows.join(', #')}. Для активних умов priority має бути унікальним.
+                    Дубль пріоритету {item.priority} в умовах #{item.rows.join(', #')}
                   </div>
                 ))}
                 {ruleSetDraftConflicts.overlaps.map((item, index) => (
                   <div key={`range_conflict_${index}`} className="field-error">
-                    Перетин діапазонів: умова #{item.leftRow} {item.leftRange} і умова #{item.rightRow} {item.rightRange}.
+                    Перетин: умова #{item.leftRow} {item.leftRange} і #{item.rightRow} {item.rightRange}
                   </div>
                 ))}
               </div>
@@ -397,11 +338,11 @@ export function PricingTab({
                   <div>#</div>
                   <div>Пріоритет</div>
                   <div>Ціна від</div>
-                  <div>Ціна до (не вкл.)</div>
+                  <div>Ціна до</div>
                   <div>Тип дії</div>
-                  <div>Значення дії</div>
+                  <div>Значення</div>
                   <div>Активна</div>
-                  <div>Дія</div>
+                  <div></div>
                 </div>
 
                 {ruleSetDraft.conditions.map((condition, index) => (
@@ -410,42 +351,42 @@ export function PricingTab({
                       <div className="pricing-condition-index">#{index + 1}</div>
                       <input
                         value={condition.priority}
-                        onChange={(event) => updateRuleCondition(index, { priority: event.target.value })}
+                        onChange={(e) => updateRuleCondition(index, { priority: e.target.value })}
                       />
                       <input
                         value={condition.price_from}
-                        onChange={(event) => updateRuleCondition(index, { price_from: event.target.value })}
+                        onChange={(e) => updateRuleCondition(index, { price_from: e.target.value })}
                       />
                       <input
                         value={condition.price_to}
-                        onChange={(event) => updateRuleCondition(index, { price_to: event.target.value })}
-                        placeholder="порожньо = +∞"
+                        onChange={(e) => updateRuleCondition(index, { price_to: e.target.value })}
+                        placeholder="∞"
                       />
                       <select
                         value={condition.action_type}
-                        onChange={(event) => updateRuleCondition(index, { action_type: event.target.value })}
+                        onChange={(e) => updateRuleCondition(index, { action_type: e.target.value })}
                       >
-                        <option value="percent">percent</option>
-                        <option value="fixed_add">fixed_add</option>
+                        <option value="percent">Відсоток (%)</option>
+                        <option value="fixed_add">Фіксована (грн)</option>
                       </select>
                       <input
                         value={condition.action_value}
-                        onChange={(event) => updateRuleCondition(index, { action_value: event.target.value })}
+                        onChange={(e) => updateRuleCondition(index, { action_value: e.target.value })}
                       />
                       <label className="inline-checkbox pricing-condition-active-toggle">
                         <input
                           type="checkbox"
                           checked={condition.is_active}
-                          onChange={(event) => updateRuleCondition(index, { is_active: event.target.checked })}
+                          onChange={(e) => updateRuleCondition(index, { is_active: e.target.checked })}
                         />
-                        active
+                        Так
                       </label>
                       <button
-                        className="btn danger"
+                        className="btn btn-sm danger"
                         disabled={ruleSetDraft.conditions.length <= 1}
                         onClick={() => removeRuleCondition(index)}
                       >
-                        Видалити
+                        ×
                       </button>
                     </div>
                     {ruleSetErrors[`condition_${index}`] ? (
@@ -459,14 +400,13 @@ export function PricingTab({
             </div>
 
             <div className="actions pricing-modal-actions">
-              <button className="btn" onClick={addRuleCondition}>Додати правило</button>
+              <button className="btn" onClick={addRuleCondition}>+ Додати умову</button>
               <button className="btn primary" disabled={isReadOnly || hasBlockingDraftConflicts} onClick={saveRuleSet}>
-                {ruleSetDraft.id ? 'Оновити rule set' : 'Створити rule set'}
+                {ruleSetDraft.id ? 'Зберегти' : 'Створити'}
               </button>
-              <button className="btn" onClick={startCreateRuleSet}>Скинути редактор</button>
             </div>
 
-            <div className={`status-line ${/(error|invalid|failed|помилка)/i.test(String(ruleSetStatus || '')) ? 'error' : ''}`}>
+            <div className={`status-line ${isErrorStatus(ruleSetStatus) ? 'error' : ''}`}>
               {ruleSetStatus}
             </div>
           </div>

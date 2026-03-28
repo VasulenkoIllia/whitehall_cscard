@@ -50,14 +50,11 @@ export function ManualControlTab({
           </button>
         </div>
 
-        <div className="status-line">
-          {actionForm.storeSupplier
-            ? `Для кроку "4. Імпорт у магазин" обрано постачальника: ${actionForm.storeSupplier}`
-            : 'Для кроку "4. Імпорт у магазин" використовується режим: усі постачальники'}
-        </div>
-
         <details className="details-block" style={{ marginTop: 10 }}>
-          <summary>Розширені дії для оператора</summary>
+          <summary>
+            Розширені дії · крок 4:{' '}
+            {actionForm.storeSupplier ? `постачальник "${actionForm.storeSupplier}"` : 'усі постачальники'}
+          </summary>
 
           <div className="operator-group">
             <h4 className="block-title">1. Точковий імпорт (без повного пайплайна)</h4>
@@ -75,7 +72,7 @@ export function ManualControlTab({
                   <option value="">-- оберіть постачальника --</option>
                   {supplierOptions.map((supplier) => (
                     <option key={supplier.id} value={supplier.id}>
-                      {supplier.name} {supplier.is_active ? '' : '(paused)'}
+                      {supplier.name} {supplier.is_active ? '' : '(призупинено)'}
                     </option>
                   ))}
                 </select>
@@ -203,6 +200,9 @@ export function ManualControlTab({
               <div>
                 <label>Скільки днів історії залишати</label>
                 <input
+                  type="number"
+                  min="1"
+                  placeholder="наприклад, 30"
                   value={actionForm.retentionDays}
                   onChange={(event) =>
                     setActionForm((prev) => ({ ...prev, retentionDays: event.target.value }))

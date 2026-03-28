@@ -33,7 +33,7 @@
 - `CSCART_API_KEY` — API key (basic auth password).
 - `CSCART_STOREFRONT_ID` — опційний storefront.
 - `CSCART_ITEMS_PER_PAGE` — розмір сторінки mirror (рекомендовано 1000, виміряно на whitehall.com.ua).
-- `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_BURST` — ліміт запитів при оновленні товарів (стартово 10 RPS, burst 20) з backoff на 429/5xx.
+- `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_LIMIT_BURST` — ліміт запитів при оновленні товарів (стартово 10 RPS, burst 20) з backoff на 429/5xx.
 - `CSCART_ALLOW_CREATE` — дозволити POST створення нових SKU (default false). За замовчуванням тільки PUT по mirror (update-only).
 - `HOROSHOP_RATE_LIMIT_RPS`, `HOROSHOP_RATE_LIMIT_BURST` — зарезервовано для майбутнього Horoshop-конектора (у поточному CS-Cart scope не використовується).
 
