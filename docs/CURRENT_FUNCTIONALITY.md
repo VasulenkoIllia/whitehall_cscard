@@ -54,11 +54,14 @@
 ### Нормалізація розмірів під час finalize
 - `NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(pr.size)))), '') AS size`
 - Якщо маппінг дає `''` — результат `NULL` (не порожній рядок), щоб `DISTINCT ON (article, size)` коректно дедуплікував з іншими NULL-size рядками того ж артикулу.
+  - Приклад: постачальник A дає `size='-'` (маппінг → `''` → `NULL`), постачальник B дає `size=NULL` — обидва зливаються в один рядок `MA0986-K5X` з мінімальною ціною.
 - Якщо маппінгу немає → `UPPER(TRIM(size))` як fallback.
 - Тільки активні маппінги (`is_active = TRUE`).
 - Нормалізація відбувається до `DISTINCT ON` — рядки `"xl"` і `"XL"` зливаються в один `"XL"`.
 - `products_raw.size` — зберігається без змін (оригінал).
 - `products_final.size` — нормалізований розмір (або NULL).
+- **Деdup порожніх рядків** (`deduplicateEmptySizeRowsSql`): після всіх операцій finalize видаляє рядки з `size=''` якщо для того ж `article+job_id` вже є `size=NULL`. Захист від legacy-даних що залишились до впровадження NULLIF. В нормальному режимі видаляє 0 рядків.
+- **SKU при `size=NULL`**: `WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article` — суфікс не додається, SKU = тільки article.
 
 ## Імпорт даних
 - Імпорт Google Sheets → `products_raw` з перевіркою mapping і skip-логікою.
