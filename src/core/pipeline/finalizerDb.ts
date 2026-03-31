@@ -10,7 +10,9 @@ const stageFromPrecomputedSql = `
       END AS article,
       -- Normalise size: use mapping table if available, otherwise UPPER(TRIM) as fallback.
       -- NULL sizes remain NULL; unmapped sizes are auto-uppercased.
-      COALESCE(szm.size_to, UPPER(TRIM(pr.size))) AS size,
+      -- NULLIF: if mapping produces '' (intentional empty mapping), treat as NULL so
+      -- DISTINCT ON deduplicates it with other NULL-size rows for the same article.
+      NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(pr.size)))), '') AS size,
       pr.quantity,
       pr.price AS price_base,
       CEIL(pr.price_with_markup / 10) * 10 AS price_final,
@@ -65,7 +67,9 @@ const stageWithFinalizePricingSql = `
       END AS article,
       -- Normalise size: use mapping table if available, otherwise UPPER(TRIM) as fallback.
       -- NULL sizes remain NULL; unmapped sizes are auto-uppercased.
-      COALESCE(szm.size_to, UPPER(TRIM(pr.size))) AS size,
+      -- NULLIF: if mapping produces '' (intentional empty mapping), treat as NULL so
+      -- DISTINCT ON deduplicates it with other NULL-size rows for the same article.
+      NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(pr.size)))), '') AS size,
       pr.quantity,
       pr.price AS price_base,
       pr.extra,
