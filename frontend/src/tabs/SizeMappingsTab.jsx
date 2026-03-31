@@ -41,9 +41,11 @@ function parseCsv(text) {
   return lines.slice(1).map((line) => {
     const comma = line.indexOf(',');
     if (comma === -1) return null;
-    const size_from = line.slice(0, comma).trim();
+    const size_from = line.slice(0, comma).trim().replace(/^"|"$/g, '');
     const size_to   = line.slice(comma + 1).trim().replace(/^"|"$/g, '');
-    return size_from && size_to ? { size_from, size_to } : null;
+    if (!size_from) return null;
+    // empty size_to is allowed — maps size to nothing (removes size suffix from SKU)
+    return { size_from, size_to };
   }).filter(Boolean);
 }
 
