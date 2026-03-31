@@ -221,6 +221,14 @@ export function createHttpServer(appContext: AppContext) {
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
+  // Root redirect: logged in → /admin, not logged in → /admin/login
+  app.get('/', (req: Request, res: Response) => {
+    if (req.userRole) {
+      return res.redirect(302, '/admin');
+    }
+    return res.redirect(302, '/admin/login');
+  });
+
   app.post('/auth/login', async (req: Request, res: Response) => {
     const { email, password } = req.body || {};
     if (!email || !password) {
