@@ -2042,10 +2042,6 @@ export default function App() {
       <div className="topbar">
         <div className="title-block">
           <h1>Whitehall CS-Cart Admin</h1>
-          <p>
-            Операційна панель для пайплайна CS-Cart: мінімум шуму, швидкі дії, без зміни
-            бізнес-логіки бекенду.
-          </p>
         </div>
         <div className="top-actions">
           {apiStatus !== 'ok' ? (

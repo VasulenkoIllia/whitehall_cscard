@@ -5,14 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e2539e80-4d9b-492c-a689-139fb23c07d4" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/SizeMappingsTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/SizeMappingsTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-DwnCMe4p.js" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/public/admin/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -26,6 +19,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "VasulenkoIllia"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "git@github.com:VasulenkoIllia/whitehall_cscard.git",
+    "accountId": "4190b2c9-086d-4bd5-a099-89373d1729bb"
+  }
+}]]></component>
   <component name="McpProjectServerCommands">
     <commands />
     <urls />
@@ -124,7 +129,7 @@
       <workItem from="1774689004538" duration="9867000" />
       <workItem from="1774942974185" duration="1809000" />
       <workItem from="1774973078610" duration="580000" />
-      <workItem from="1774974133359" duration="847000" />
+      <workItem from="1774974133359" duration="2069000" />
     </task>
     <servers />
   </component>
