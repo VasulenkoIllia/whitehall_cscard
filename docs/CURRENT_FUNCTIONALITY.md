@@ -3,188 +3,142 @@
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
 - `Horoshop` тимчасово винесено за межі поточного етапу.
-- Frontend перенесення на React закрито по плану (див. `docs/PLAN_FRONTEND_REACT_MIGRATION_2026_03.md`, Phase 5).
-- У React-адмінці вже реалізовано ключові операторські екрани:
-  - `Огляд` (системні KPI/readiness + технічний JSON snapshot + **"Активні джоби"** (running jobs з progress bar для `import_all`) + **"Останні пайплайни"** (таблиця: тип / статус / тривалість / час завершення для 7 останніх pipeline jobs)),
-  - `Ручне керування` (покроковий pipeline-run + розширені операторські дії),
-  - `Постачальники` (search/sort + select-all + CRUD + модалка мапінгу в межах 1 постачальника + масове призначення rule set для вибраних),
-  - `Націнки` (markup rule sets: list/create/update/default + conditions editor),
-  - `Дані` (merged/final/compare preview + `зараз в магазині` (store mirror) + `відправка в магазин` (store preview) + server filters/sort/paging controls + підтаб `Розміри` (size mappings CRUD + unmapped sizes report)); **авторефреш повністю видалено** — дані не стрибають при пагінації; пошук скидає offset до 0; вкладка завантажує дані рівно 1 раз при відкритті),
-  - `Крон` (runtime-настройки scheduler: `update_pipeline`, `store_mirror_sync`, `cleanup`; режими `кожні N годин`, `щодня у вибрані години`, `по днях тижня і годинах`),
-  - `Моніторинг` (jobs/logs + 5 останніх `error` з датою + modal-деталі помилки + details panel `/admin/api/jobs/:jobId` + logs filter by `level/jobId`).
-  - Активна вкладка зберігається між перезавантаженнями (URL `?tab=` + localStorage).
-  - Дані підтягуються при відкритті вкладки та зміні фільтрів; авторефреш на вкладці `Дані` видалено (стабільна пагінація).
-  - додано form-level валідації і inline помилки для операторських форм.
-  - додано preflight-підтвердження для destructive дій (`cleanup`, `delete supplier/source`, `apply all_suppliers`).
-  - додано retry UX для критичних mutating API дій (збереження/апдейти/джоби).
-  - додано глобальну toast/notification систему для операторських дій і помилок.
-  - фронтенд-структура модульна: вкладки винесені у `frontend/src/tabs/*`, `App.jsx` виконує роль контейнера стану.
+- Frontend перенесення на React закрито по плану (Phase 5).
+- Проект задеплоєний на `https://whitehallshop.workflo.space/admin` (Docker + Traefik).
+
+## UI (React-адмінка)
+- `Огляд` — системні KPI/readiness + JSON snapshot + **Активні джоби** (progress bar для `import_all`) + **Останні пайплайни** (тип / статус / тривалість / час).
+- `Ручне керування` — покроковий pipeline-run + розширені операторські дії.
+- `Постачальники` — search/sort + select-all + CRUD + модалка мапінгу + масове призначення rule set.
+- `Націнки` — markup rule sets: list/create/update/default + conditions editor.
+- `Дані` — merged/final/compare preview + `В магазині` (store mirror) + `До відправки` (store preview) + server filters/sort/paging + підтаб **Розміри**.
+- `Крон` — runtime-налаштування scheduler (`update_pipeline`, `store_mirror_sync`, `cleanup`).
+- `Моніторинг` — jobs/logs + 5 останніх error + modal-деталі + filter by level/jobId.
+- Авторефреш на вкладці `Дані` **видалено** — пагінація стабільна, дані не стрибають.
+- Активна вкладка зберігається в URL `?tab=` + localStorage.
+- Form-level валідації, inline помилки, preflight-підтвердження для destructive дій, retry UX, глобальна toast/notification система.
+- Фронтенд-структура модульна: `frontend/src/tabs/*`, `App.jsx` — контейнер стану.
+- Subtitle прибрано з topbar.
+- `/` → автоматичний редірект: залогінений → `/admin`, не залогінений → `/admin/login`.
+
+## Управління розмірами (підтаб `Дані → Розміри`)
+
+### Таблиця відповідностей (size_mappings)
+- CRUD маппінгів: `size_from` (оригінал від постачальника) → `size_to` (нормалізований).
+- **Маппінг на пустий рядок** — галочка "Пустий рядок (видалити розмір з артикулу)":
+  - `size_to = ''` → під час finalize розмір стає `NULL` → SKU = тільки article (без суфіксу).
+  - Захист: потрібен явний флаг `allow_empty_size_to=true` в API щоб уникнути випадкового очищення.
+  - В таблиці відображається курсивом `пустий рядок` замість порожньої комірки.
+- Пагінація: 50 записів на сторінку.
+- Пошук по `size_from` / `size_to`.
+- Фільтр: Всі / Числові / Буквені.
+- **CSV bulk import** (кнопка "Імпорт CSV"):
+  - Формат: `Розмір,Відповідність` (перший рядок — заголовок, пропускається).
+  - Порожня "Відповідність" допускається — маппінг на пустий рядок.
+  - **Перезаписує існуючі маппінги** (`ON CONFLICT DO UPDATE SET size_to, notes, is_active=TRUE`).
+  - Якщо завантажено < реального total незнайомих → надсилаються всі CSV рядки на сервер.
+  - Preview показує першіх 30 рядків з попередженням якщо truncated.
+- `POST /admin/api/size-mappings/bulk-import`.
+
+### Незнайомі розміри
+- Показує розміри з `products_raw` які ще не мають маппінгу.
+- **Реальний тотал** через CTE + `COUNT(*) OVER()` window function — не обмежується limit.
+- Ліміт завантаження: 2000 (топ за кількістю товарів).
+- Бейдж на вкладці "Розміри" показує реальний тотал з БД.
+- Якщо завантажено < реального тоталу — банер попередження "Завантажено топ N з M".
+- Пагінація: 50 записів на сторінку.
+- Пошук по raw_size.
+- Фільтр: Всі (без лічильника) / Числові / Буквені.
+- Кнопка `[+ Маппінг]` pre-fills форму і перемикає на вкладку відповідностей.
+
+### Нормалізація розмірів під час finalize
+- `NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(pr.size)))), '') AS size`
+- Якщо маппінг дає `''` — результат `NULL` (не порожній рядок), щоб `DISTINCT ON (article, size)` коректно дедуплікував з іншими NULL-size рядками того ж артикулу.
+- Якщо маппінгу немає → `UPPER(TRIM(size))` як fallback.
+- Тільки активні маппінги (`is_active = TRUE`).
+- Нормалізація відбувається до `DISTINCT ON` — рядки `"xl"` і `"XL"` зливаються в один `"XL"`.
+- `products_raw.size` — зберігається без змін (оригінал).
+- `products_final.size` — нормалізований розмір (або NULL).
 
 ## Імпорт даних
-- Імпорт Google Sheets у `products_raw` з перевіркою mapping і skip-логікою.
-- У поточному runtime підтримується тільки `source_type=google_sheet`; інші типи не входять у активний імпортний пайплайн.
-- Підтримані керовані сценарії:
-  - `import_all`
-  - `import_source`
-  - `import_supplier`
-- Всі сценарії виконуються через jobs-layer з lock-контролем.
-- **`import_all` та `finalize` — асинхронний режим (fire-and-forget):**
-  - `POST /admin/api/jobs/import-all` і `POST /admin/api/jobs/finalize` повертають `{ jobId }` негайно.
-  - Job виконується у фоні; прогрес зберігається у `jobs.meta.progress` (`{ completed, total }`).
-  - Фронтенд поллить `GET /admin/api/jobs/:id` кожні 3 секунди і показує progress bar (% + `N/M джерел`).
-  - Усуває ризик HTTP timeout при 400+ джерелах.
-- **Google Sheets оптимізація:** при повторному зверненні до аркуша з відомим `sheetName` пропускається `spreadsheets.get` metadata API call — економить ~130 API-запитів за `import_all` (знижує quota usage, не впливає на бізнес-логіку).
+- Імпорт Google Sheets → `products_raw` з перевіркою mapping і skip-логікою.
+- Підтримується тільки `source_type=google_sheet`.
+- Сценарії: `import_all`, `import_source`, `import_supplier`.
+- **`import_all` та `finalize` — асинхронний (fire-and-forget):**
+  - Повертають `{ jobId }` негайно. Job у фоні.
+  - Прогрес у `jobs.meta.progress` (`{ completed, total }`).
+  - Фронтенд поллить `GET /admin/api/jobs/:id` кожні 3с, показує progress bar.
+- **Google Sheets оптимізація:** пропускає `spreadsheets.get` якщо `sheetName` вже відомий (~130 API-запитів на `import_all`).
+
+## Auth і користувачі
+- **Ролі:** `admin` (повний доступ) / `viewer` (тільки читання, всі GET).
+- **Стратегія:** `AUTH_STRATEGY=db` (продакшн) / `env` (локальна розробка).
+- **`db` стратегія:** користувачі в таблиці `users`. Зміна без рестарту сервера.
+- **Seed:** `AUTH_USERS_JSON` в `.env` → `npm run seed:users` (idempotent `ON CONFLICT DO UPDATE`).
+- **Генерація хешу:** `npm run hash-password <пароль>` (bcrypt 12 rounds).
+- Сесії in-memory, TTL = `AUTH_SESSION_TTL_MINUTES` (default 720хв).
+- Сесії скидаються при рестарті сервера (in-memory store).
+- `GET /` → redirect: залогінений → `/admin`, не залогінений → `/admin/login`.
+
+## Деплой (Docker)
+- `Dockerfile` — multi-stage build: builder (tsc + vite) → production (тільки dist + migrations + public).
+- `docker-compose.yml` — сервіси: `whitehall-cscard-db` (postgres:16) + `whitehall-cscard-app`.
+- Traefik router: `whitehall-cscard` → `whitehallshop.workflo.space`.
+- БД доступна локально через SSH-тунель: `ssh -L 5433:localhost:5432 user@server -N`.
+- **Міграції запускаються автоматично** при старті app: `node dist/scripts/runMigrations.js && node dist/index.js`.
+- `.dockerignore` виключає `data/`, `node_modules/`, `.env*`, `output/` з build context.
+- `.env.deploy` — тестовий конфіг з реальними кредами (в `.gitignore`).
+
+### Міграції
+| # | Файл | Що робить |
+|---|------|-----------|
+| 001 | `001_init.sql` | Базова схема |
+| 020-028 | ... | Users, partitions, indexes, mirror, cron, mappings, markup, comment, sku_prefix |
+| 029 | `029_add_size_mappings.sql` | Таблиця `size_mappings` + CI unique index + CHECK constraint |
+| 030 | `030_allow_empty_size_to.sql` | Знімає CHECK constraint — дозволяє `size_to = ''` |
+
+### Config snapshot (перенос даних між середовищами)
+- `npm run export:config` → `output/prod_config_snapshot.json` (постачальники, джерела, маппінги колонок, націнки, розміри).
+- `npm run import:config` → `INPUT_PATH=<path>` idempotent import (`ON CONFLICT DO NOTHING` + reset sequences).
+- `output/` НЕ в gitignore — snapshot комітується в репо для деплою без scp.
 
 ## Catalog admin API (backend)
-- Доступні CRUD-операції для:
-  - `suppliers` (search і sort)
-  - `sources`
-  - `mappings` (latest get/save per supplier/source, поле `comment`)
-- Доступні API для pricing-керування:
-  - `markup rule sets` (list/create/update/default/apply to suppliers)
-  - Правила націнки працюють з інтервалами у форматі `[price_from; price_to)`:
-    - нижня межа включена, верхня межа не включена;
-    - `price_to = null` означає відкритий інтервал `до +∞`.
-  - Для активних умов rule set діють guardrails (frontend + backend):
-    - заборонено перетин активних діапазонів;
-    - заборонено дублювання `priority` між активними умовами.
-  - Валідація блокує збереження неоднозначної конфігурації і повертає помилку з номером умови (`condition #N ...`).
-- Доступні операційні read API:
-  - `logs` (global/by job/by level)
-  - `stats` (counts + last pipeline/import jobs)
-  - `backend-readiness` (gates for cutover: mirror freshness, coverage, scheduler/cleanup, blocking jobs)
-- Доступні Google Sheets helper API для джерел:
-  - `source-sheets` (лист аркушів + selected)
-  - `source-preview` (headers + sampleRows для mapping UI)
-- Доступні review/export API для операторського контролю:
-  - `merged-preview`, `final-preview`, `compare-preview`
-  - `store-mirror-preview`, `store-preview`
-  - `merged-export`, `final-export`, `compare-export` (CSV)
-- `GET /admin/api/store-preview` підтримує режими:
-  - `mode=candidates` — всі кандидати з `products_final` перед optimizer.
-  - `mode=delta` — фактичний список рядків, які реально підуть у `store_import` після optimizer (`feature scope` + auto-hide missing для full import + delta against `store_mirror`).
-  - у `mode=delta` повертаються також `previewTotal` (кандидати до optimizer) і `batchTotal` (фактично оновиться).
-- `GET /admin/api/preview` і `POST /admin/api/store-import` повертають:
-  - `previewTotal` (до optimizer),
-  - `batchTotal` (після feature-scope + missing-hide + delta),
-  - `batchMeta` (деталі оптимізації).
-- `GET /admin/api/suppliers` підтримує:
-  - `search=<рядок>` (пошук по `supplier.name`, case-insensitive)
-  - `sort=name_asc|name_desc|id_asc` (A-Я / Я-А / дефолт по id)
-- `POST /admin/api/mappings/:supplierId` підтримує поле:
-  - `comment` — технічна примітка до mapping-конфігурації
-- У mapping JSON підтримується окреме поле `comment` (як бізнес-дані товару):
-  - зберігається у `products_raw.comment_text` / `products_final.comment_text`
-  - відображається у `merged/final/compare preview` та CSV export
-- `POST /admin/api/markup-rule-sets/default` підтримує глобальний default rule set
-  - персистенс у `markup_settings`
-  - створення нового supplier без explicit `markup_rule_set_id` бере global default (або first active fallback)
-- Ендпоїнти винесені в `admin/api/*` і захищені ролями `viewer/admin`.
+- CRUD: `suppliers`, `sources`, `mappings`, `markup rule sets/conditions`, `size_mappings`.
+- `size_mappings`: `createSizeMapping` / `updateSizeMapping` вимагають явного `allow_empty_size_to=true` для порожнього `size_to`.
+- `POST /admin/api/size-mappings/bulk-import` — bulk upsert (DO UPDATE), підтримує порожній `size_to`.
+- `GET /admin/api/size-mappings/unmapped?limit=N` — повертає `{ total, fetchedCount, rows }` де `total` — реальний тотал через window function.
+- Review/export API: `merged-preview`, `final-preview`, `compare-preview`, `store-mirror-preview`, `store-preview`, CSV exports.
+- `store-preview` режими: `candidates` / `delta` (з `previewTotal`, `batchTotal`, `batchMeta`).
 
 ## Finalize і preview
-- Finalize формує `products_final` через staged merge path.
-- Застосовується поточна бізнес-логіка пріоритетів/цін/дедупу без зміни правил.
-- Preview для магазину формується з `products_final` з optional supplier-фільтром.
-- **Нормалізація розмірів** застосовується під час finalize через `LEFT JOIN size_mappings`:
-  - якщо `size_from` знайдено → розмір замінюється на `size_to` (напр. `"xl (158-170 cm)"` → `"XL"`).
-  - якщо маппінгу немає → `UPPER(TRIM(size))` (напр. `"xs"` → `"XS"`).
-  - нормалізація відбувається у першому CTE (`rounded`/`base`) — **до** `DISTINCT ON (article, size)`, тому рядки `"xl"` і `"XL"` від різних постачальників коректно зливаються в один `"XL"`.
-  - `products_raw.size` зберігається без змін (оригінал від постачальника).
-  - `products_final.size` містить нормалізований розмір.
-  - таблиця `size_mappings` глобальна (не per-supplier), JOIN по `LOWER(TRIM(size_from))` — регістронезалежний.
-  - тільки активні маппінги (`is_active = TRUE`) застосовуються під час finalize.
-  - міграція: `migrations/029_add_size_mappings.sql`.
-
-- **UI управління розмірами** (підтаб `Дані → Розміри`):
-  - дві вкладки: **Незнайомі розміри** (є в `products_raw`, немає в `size_mappings`) і **Таблиця відповідностей** (всі маппінги CRUD).
-  - бейдж на вкладці "Незнайомі" жовтіє коли є нові розміри без маппінгу.
-  - у кожній вкладці фільтр категорій: **Всі / Числові / Буквені** (фронтенд-фільтрація, без запитів до БД).
-  - кнопка `[+ Маппінг]` на незнайомому розмірі pre-fills форму і одразу перемикає на вкладку відповідностей.
-  - при редагуванні доступне поле `is_active` (вимкнений маппінг ігнорується під час finalize).
-  - дані підтягуються автоматично при першому відкритті вкладки.
+- Finalize формує `products_final` через staged merge з `DISTINCT ON (article, size)`.
+- Нормалізація розмірів — до дедупу (деталі в секції "Управління розмірами").
+- Preview з `products_final` з optional supplier-фільтром.
 
 ## CS-Cart import
-- Імпорт у CS-Cart працює через конектор і gateway.
-- Перед імпортом збирається mirror-index каталогу (`product_code -> product_id/state/price/parent`).
-- Scope оновлення керується product feature `Оновлення товару API` (`feature_id=564`):
-  - у sync потрапляють тільки SKU з `product_features["564"].value = "Y"`.
-  - це замінює legacy-підхід оновлення “по одному постачальнику”.
-- Незаплановані/незмінені SKU пропускаються (оптимізація без зміни бізнес-логіки).
-- Для повного `store_import` (без supplier-фільтра) керовані SKU, яких немає у поточному `products_final`, автоматично переводяться у `status=H` (hidden) у CS-Cart.
-- Якщо SKU знову з’являється у постачальників, він повертається в `status=A` при наступному імпорті.
-- Для `store_import` з `supplier`-фільтром auto-hidden missing SKU не застосовується (щоб не ховати чужий асортимент).
-- Доступні progress-checkpoints у `jobs.meta.storeImportProgress` (store import) і `jobs.meta.progress` (import_all).
-- Доступний resume після failed/canceled `store_import`.
-- `store_mirror_sync` дедуплікує однаковий `article` в межах чанка перед upsert у `store_mirror` (захист від SQL conflict на дублі в API-відповіді).
-- `store_mirror` має унікальний ключ `(store, article)`, тому при дублях `product_code` у магазині зберігається один стан на SKU.
-- Дублі `product_code` у CS-Cart трактуються як конфлікт даних (не як модифікація), доки не підтверджено зворотне через `parent_product_id/variation_code`.
-- Перед production `store_import` обов’язковий preflight: перевірка дублювання SKU у магазині, після чого `mirror:sync`.
+- Mirror-index каталогу перед імпортом (`product_code → product_id/state/price/parent`).
+- Scope: тільки SKU з feature `Оновлення товару API` = `"Y"` (feature_id=564).
+- Optimizer (3 рівні): feature scope → deactivate missing → delta filter.
+- Auto-hidden missing SKU при full import (без supplier-фільтра).
+- `parent_article` — метадані для групування варіантів, **не блокує** товар від відправки (відмінність від старого Horoshop-коду де `realParentArticles` блокував товар).
+- Resume після failed `store_import`.
+- Progress checkpoints у `jobs.meta`.
 
-## Jobs / scheduler / операції
-- **Graceful shutdown і startup cleanup:**
-  - При старті сервера (після `pool` creation): orphaned `running` jobs з попереднього SIGKILL/crash автоматично переводяться у `status=failed` з `error: "Process crashed or was killed"`, locks очищаються (fire-and-forget, не блокує startup).
-  - При зупинці сервера (SIGTERM / `application.close()`): поточні `running` jobs позначаються `failed` з `error: "Server shutdown"` до закриття pool.
-  - Jobs більше не залишаються вічно у стані `running` після рестарту.
-- Є API запуску для:
-  - `import_all`
-  - `import_source`
-  - `import_supplier`
-  - `finalize`
-  - `store_import`
-  - `update_pipeline`
-  - `store_mirror_sync`
-  - `cleanup`
-- Є CLI запуск знімка магазину без UI:
-  - `npm run mirror:sync`
-- Є CLI preflight-аудит дублів SKU у CS-Cart (read-only):
-  - `npm run store:sku-audit`
-- Є скасування job (`cancel`) з terminate backend для довгих SQL-операцій.
-- Є scheduler (env-driven) для `update_pipeline`, `store_mirror_sync`, `cleanup`.
-- Є runtime API для scheduler settings:
-  - `GET /admin/api/cron-settings`
-  - `PUT /admin/api/cron-settings`
-  - з персистенсом у таблиці `cron_settings` і застосуванням без рестарту процесу.
+## Jobs / scheduler
+- **Graceful shutdown:** SIGTERM → позначає running jobs як failed перед закриттям pool.
+- **Startup cleanup:** orphaned `running` jobs → `failed` при старті.
+- Scheduler (env-driven): `update_pipeline`, `store_mirror_sync`, `cleanup`.
+- Runtime API для scheduler: `GET/PUT /admin/api/cron-settings` (персистенс у `cron_settings`, без рестарту).
 
-## Стабільність і контроль об’єму
-- Runtime-активація daily partition для `products_raw`.
-- Cleanup job чистить старі partition/рядки/логи/завершені jobs.
-- Логи мають payload truncation (`LOG_PAYLOAD_MAX_BYTES`) для контролю росту таблиці `logs`.
-- Error-рівень логів має окремий alert-sink у Telegram (`src/core/alerts/TelegramAlertService.ts`):
-  - env: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, optional `TELEGRAM_APP_NAME`, `TELEGRAM_TIMEOUT_MS`.
-  - помилка відправки в Telegram не зупиняє основний pipeline/job flow.
-- Є scripted backend load-audit контур:
-  - `npm run audit:load`
-  - runbook: `docs/RUNBOOK_LOAD_AUDIT_2026_03.md`
-- Є scripted backend stress-аудит контур:
-  - `npm run audit:stress`
-  - runbook: `docs/RUNBOOK_BACKEND_STRESS_AUDIT_2026_03.md`
-- Є scripted integration-invariants контур:
-  - `npm run test:invariants`
-  - runbook: `docs/RUNBOOK_INVARIANT_INTEGRATION_TESTS_2026_03.md`
-- Є scripted readiness-зріз перед cutover:
-  - `npm run backend:readiness`
-  - `GET /admin/api/backend-readiness`
-- Є scripted SKU-audit перед cutover:
-  - `npm run store:sku-audit`
-- Є scripted live benchmark write-path для CS-Cart (масовий `+delta` по цінах + auto rollback):
-  - `npm run benchmark:store-price`
-  - `npm run rollback:store-file`
-  - runbook: `docs/RUNBOOK_CSCART_STORE_WRITE_BENCHMARK_2026_03.md`
-- Preflight sign-off контур (`store:sku-audit -> mirror:sync -> backend:readiness`) успішно прогнано на локальному середовищі 2026-03-21:
-  - `duplicate_sku_count = 0`
-  - `gates.ready_for_store_import = true`
-  - `gates.ready_for_continuous_runs = true`
-- Підтверджений live benchmark на тестовому CS-Cart (Kyiv time, 2026-03-25):
-  - Контур: `+100` до `10 000` SKU (`apply_plus_delta`) + rollback до початкових цін.
-  - Параметри: `CSCART_RATE_LIMIT_RPS=30`, `CSCART_RATE_LIMIT_BURST=90`, `CSCART_IMPORT_CONCURRENCY=12`.
-  - `apply_plus_delta`: `452965 ms` (~7m33s), `imported=9999`, `failed=1`, `~22.08 SKU/s`.
-  - `rollback`: `436300 ms` (~7m16s), `imported=9996`, `skipped=1`, `failed=3`, `~22.92 SKU/s`.
-  - Після recovery-pass (`rollback:store-file`) отримано `remainingRows=0` (повний відкат).
-- Є scripted перенос supplier config з legacy:
-  - `npm run export:legacy-config`
-  - `npm run import:legacy-config`
-  - runbook: `docs/RUNBOOK_SUPPLIER_CONFIG_MIGRATION_2026_03.md`
+## Стабільність
+- Daily partition для `products_raw`.
+- Cleanup job — старі partitions/рядки/логи/jobs.
+- Payload truncation логів (`LOG_PAYLOAD_MAX_BYTES`).
+- Telegram alert-sink для error-рівня.
+- Scripted аудити: `audit:load`, `audit:stress`, `test:invariants`, `backend:readiness`, `store:sku-audit`.
+- Live benchmark (2026-03-25): 10K SKU, ~22 SKU/s, повний rollback підтверджено.
 
-## Ще не закрито до повного parity
-- E2E cutover-прогін на staging/production-like даних по цільових постачальниках (`import_supplier -> finalize -> store_import`) з фіксацією метрик.
-- Зафіксувати staging tuning baseline для `CSCART_RATE_LIMIT_RPS`, `CSCART_RATE_LIMIT_BURST`, `CSCART_IMPORT_CONCURRENCY`.
+## Ще не закрито
+- E2E cutover-прогін на production-like даних (`import_supplier → finalize → store_import`) з фіксацією метрик.
+- Staging tuning baseline для rate-limit параметрів CS-Cart.
+- Джерела 229, 243, 249 — "Mapping validation failed", потребують ремаппінгу колонок.
