@@ -1,7 +1,16 @@
+# Environment — ніколи не комітити реальні .env файли з кредами
+.env
+.env.local
+.env.production
+.env.deploy
+# .env.example — комітити (шаблон без секретів)
+
+# Docker data volume (БД на сервері)
+/data/
+
 /tmp
 /out-tsc
 /dist
-/output
 /skills
 
 /node_modules
@@ -14,3 +23,4 @@ yarn-error.log*
 .pnp.js
 
 .vscode/*
+.claude/*

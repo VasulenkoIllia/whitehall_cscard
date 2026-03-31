@@ -23,7 +23,10 @@
     "audit:stress": "node dist/scripts/runStressAudit.js",
     "test:invariants": "node dist/scripts/runInvariantIntegrationTests.js",
     "export:legacy-config": "node dist/scripts/exportLegacySupplierConfig.js",
-    "import:legacy-config": "node dist/scripts/importSupplierConfigSnapshot.js"
+    "import:legacy-config": "node dist/scripts/importSupplierConfigSnapshot.js",
+    "hash-password": "node dist/scripts/hashPassword.js",
+    "export:config": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; node dist/scripts/exportProdConfig.js'",
+    "import:config": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; node dist/scripts/importProdConfig.js'"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

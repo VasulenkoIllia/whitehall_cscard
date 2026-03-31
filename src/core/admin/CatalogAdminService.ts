@@ -5,6 +5,8 @@ type SizeMappingCreatePayload = {
   size_from: string;
   size_to: string;
   notes?: string | null;
+  /** Set to true to explicitly allow empty size_to (maps size to nothing → removes size suffix from SKU) */
+  allow_empty_size_to?: boolean;
 };
 
 type SizeMappingUpdatePayload = {
@@ -12,6 +14,8 @@ type SizeMappingUpdatePayload = {
   size_to?: string;
   notes?: string | null;
   is_active?: boolean;
+  /** Set to true to explicitly allow empty size_to */
+  allow_empty_size_to?: boolean;
 };
 
 type SizeMappingListOptions = {
@@ -1923,9 +1927,9 @@ export class CatalogAdminService {
     if (!sizeFrom) {
       throw createBadRequest('size_from is required');
     }
-    const sizeTo = String(payload.size_to || '').trim();
-    if (!sizeTo) {
-      throw createBadRequest('size_to is required');
+    const sizeTo = String(payload.size_to ?? '').trim();
+    if (!sizeTo && !payload.allow_empty_size_to) {
+      throw createBadRequest('size_to is required (or set allow_empty_size_to=true to map to empty string)');
     }
     const notes = payload.notes ? String(payload.notes).trim() || null : null;
 
@@ -1940,9 +1944,6 @@ export class CatalogAdminService {
     } catch (err) {
       if ((err as any)?.code === '23505') {
         throw createBadRequest(`size_from "${sizeFrom}" already has a mapping`);
-      }
-      if ((err as any)?.code === '23514') {
-        throw createBadRequest('size_to must not be empty');
       }
       throw err;
     }
@@ -1967,8 +1968,10 @@ export class CatalogAdminService {
       updates.push(`size_from = $${values.length}`);
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'size_to')) {
-      const sizeTo = String(payload.size_to || '').trim();
-      if (!sizeTo) throw createBadRequest('size_to must not be empty');
+      const sizeTo = String(payload.size_to ?? '').trim();
+      if (!sizeTo && !payload.allow_empty_size_to) {
+        throw createBadRequest('size_to must not be empty (or set allow_empty_size_to=true to map to empty string)');
+      }
       values.push(sizeTo);
       updates.push(`size_to = $${values.length}`);
     }
@@ -2025,8 +2028,9 @@ export class CatalogAdminService {
     const notesArr: (string | null)[] = [];
     for (const row of rows) {
       const sf = String(row.size_from || '').trim();
-      const st = String(row.size_to   || '').trim();
-      if (!sf || !st) continue;
+      // size_to may be intentionally empty (maps size to nothing → removes size suffix from SKU)
+      const st = String(row.size_to ?? '').trim();
+      if (!sf) continue; // only size_from is required
       sizeFromArr.push(sf);
       sizeToArr.push(st);
       notesArr.push(row.notes ? String(row.notes).trim() || null : null);
@@ -2036,7 +2040,7 @@ export class CatalogAdminService {
       `INSERT INTO size_mappings (size_from, size_to, notes)
        SELECT trim(sf), trim(st), n
        FROM unnest($1::text[], $2::text[], $3::text[]) AS t(sf, st, n)
-       WHERE trim(sf) <> '' AND trim(st) <> ''
+       WHERE trim(sf) <> ''
        ON CONFLICT (LOWER(TRIM(size_from))) DO NOTHING
        RETURNING id`,
       [sizeFromArr, sizeToArr, notesArr]

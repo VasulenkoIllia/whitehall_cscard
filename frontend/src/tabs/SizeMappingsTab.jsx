@@ -47,7 +47,7 @@ function parseCsv(text) {
   }).filter(Boolean);
 }
 
-const EMPTY_DRAFT = { size_from: '', size_to: '', notes: '', is_active: true };
+const EMPTY_DRAFT = { size_from: '', size_to: '', notes: '', is_active: true, emptyTo: false };
 
 export function SizeMappingsTab({
   sizeMappings,
@@ -136,12 +136,14 @@ export function SizeMappingsTab({
   };
 
   const openEdit = (row) => {
+    const sizeTo = row.size_to ?? '';
     setDraft({
       id: row.id,
       size_from: row.size_from || '',
-      size_to:   row.size_to   || '',
+      size_to:   sizeTo,
       notes:     row.notes     || '',
-      is_active: row.is_active !== false
+      is_active: row.is_active !== false,
+      emptyTo:   sizeTo === '',
     });
     setDraftMode('edit');
     setDraftErrors({});
@@ -152,7 +154,7 @@ export function SizeMappingsTab({
   const validateDraft = () => {
     const errs = {};
     if (!String(draft.size_from || '').trim()) errs.size_from = 'Вкажіть оригінальний розмір';
-    if (!String(draft.size_to   || '').trim()) errs.size_to   = 'Вкажіть нормалізований розмір';
+    if (!draft.emptyTo && !String(draft.size_to || '').trim()) errs.size_to = 'Вкажіть нормалізований розмір або позначте «Пустий рядок»';
     setDraftErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -160,9 +162,10 @@ export function SizeMappingsTab({
   const handleSave = async () => {
     if (!validateDraft()) return;
     const payload = {
-      size_from: String(draft.size_from).trim(),
-      size_to:   String(draft.size_to).trim(),
-      notes:     String(draft.notes || '').trim() || null
+      size_from:           String(draft.size_from).trim(),
+      size_to:             draft.emptyTo ? '' : String(draft.size_to).trim(),
+      notes:               String(draft.notes || '').trim() || null,
+      allow_empty_size_to: draft.emptyTo || undefined,
     };
     if (draftMode === 'edit') {
       await updateSizeMapping(draft.id, { ...payload, is_active: draft.is_active });
@@ -407,7 +410,12 @@ export function SizeMappingsTab({
                     {pagedMappings.map((row) => (
                       <tr key={row.id} style={row.is_active ? {} : { opacity: 0.5 }}>
                         <td><code className="size-code">{row.size_from}</code></td>
-                        <td><strong>{row.size_to}</strong></td>
+                        <td>
+                          {row.size_to === '' || row.size_to == null
+                            ? <span className="muted" style={{ fontStyle: 'italic', fontSize: '0.85em' }}>пустий рядок</span>
+                            : <strong>{row.size_to}</strong>
+                          }
+                        </td>
                         <td className="muted">{row.notes || '—'}</td>
                         <td>
                           <Tag tone={row.is_active ? 'ok' : 'warn'}>
@@ -485,7 +493,12 @@ export function SizeMappingsTab({
                     {csvPreview.toImport.slice(0, 30).map((r) => (
                       <tr key={r.size_from}>
                         <td><code className="size-code">{r.size_from}</code></td>
-                        <td><strong>{r.size_to}</strong></td>
+                        <td>
+                          {r.size_to === '' || r.size_to == null
+                            ? <span className="muted" style={{ fontStyle: 'italic', fontSize: '0.85em' }}>пустий рядок</span>
+                            : <strong>{r.size_to}</strong>
+                          }
+                        </td>
                       </tr>
                     ))}
                     {csvPreview.toImport.length > 30 && (
@@ -545,9 +558,19 @@ export function SizeMappingsTab({
                 <label>Нормалізований розмір</label>
                 <input
                   value={draft.size_to}
-                  onChange={(e) => setDraft((p) => ({ ...p, size_to: e.target.value }))}
+                  onChange={(e) => setDraft((p) => ({ ...p, size_to: e.target.value, emptyTo: false }))}
                   placeholder="XL"
+                  disabled={draft.emptyTo}
+                  style={draft.emptyTo ? { opacity: 0.4 } : undefined}
                 />
+                <label className="inline-checkbox" style={{ marginTop: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!draft.emptyTo}
+                    onChange={(e) => setDraft((p) => ({ ...p, emptyTo: e.target.checked, size_to: '' }))}
+                  />
+                  Пустий рядок <span className="muted" style={{ fontSize: '0.85em' }}>(видалити розмір з артикулу)</span>
+                </label>
                 {draftErrors.size_to && (
                   <div className="field-error">{draftErrors.size_to}</div>
                 )}

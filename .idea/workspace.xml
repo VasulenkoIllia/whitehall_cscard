@@ -5,29 +5,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e2539e80-4d9b-492c-a689-139fb23c07d4" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/CURRENT_FUNCTIONALITY.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/styles.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/styles.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/DataTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/ManualControlTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/ManualControlTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/OverviewTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/PricingTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/PricingTab.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/legacy_wh_sevrukov_config.json" beforeDir="false" afterPath="$PROJECT_DIR$/legacy_config.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-1Xe3FjH6.css" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-Sd9BbO1v.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/tabs/SizeMappingsTab.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/tabs/SizeMappingsTab.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/admin/assets/index-DwnCMe4p.js" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/public/admin/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/public/admin/index.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/createApplication.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/createApplication.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/http/server.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/http/server.ts" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/admin/CatalogAdminService.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/jobs/PipelineJobRunner.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/jobs/PipelineJobRunner.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/PipelineOrchestrator.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/PipelineOrchestrator.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/contracts.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/contracts.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/exportPreviewDb.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/exportPreviewDb.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/finalizerDb.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/finalizerDb.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/googleSheetsService.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/googleSheetsService.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pipeline/importerDb.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pipeline/importerDb.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/index.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -35,7 +20,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="225" />
+    <option name="cachedIndexableFilesCount" value="229" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="Git.Settings">
@@ -137,7 +122,9 @@
       <workItem from="1774217953385" duration="1876000" />
       <workItem from="1774294987933" duration="5431000" />
       <workItem from="1774689004538" duration="9867000" />
-      <workItem from="1774942974185" duration="1205000" />
+      <workItem from="1774942974185" duration="1809000" />
+      <workItem from="1774973078610" duration="580000" />
+      <workItem from="1774974133359" duration="847000" />
     </task>
     <servers />
   </component>
