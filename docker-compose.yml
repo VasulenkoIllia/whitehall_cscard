@@ -49,10 +49,10 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
-      - "traefik.http.routers.whitehall.rule=Host(`whitehallshop.workflo.space`)"
-      - "traefik.http.routers.whitehall.entrypoints=websecure"
-      - "traefik.http.routers.whitehall.tls.certresolver=cf"
-      - "traefik.http.services.whitehall.loadbalancer.server.port=3000"
+      - "traefik.http.routers.whitehall-cscard.rule=Host(`whitehallshop.workflo.space`)"
+      - "traefik.http.routers.whitehall-cscard.entrypoints=websecure"
+      - "traefik.http.routers.whitehall-cscard.tls.certresolver=cf"
+      - "traefik.http.services.whitehall-cscard.loadbalancer.server.port=3000"
     healthcheck:
       test:
         [
