@@ -2,7 +2,7 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: whitehall-db
+    container_name: whitehall-cscard-db
     environment:
       POSTGRES_USER: whitehall_store
       POSTGRES_PASSWORD: whitehall_store
@@ -27,7 +27,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: whitehall-app
+    container_name: whitehall-cscard-app
     env_file:
       - .env
     environment:
