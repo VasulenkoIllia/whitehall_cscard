@@ -1,6 +1,25 @@
 import type { Pool } from 'pg';
 import { SUPPLIER_SKU_PREFIX_RE } from './supplierValidation';
 
+type SizeMappingCreatePayload = {
+  size_from: string;
+  size_to: string;
+  notes?: string | null;
+};
+
+type SizeMappingUpdatePayload = {
+  size_from?: string;
+  size_to?: string;
+  notes?: string | null;
+  is_active?: boolean;
+};
+
+type SizeMappingListOptions = {
+  search?: string;
+  limit?: number;
+  offset?: number;
+};
+
 type SupplierUpdatePayload = {
   name?: string;
   markup_percent?: number;
@@ -47,12 +66,6 @@ interface NormalizedMarkupCondition {
   is_active: boolean;
 }
 
-type PriceOverrideListOptions = {
-  limit: number;
-  offset: number;
-  search: string | null;
-};
-
 type SupplierListSort = 'id_asc' | 'name_asc' | 'name_desc';
 
 type SupplierListOptions = {
@@ -64,14 +77,6 @@ type LogListOptions = {
   jobId: number | null;
   level: string | null;
   limit: number;
-};
-
-type PriceOverrideUpdatePayload = {
-  article?: string;
-  size?: string | null;
-  price_final?: number;
-  notes?: string | null;
-  is_active?: boolean;
 };
 
 type ListPreviewOptions = {
@@ -1136,35 +1141,34 @@ export class CatalogAdminService {
     };
   }
 
-  async listPriceOverrides(
-    options: PriceOverrideListOptions
-  ): Promise<{ total: number; rows: Record<string, unknown>[] }> {
-    const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(500, Math.trunc(options.limit))) : 100;
-    const offset = Number.isFinite(options.offset) ? Math.max(0, Math.trunc(options.offset)) : 0;
-    const search = String(options.search || '').trim();
-
-    const whereParts: string[] = [];
-    const values: unknown[] = [];
-    if (search) {
-      values.push(`%${search}%`);
-      const searchIndex = values.length;
-      whereParts.push(`(article ILIKE $${searchIndex} OR notes ILIKE $${searchIndex})`);
-    }
-    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
-
-    const result = await this.pool.query(
-      `SELECT id, article, size, price_final, is_active, notes, created_at,
-              COUNT(*) OVER() AS total
-       FROM price_overrides
-       ${whereClause}
-       ORDER BY created_at DESC
-       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
-      [...values, limit, offset]
+  async deleteMarkupRuleSet(id: number): Promise<{ deleted: boolean }> {
+    // Block if it's the global default
+    const globalResult = await this.pool.query(
+      `SELECT global_rule_set_id FROM markup_settings WHERE id = 1 LIMIT 1`
     );
-
-    const total = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
-    const rows = result.rows.map(({ total: ignored, ...row }) => row);
-    return { total, rows };
+    const globalId = Number(globalResult.rows[0]?.global_rule_set_id || 0);
+    if (globalId === id) {
+      throw createBadRequest('Неможливо видалити основний тип націнки. Спочатку зробіть основним інший.');
+    }
+    // Block if any supplier uses it
+    const usedBy = await this.pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM suppliers WHERE markup_rule_set_id = $1`,
+      [id]
+    );
+    if ((usedBy.rows[0]?.cnt || 0) > 0) {
+      throw createBadRequest(
+        `Неможливо видалити: тип використовується у ${usedBy.rows[0].cnt} постачальника(ів). Спочатку змініть їм тип.`
+      );
+    }
+    await this.pool.query(`DELETE FROM markup_rule_conditions WHERE rule_set_id = $1`, [id]);
+    const result = await this.pool.query(
+      `DELETE FROM markup_rule_sets WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (!result.rows[0]) {
+      throw createNotFound('rule set not found');
+    }
+    return { deleted: true };
   }
 
   private async recomputeFinalPriceFromRules(article: string, size: string | null): Promise<void> {
@@ -1204,132 +1208,6 @@ export class CatalogAdminService {
          AND NULLIF(pf.size, '') IS NOT DISTINCT FROM NULLIF($2, '')`,
       [article, size]
     );
-  }
-
-  async upsertPriceOverride(payload: PriceOverrideUpdatePayload): Promise<Record<string, unknown>> {
-    const article = String(payload.article || '').trim();
-    const priceFinal = Number(payload.price_final);
-    if (!article || !Number.isFinite(priceFinal)) {
-      throw createBadRequest('article and price_final are required');
-    }
-    const size =
-      payload.size === null || typeof payload.size === 'undefined' || String(payload.size).trim() === ''
-        ? null
-        : String(payload.size).trim();
-    const notes =
-      payload.notes === null || typeof payload.notes === 'undefined'
-        ? null
-        : String(payload.notes).trim() || null;
-
-    const existing = await this.pool.query(
-      `SELECT id
-       FROM price_overrides
-       WHERE article = $1
-         AND NULLIF(size, '') IS NOT DISTINCT FROM NULLIF($2, '')
-       ORDER BY id DESC
-       LIMIT 1`,
-      [article, size]
-    );
-
-    let record: Record<string, unknown>;
-    if (existing.rows[0]) {
-      const updated = await this.pool.query(
-        `UPDATE price_overrides
-         SET price_final = $1, notes = $2, is_active = TRUE
-         WHERE id = $3
-         RETURNING *`,
-        [priceFinal, notes, existing.rows[0].id]
-      );
-      record = updated.rows[0];
-    } else {
-      const inserted = await this.pool.query(
-        `INSERT INTO price_overrides (article, size, price_final, notes)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
-        [article, size, priceFinal, notes]
-      );
-      record = inserted.rows[0];
-    }
-
-    await this.pool.query(
-      `UPDATE products_final
-       SET price_final = $1
-       WHERE article = $2
-         AND NULLIF(size, '') IS NOT DISTINCT FROM NULLIF($3, '')`,
-      [priceFinal, article, size]
-    );
-
-    return record;
-  }
-
-  async updatePriceOverride(
-    overrideId: number,
-    payload: PriceOverrideUpdatePayload
-  ): Promise<Record<string, unknown>> {
-    const normalizedId = Math.trunc(Number(overrideId));
-    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
-      throw createBadRequest('override id is invalid');
-    }
-
-    const currentResult = await this.pool.query('SELECT * FROM price_overrides WHERE id = $1', [
-      normalizedId
-    ]);
-    const current = currentResult.rows[0];
-    if (!current) {
-      throw createNotFound('override not found');
-    }
-
-    const values: unknown[] = [];
-    const updates = buildUpdateClause(
-      {
-        price_final:
-          Number.isFinite(Number(payload.price_final)) ? Number(payload.price_final) : undefined,
-        notes:
-          payload.notes === null
-            ? null
-            : typeof payload.notes === 'string'
-              ? payload.notes.trim()
-              : undefined,
-        is_active: typeof payload.is_active === 'boolean' ? payload.is_active : undefined
-      },
-      values
-    );
-    if (!updates.length) {
-      throw createBadRequest('no fields to update');
-    }
-    values.push(normalizedId);
-    const updateResult = await this.pool.query(
-      `UPDATE price_overrides
-       SET ${updates.join(', ')}
-       WHERE id = $${values.length}
-       RETURNING *`,
-      values
-    );
-    const updated = updateResult.rows[0];
-
-    if (typeof payload.is_active !== 'undefined') {
-      if (payload.is_active === true) {
-        await this.pool.query(
-          `UPDATE products_final
-           SET price_final = $1
-           WHERE article = $2
-             AND NULLIF(size, '') IS NOT DISTINCT FROM NULLIF($3, '')`,
-          [updated.price_final, updated.article, updated.size]
-        );
-      } else {
-        await this.recomputeFinalPriceFromRules(String(updated.article), updated.size || null);
-      }
-    } else if (typeof payload.price_final !== 'undefined') {
-      await this.pool.query(
-        `UPDATE products_final
-         SET price_final = $1
-         WHERE article = $2
-           AND NULLIF(size, '') IS NOT DISTINCT FROM NULLIF($3, '')`,
-        [updated.price_final, updated.article, updated.size]
-      );
-    }
-
-    return updated;
   }
 
   async listLogs(options: LogListOptions): Promise<Record<string, unknown>[]> {
@@ -1751,17 +1629,12 @@ export class CatalogAdminService {
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     const result = await this.pool.query(
       `SELECT pf.article, pf.size, pf.quantity, pf.price_base,
-              COALESCE(po.price_final, pf.price_final) AS price_final,
+              pf.price_final,
               pf.extra, pf.comment_text AS comment, sp.name AS supplier_name, sp.sku_prefix AS supplier_sku_prefix,
               pf.created_at, pf.job_id,
-              po.id AS override_id, po.price_final AS override_price, po.notes AS override_notes,
               COUNT(*) OVER() AS total
        FROM products_final pf
        LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
-       LEFT JOIN price_overrides po
-         ON po.article = pf.article
-        AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
-        AND po.is_active = TRUE
        ${whereClause}
        ORDER BY ${orderBy}
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
@@ -1821,7 +1694,7 @@ export class CatalogAdminService {
            pf.size,
            pf.quantity,
            pf.price_base,
-           COALESCE(po.price_final, pf.price_final) AS price_final,
+           pf.price_final,
            pf.extra,
            pf.comment_text AS comment,
            sp.name AS supplier_name,
@@ -1836,10 +1709,6 @@ export class CatalogAdminService {
            END AS sku_article
          FROM products_final pf
          LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
-         LEFT JOIN price_overrides po
-           ON po.article = pf.article
-          AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
-          AND po.is_active = TRUE
          ${baseWhereClause}
        )
        SELECT
@@ -1966,7 +1835,7 @@ export class CatalogAdminService {
          pf.size,
          pf.quantity,
          pf.price_base,
-         COALESCE(po.price_final, pf.price_final) AS price_final,
+         pf.price_final,
          TRUE AS visibility,
          CASE
            WHEN pf.size IS NULL OR btrim(pf.size) = '' THEN pf.article
@@ -1999,10 +1868,6 @@ export class CatalogAdminService {
          COUNT(*) OVER() AS total
        FROM products_final pf
        LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
-       LEFT JOIN price_overrides po
-         ON po.article = pf.article
-        AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
-        AND po.is_active = TRUE
        ${whereClause}
        ORDER BY pf.id ASC
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
@@ -2016,6 +1881,202 @@ export class CatalogAdminService {
       jobId,
       total,
       rows
+    };
+  }
+
+  // ─── Size Mappings ────────────────────────────────────────────────────────
+
+  async listSizeMappings(options: SizeMappingListOptions = {}): Promise<{
+    total: number;
+    rows: Record<string, unknown>[];
+  }> {
+    const limit = Math.min(Math.max(1, Math.trunc(Number(options.limit) || 200)), 1000);
+    const offset = Math.max(0, Math.trunc(Number(options.offset) || 0));
+    const values: unknown[] = [];
+    const whereParts: string[] = [];
+
+    if (options.search) {
+      values.push(`%${String(options.search).trim()}%`);
+      whereParts.push(
+        `(LOWER(sm.size_from) LIKE LOWER($${values.length}) OR LOWER(sm.size_to) LIKE LOWER($${values.length}))`
+      );
+    }
+
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+    const result = await this.pool.query(
+      `SELECT id, size_from, size_to, notes, is_active, created_at,
+              COUNT(*) OVER() AS total
+       FROM size_mappings sm
+       ${whereClause}
+       ORDER BY sm.size_from ASC
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, limit, offset]
+    );
+
+    const totalCount = result.rows[0]?.total ? Number(result.rows[0].total) : 0;
+    const rows = result.rows.map(({ total: _ignored, ...row }) => row);
+    return { total: totalCount, rows };
+  }
+
+  async createSizeMapping(payload: SizeMappingCreatePayload): Promise<Record<string, unknown>> {
+    const sizeFrom = String(payload.size_from || '').trim();
+    if (!sizeFrom) {
+      throw createBadRequest('size_from is required');
+    }
+    const sizeTo = String(payload.size_to || '').trim();
+    if (!sizeTo) {
+      throw createBadRequest('size_to is required');
+    }
+    const notes = payload.notes ? String(payload.notes).trim() || null : null;
+
+    try {
+      const result = await this.pool.query(
+        `INSERT INTO size_mappings (size_from, size_to, notes)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [sizeFrom, sizeTo, notes]
+      );
+      return result.rows[0];
+    } catch (err) {
+      if ((err as any)?.code === '23505') {
+        throw createBadRequest(`size_from "${sizeFrom}" already has a mapping`);
+      }
+      if ((err as any)?.code === '23514') {
+        throw createBadRequest('size_to must not be empty');
+      }
+      throw err;
+    }
+  }
+
+  async updateSizeMapping(
+    mappingId: number,
+    payload: SizeMappingUpdatePayload
+  ): Promise<Record<string, unknown> | null> {
+    const normalizedId = Math.trunc(Number(mappingId));
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+      throw createBadRequest('invalid mapping id');
+    }
+
+    const values: unknown[] = [];
+    const updates: string[] = [];
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'size_from')) {
+      const sizeFrom = String(payload.size_from || '').trim();
+      if (!sizeFrom) throw createBadRequest('size_from must not be empty');
+      values.push(sizeFrom);
+      updates.push(`size_from = $${values.length}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'size_to')) {
+      const sizeTo = String(payload.size_to || '').trim();
+      if (!sizeTo) throw createBadRequest('size_to must not be empty');
+      values.push(sizeTo);
+      updates.push(`size_to = $${values.length}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'notes')) {
+      const notes = payload.notes ? String(payload.notes).trim() || null : null;
+      values.push(notes);
+      updates.push(`notes = $${values.length}`);
+    }
+    if (typeof payload.is_active === 'boolean') {
+      values.push(payload.is_active);
+      updates.push(`is_active = $${values.length}`);
+    }
+
+    if (updates.length === 0) {
+      throw createBadRequest('no fields to update');
+    }
+
+    values.push(normalizedId);
+    try {
+      const result = await this.pool.query(
+        `UPDATE size_mappings SET ${updates.join(', ')} WHERE id = $${values.length} RETURNING *`,
+        values
+      );
+      return result.rows[0] ?? null;
+    } catch (err) {
+      if ((err as any)?.code === '23505') {
+        throw createBadRequest('size_from already used by another mapping');
+      }
+      if ((err as any)?.code === '23514') {
+        throw createBadRequest('size_to must not be empty');
+      }
+      throw err;
+    }
+  }
+
+  async deleteSizeMapping(mappingId: number): Promise<Record<string, unknown> | null> {
+    const normalizedId = Math.trunc(Number(mappingId));
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+      throw createBadRequest('invalid mapping id');
+    }
+    const result = await this.pool.query(
+      `DELETE FROM size_mappings WHERE id = $1 RETURNING *`,
+      [normalizedId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async bulkImportSizeMappings(
+    rows: Array<{ size_from: string; size_to: string; notes?: string | null }>
+  ): Promise<{ imported: number; skipped: number }> {
+    if (!rows || rows.length === 0) return { imported: 0, skipped: 0 };
+    const sizeFromArr: string[] = [];
+    const sizeToArr: string[]   = [];
+    const notesArr: (string | null)[] = [];
+    for (const row of rows) {
+      const sf = String(row.size_from || '').trim();
+      const st = String(row.size_to   || '').trim();
+      if (!sf || !st) continue;
+      sizeFromArr.push(sf);
+      sizeToArr.push(st);
+      notesArr.push(row.notes ? String(row.notes).trim() || null : null);
+    }
+    if (sizeFromArr.length === 0) return { imported: 0, skipped: rows.length };
+    const result = await this.pool.query(
+      `INSERT INTO size_mappings (size_from, size_to, notes)
+       SELECT trim(sf), trim(st), n
+       FROM unnest($1::text[], $2::text[], $3::text[]) AS t(sf, st, n)
+       WHERE trim(sf) <> '' AND trim(st) <> ''
+       ON CONFLICT (LOWER(TRIM(size_from))) DO NOTHING
+       RETURNING id`,
+      [sizeFromArr, sizeToArr, notesArr]
+    );
+    const imported = result.rowCount ?? 0;
+    return { imported, skipped: sizeFromArr.length - imported };
+  }
+
+  async listUnmappedSizes(limit = 200): Promise<{
+    total: number;
+    fetchedCount: number;
+    rows: { raw_size: string; will_become: string; product_count: number; supplier_count: number }[];
+  }> {
+    const safeLimit = Math.min(Math.max(1, Math.trunc(Number(limit) || 200)), 2000);
+    const result = await this.pool.query(
+      `WITH unmapped AS (
+         SELECT
+           pr.size                              AS raw_size,
+           UPPER(TRIM(pr.size))                 AS will_become,
+           COUNT(*)::int                        AS product_count,
+           COUNT(DISTINCT pr.supplier_id)::int  AS supplier_count
+         FROM products_raw pr
+         LEFT JOIN size_mappings szm
+           ON LOWER(TRIM(pr.size)) = LOWER(TRIM(szm.size_from))
+         WHERE szm.id IS NULL
+           AND pr.size IS NOT NULL
+           AND TRIM(pr.size) <> ''
+         GROUP BY pr.size
+       )
+       SELECT *, COUNT(*) OVER()::int AS total_count
+       FROM unmapped
+       ORDER BY product_count DESC
+       LIMIT $1`,
+      [safeLimit]
+    );
+    const realTotal = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
+    return {
+      total: realTotal,
+      fetchedCount: result.rows.length,
+      rows: result.rows.map(({ total_count, ...r }) => r) as { raw_size: string; will_become: string; product_count: number; supplier_count: number }[]
     };
   }
 }

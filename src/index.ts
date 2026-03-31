@@ -40,6 +40,12 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
 
   server = app.listen(application.config.base.port, () => {
+    // Long-running jobs (import-all with 100+ sources) can take 10-15 min.
+    // Raise socket timeout so the HTTP connection stays alive for the response.
+    if (server) {
+      server.timeout = 30 * 60 * 1000;          // 30 min socket timeout
+      server.keepAliveTimeout = 30 * 60 * 1000; // 30 min keep-alive
+    }
     void (async () => {
       await application.schedulerSettingsService.initialize();
       application.scheduler.start();

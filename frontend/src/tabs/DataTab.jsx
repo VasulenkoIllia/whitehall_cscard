@@ -1,5 +1,6 @@
 import React from 'react';
 import { Section } from '../components/ui';
+import { SizeMappingsTab } from './SizeMappingsTab';
 
 function formatDateTimeCell(value) {
   if (!value) {
@@ -162,7 +163,17 @@ export function DataTab({
   compareState,
   storeMirrorState,
   storePreviewState,
-  suppliers
+  suppliers,
+  // size mappings
+  sizeMappings,
+  unmappedSizes,
+  sizeMappingStatus,
+  refreshSizeMappings,
+  refreshUnmappedSizes,
+  createSizeMapping,
+  updateSizeMapping,
+  deleteSizeMapping,
+  bulkImportSizeMappings
 }) {
   const supplierOptions = Array.isArray(suppliers) ? suppliers : [];
   const runLoadActive = () => {
@@ -217,6 +228,45 @@ export function DataTab({
       : currentConfig.columns;
   const currentColumns = isStorePreview ? storePreviewColumns : currentConfig.columns;
 
+  // ── Size mappings view ─────────────────────────────────────────────────────
+  if (activeDataView === 'sizes') {
+    return (
+      <div className="data-grid">
+        <div className="mini-tabs" style={{ marginBottom: 12 }}>
+          {Object.entries(VIEW_CONFIG).map(([viewId, config]) => (
+            <button
+              key={viewId}
+              className={`tab ${activeDataView === viewId ? 'active' : ''}`}
+              onClick={() => setActiveDataView(viewId)}
+            >
+              {config.tabLabel}
+            </button>
+          ))}
+          <button
+            className="tab active"
+            onClick={() => setActiveDataView('sizes')}
+          >
+            Розміри
+            {unmappedSizes?.total > 0 && (
+              <span className="tab-badge">{unmappedSizes.total}</span>
+            )}
+          </button>
+        </div>
+        <SizeMappingsTab
+          sizeMappings={sizeMappings}
+          unmappedSizes={unmappedSizes}
+          sizeMappingStatus={sizeMappingStatus}
+          refreshSizeMappings={refreshSizeMappings}
+          refreshUnmappedSizes={refreshUnmappedSizes}
+          createSizeMapping={createSizeMapping}
+          updateSizeMapping={updateSizeMapping}
+          deleteSizeMapping={deleteSizeMapping}
+          bulkImportSizeMappings={bulkImportSizeMappings}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="data-grid">
       <Section
@@ -233,6 +283,15 @@ export function DataTab({
               {config.tabLabel}
             </button>
           ))}
+          <button
+            className={`tab ${activeDataView === 'sizes' ? 'active' : ''}`}
+            onClick={() => setActiveDataView('sizes')}
+          >
+            Розміри
+            {unmappedSizes?.total > 0 && (
+              <span className="tab-badge">{unmappedSizes.total}</span>
+            )}
+          </button>
         </div>
 
         <div className="form-row" style={{ marginTop: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -240,7 +299,7 @@ export function DataTab({
             <label>Пошук</label>
             <input
               value={dataFilters.search}
-              onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value }))}
+              onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value, offset: '0' }))}
               placeholder="артикул / SKU"
             />
           </div>

@@ -255,6 +255,20 @@ export interface Application {
 export function createApplication(env: Record<string, string | undefined>): Application {
   const config = loadConfig(env);
   const pool = createPgPoolOrThrow(config.base.databaseUrl);
+
+  // Cleanup orphaned running jobs from a previous crash or SIGKILL.
+  // Fire-and-forget: startup must not block even if DB is briefly unavailable.
+  void pool
+    .query(`
+      UPDATE jobs
+      SET status      = 'failed',
+          finished_at = NOW(),
+          meta        = COALESCE(meta, '{}'::jsonb) || '{"error":"Process crashed or was killed"}'::jsonb
+      WHERE status = 'running'
+    `)
+    .then(() => pool.query(`DELETE FROM job_locks`))
+    .catch(() => undefined);
+
   const telegramAlertService = createTelegramAlertServiceFromEnv(env);
   const logService = new LogService(pool, {
     errorAlertSink: telegramAlertService
@@ -344,6 +358,19 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     auth,
     close: async (): Promise<void> => {
       scheduler.stop();
+      // Mark any still-running jobs as failed so they don't appear stuck after restart.
+      try {
+        await pool.query(`
+          UPDATE jobs
+          SET status      = 'failed',
+              finished_at = NOW(),
+              meta        = COALESCE(meta, '{}'::jsonb) || '{"error":"Server shutdown"}'::jsonb
+          WHERE status = 'running'
+        `);
+        await pool.query(`DELETE FROM job_locks`);
+      } catch (_err) {
+        // best-effort — pool may already be draining
+      }
       await pool.end();
     },
     migrationTargets: [

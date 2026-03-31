@@ -14,7 +14,8 @@ export function ManualControlTab({
   runJob,
   runStoreImport,
   runCleanupWithPreflight,
-  actionStatus
+  actionStatus,
+  importProgress
 }) {
   const supplierId = Number(selectedSupplierId);
   const sourceId = Number(selectedSourceId);
@@ -224,6 +225,19 @@ export function ManualControlTab({
           </div>
         </details>
 
+        {importProgress && importProgress.total > 0 ? (
+          <div className="import-progress-wrap">
+            <div className="import-progress-track">
+              <div
+                className="import-progress-fill"
+                style={{ width: `${Math.min(100, Math.round((importProgress.completed / importProgress.total) * 100))}%` }}
+              />
+            </div>
+            <span className="import-progress-label">
+              {importProgress.completed} / {importProgress.total} джерел
+            </span>
+          </div>
+        ) : null}
         <div className="status-line">{actionStatus}</div>
       </Section>
     </div>

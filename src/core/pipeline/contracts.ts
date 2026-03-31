@@ -55,8 +55,19 @@ export interface MirrorSnapshot {
   pages: number;
 }
 
+export interface ImportAllProgress {
+  completed: number;
+  total: number;
+}
+
+export type ImportProgressCallback = (progress: ImportAllProgress) => Promise<void>;
+
+export interface ImportAllOptions {
+  onProgress?: ImportProgressCallback;
+}
+
 export interface SourceImporter {
-  importAll(jobId: number): Promise<ImportSummary>;
+  importAll(jobId: number, options?: ImportAllOptions): Promise<ImportSummary>;
   importSource(jobId: number, sourceId: number): Promise<SourceImportSummary>;
   importSupplier(jobId: number, supplierId: number): Promise<SourceImportSummary>;
 }

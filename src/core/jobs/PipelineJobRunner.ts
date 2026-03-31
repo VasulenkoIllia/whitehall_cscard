@@ -400,6 +400,94 @@ export class PipelineJobRunner<MappedRow = unknown> {
     return this.runStandaloneStep('import_all', {}, (jobId) => this.pipeline.runImportAll(jobId));
   }
 
+  /**
+   * Fire-and-forget variant: creates + starts the job, returns jobId immediately.
+   * The import runs in the background; progress is persisted via mergeJobMeta every source.
+   * The caller must attach .catch(() => undefined) to bgPromise (belt-and-suspenders).
+   */
+  async startImportAllAsync(): Promise<{ jobId: number; bgPromise: Promise<void> }> {
+    await this.ensureNoRunningJobs();
+    const job = await this.jobs.createJob('import_all', {});
+    let lockAcquired = false;
+    try {
+      lockAcquired = await this.jobs.acquireJobLock(job.id);
+      if (!lockAcquired) {
+        throw new JobConflictError('Another job is running');
+      }
+      await this.jobs.startJob(job.id);
+      await this.logs.log(job.id, 'info', 'import_all started', {});
+    } catch (err) {
+      await this.jobs.failJob(job.id, err);
+      if (lockAcquired) {
+        await this.jobs.releaseJobLock(job.id);
+      }
+      throw err;
+    }
+
+    const onProgress = async (progress: { completed: number; total: number }): Promise<void> => {
+      await this.jobs.mergeJobMeta(job.id, { progress });
+    };
+
+    const bgPromise: Promise<void> = this.pipeline
+      .runImportAll(job.id, { onProgress })
+      .then(async (result) => {
+        await this.jobs.finishJob(job.id);
+        await this.logs.log(job.id, 'info', 'import_all finished', result);
+      })
+      .catch(async (err) => {
+        await this.jobs.failJob(job.id, err);
+        await this.logs.log(job.id, 'error', 'import_all failed', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      })
+      .finally(async () => {
+        await this.jobs.releaseJobLock(job.id).catch(() => undefined);
+      });
+
+    return { jobId: job.id, bgPromise };
+  }
+
+  /**
+   * Fire-and-forget variant for finalize: returns jobId immediately.
+   */
+  async startFinalizeAsync(): Promise<{ jobId: number; bgPromise: Promise<void> }> {
+    await this.ensureNoRunningJobs();
+    const job = await this.jobs.createJob('finalize', {});
+    let lockAcquired = false;
+    try {
+      lockAcquired = await this.jobs.acquireJobLock(job.id);
+      if (!lockAcquired) {
+        throw new JobConflictError('Another job is running');
+      }
+      await this.jobs.startJob(job.id);
+      await this.logs.log(job.id, 'info', 'finalize started', {});
+    } catch (err) {
+      await this.jobs.failJob(job.id, err);
+      if (lockAcquired) {
+        await this.jobs.releaseJobLock(job.id);
+      }
+      throw err;
+    }
+
+    const bgPromise: Promise<void> = this.pipeline
+      .runFinalize(job.id)
+      .then(async (result) => {
+        await this.jobs.finishJob(job.id);
+        await this.logs.log(job.id, 'info', 'finalize finished', result);
+      })
+      .catch(async (err) => {
+        await this.jobs.failJob(job.id, err);
+        await this.logs.log(job.id, 'error', 'finalize failed', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      })
+      .finally(async () => {
+        await this.jobs.releaseJobLock(job.id).catch(() => undefined);
+      });
+
+    return { jobId: job.id, bgPromise };
+  }
+
   runImportSource(sourceId: number): Promise<JobRunnerResult<SourceImportSummary>> {
     const normalizedSourceId = Math.trunc(Number(sourceId));
     if (!Number.isFinite(normalizedSourceId) || normalizedSourceId <= 0) {

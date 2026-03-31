@@ -8,7 +8,9 @@ const stageFromPrecomputedSql = `
         WHEN s.sku_prefix IS NULL OR btrim(s.sku_prefix) = '' THEN pr.article
         ELSE s.sku_prefix || '-' || pr.article
       END AS article,
-      pr.size,
+      -- Normalise size: use mapping table if available, otherwise UPPER(TRIM) as fallback.
+      -- NULL sizes remain NULL; unmapped sizes are auto-uppercased.
+      COALESCE(szm.size_to, UPPER(TRIM(pr.size))) AS size,
       pr.quantity,
       pr.price AS price_base,
       CEIL(pr.price_with_markup / 10) * 10 AS price_final,
@@ -18,6 +20,9 @@ const stageFromPrecomputedSql = `
       s.priority AS supplier_priority
     FROM products_raw pr
     JOIN suppliers s ON s.id = pr.supplier_id
+    LEFT JOIN size_mappings szm
+      ON szm.is_active = TRUE
+      AND LOWER(TRIM(pr.size)) = LOWER(TRIM(szm.size_from))
     WHERE s.is_active = TRUE
       AND pr.job_id = $1
   ),
@@ -58,7 +63,9 @@ const stageWithFinalizePricingSql = `
         WHEN s.sku_prefix IS NULL OR btrim(s.sku_prefix) = '' THEN pr.article
         ELSE s.sku_prefix || '-' || pr.article
       END AS article,
-      pr.size,
+      -- Normalise size: use mapping table if available, otherwise UPPER(TRIM) as fallback.
+      -- NULL sizes remain NULL; unmapped sizes are auto-uppercased.
+      COALESCE(szm.size_to, UPPER(TRIM(pr.size))) AS size,
       pr.quantity,
       pr.price AS price_base,
       pr.extra,
@@ -74,6 +81,9 @@ const stageWithFinalizePricingSql = `
       active_rs.id AS effective_rule_set_id
     FROM products_raw pr
     JOIN suppliers s ON s.id = pr.supplier_id
+    LEFT JOIN size_mappings szm
+      ON szm.is_active = TRUE
+      AND LOWER(TRIM(pr.size)) = LOWER(TRIM(szm.size_from))
     LEFT JOIN markup_rule_sets active_rs
       ON active_rs.id = s.markup_rule_set_id
      AND active_rs.is_active = TRUE

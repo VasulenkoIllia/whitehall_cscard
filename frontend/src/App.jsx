@@ -186,27 +186,6 @@ function toSupplierDraft(supplier = null) {
   };
 }
 
-function toPriceOverrideDraft(row = null) {
-  if (!row) {
-    return {
-      id: '',
-      article: '',
-      size: '',
-      price_final: '',
-      notes: '',
-      is_active: true
-    };
-  }
-  return {
-    id: String(row.id),
-    article: String(row.article || ''),
-    size: String(row.size || ''),
-    price_final: String(Number(row.price_final || 0)),
-    notes: String(row.notes || ''),
-    is_active: row.is_active !== false
-  };
-}
-
 function toCronSettingDraft(row = null) {
   if (!row) {
     return {
@@ -401,6 +380,10 @@ export default function App() {
   const [logsJobId, setLogsJobId] = useState('');
   const [jobsStatus, setJobsStatus] = useState('');
   const [actionStatus, setActionStatus] = useState('');
+  const [importProgress, setImportProgress] = useState(null); // { completed, total, jobId, label }
+  const importPollRef = useRef(null);
+  // Пропускаємо перший запуск debounced-search ефекту (він не повинен дублювати filter-ефект при mount)
+  const searchEffectMountedRef = useRef(false);
   const [topStatus, setTopStatus] = useState('');
   const [lastFailedAction, setLastFailedAction] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -452,15 +435,9 @@ export default function App() {
   const [ruleSetErrors, setRuleSetErrors] = useState({});
   const [ruleSetStatus, setRuleSetStatus] = useState('');
 
-  const [priceOverrides, setPriceOverrides] = useState({ rows: [], total: 0, status: '' });
-  const [priceOverrideFilters, setPriceOverrideFilters] = useState({
-    search: '',
-    limit: '50',
-    offset: '0'
-  });
-  const [priceOverrideDraft, setPriceOverrideDraft] = useState(() => toPriceOverrideDraft(null));
-  const [priceOverrideErrors, setPriceOverrideErrors] = useState({});
-  const [priceOverrideStatus, setPriceOverrideStatus] = useState('');
+  const [sizeMappings, setSizeMappings] = useState({ rows: [], total: 0 });
+  const [unmappedSizes, setUnmappedSizes] = useState({ rows: [], total: 0, status: '' });
+  const [sizeMappingStatus, setSizeMappingStatus] = useState('');
 
   const [mergedState, setMergedState] = useState({ rows: [], total: 0, status: '' });
   const [finalState, setFinalState] = useState({ rows: [], total: 0, status: '' });
@@ -795,23 +772,78 @@ export default function App() {
     }
   };
 
-  const refreshPriceOverrides = async () => {
-    setPriceOverrides((prev) => ({ ...prev, status: 'Завантаження...' }));
+  const refreshSizeMappings = async () => {
+    setSizeMappingStatus('Завантаження...');
     try {
-      const query = new URLSearchParams();
-      query.set('limit', priceOverrideFilters.limit || '50');
-      query.set('offset', priceOverrideFilters.offset || '0');
-      if (priceOverrideFilters.search.trim()) {
-        query.set('search', priceOverrideFilters.search.trim());
-      }
-      const result = await apiFetch(`/price-overrides?${query.toString()}`);
-      setPriceOverrides({
-        rows: Array.isArray(result?.rows) ? result.rows : [],
-        total: Number(result?.total || 0),
-        status: `total=${Number(result?.total || 0)}`
+      const data = await apiFetch('/size-mappings?limit=2000');
+      setSizeMappings({ rows: Array.isArray(data?.rows) ? data.rows : [], total: data?.total || 0 });
+      setSizeMappingStatus('');
+    } catch (error) {
+      setSizeMappingStatus(formatError(error));
+    }
+  };
+
+  const refreshUnmappedSizes = async () => {
+    setUnmappedSizes((prev) => ({ ...prev, status: 'Завантаження...' }));
+    try {
+      const data = await apiFetch('/size-mappings/unmapped?limit=2000');
+      setUnmappedSizes({
+        rows: Array.isArray(data?.rows) ? data.rows : [],
+        total: data?.total || 0,
+        fetchedCount: data?.fetchedCount || 0,
+        status: '',
       });
     } catch (error) {
-      setPriceOverrides((prev) => ({ ...prev, status: formatError(error) }));
+      setUnmappedSizes((prev) => ({ ...prev, status: formatError(error) }));
+    }
+  };
+
+  const createSizeMapping = async (payload) => {
+    setSizeMappingStatus('Збереження...');
+    try {
+      await apiFetch('/size-mappings', { method: 'POST', body: JSON.stringify(payload) });
+      setSizeMappingStatus('Маппінг створено');
+      await Promise.all([refreshSizeMappings(), refreshUnmappedSizes()]);
+    } catch (error) {
+      setSizeMappingStatus(formatError(error));
+    }
+  };
+
+  const updateSizeMapping = async (id, payload) => {
+    setSizeMappingStatus('Збереження...');
+    try {
+      await apiFetch(`/size-mappings/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      setSizeMappingStatus('Маппінг оновлено');
+      await refreshSizeMappings();
+    } catch (error) {
+      setSizeMappingStatus(formatError(error));
+    }
+  };
+
+  const deleteSizeMapping = async (id) => {
+    setSizeMappingStatus('Видалення...');
+    try {
+      await apiFetch(`/size-mappings/${id}`, { method: 'DELETE' });
+      setSizeMappingStatus('Маппінг видалено');
+      await Promise.all([refreshSizeMappings(), refreshUnmappedSizes()]);
+    } catch (error) {
+      setSizeMappingStatus(formatError(error));
+    }
+  };
+
+  const bulkImportSizeMappings = async (rows) => {
+    setSizeMappingStatus('Імпорт...');
+    try {
+      const data = await apiFetch('/size-mappings/bulk-import', {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+      });
+      setSizeMappingStatus(`Імпортовано: ${data.imported}, пропущено: ${data.skipped}`);
+      await Promise.all([refreshSizeMappings(), refreshUnmappedSizes()]);
+      return data;
+    } catch (error) {
+      setSizeMappingStatus(formatError(error));
+      throw error;
     }
   };
 
@@ -949,21 +981,6 @@ export default function App() {
     const headerRow = parsePositiveInt(mappingHeaderRow);
     if (!headerRow) {
       errors.header_row = 'Header row має бути додатнім числом';
-    }
-    return errors;
-  };
-
-  const validatePriceOverrideDraft = () => {
-    const errors = {};
-    if (!priceOverrideDraft.id && !priceOverrideDraft.article.trim()) {
-      errors.article = 'article обовʼязковий';
-    }
-    if (priceOverrideDraft.price_final.trim() !== '') {
-      if (normalizeOptionalNumber(priceOverrideDraft.price_final) === null) {
-        errors.price_final = 'price_final має бути числом';
-      }
-    } else if (!priceOverrideDraft.id) {
-      errors.price_final = 'price_final обовʼязковий';
     }
     return errors;
   };
@@ -1334,59 +1351,6 @@ export default function App() {
     }));
   };
 
-  const savePriceOverride = async () => {
-    const errors = validatePriceOverrideDraft();
-    setPriceOverrideErrors(errors);
-    if (Object.keys(errors).length > 0) {
-      setPriceOverrideStatus('Перевірте поля override');
-      return;
-    }
-    const article = priceOverrideDraft.article.trim();
-    const priceFinal = normalizeOptionalNumber(priceOverrideDraft.price_final);
-
-    setPriceOverrideStatus('Збереження override...');
-    try {
-      if (priceOverrideDraft.id) {
-        await runMutationWithRetryUX(`update_price_override_${priceOverrideDraft.id}`, () =>
-          apiFetchWithRetry(
-            `/price-overrides/${priceOverrideDraft.id}`,
-            {
-              method: 'PUT',
-              body: JSON.stringify({
-                price_final: priceFinal === null ? undefined : priceFinal,
-                notes: priceOverrideDraft.notes.trim() || null,
-                is_active: priceOverrideDraft.is_active
-              })
-            },
-            { retries: 1 }
-          )
-        );
-      } else {
-        await runMutationWithRetryUX('create_price_override', () =>
-          apiFetchWithRetry(
-            '/price-overrides',
-            {
-              method: 'POST',
-              body: JSON.stringify({
-                article,
-                size: priceOverrideDraft.size.trim() || null,
-                price_final: priceFinal,
-                notes: priceOverrideDraft.notes.trim() || null
-              })
-            },
-            { retries: 1 }
-          )
-        );
-      }
-      setPriceOverrideStatus('Override збережено');
-      setPriceOverrideErrors({});
-      setPriceOverrideDraft(toPriceOverrideDraft(null));
-      await refreshPriceOverrides();
-    } catch (error) {
-      setPriceOverrideStatus(formatError(error));
-    }
-  };
-
   const setDefaultMarkupRuleSet = async (ruleSetId) => {
     setPricingStatus(`Set default #${ruleSetId}...`);
     try {
@@ -1403,6 +1367,17 @@ export default function App() {
       setGlobalRuleSetId(Number(result?.global_rule_set_id || 0) || null);
       setPricingStatus(`Default rule set: #${Number(result?.global_rule_set_id || 0)}`);
       await refreshSuppliers();
+    } catch (error) {
+      setPricingStatus(formatError(error));
+    }
+  };
+
+  const deleteMarkupRuleSet = async (ruleSetId) => {
+    setPricingStatus('Видалення...');
+    try {
+      await apiFetch(`/markup-rule-sets/${ruleSetId}`, { method: 'DELETE' });
+      setPricingStatus('Тип видалено');
+      await refreshMarkupRuleSets();
     } catch (error) {
       setPricingStatus(formatError(error));
     }
@@ -1745,6 +1720,54 @@ export default function App() {
     }
   };
 
+  const stopImportPoll = () => {
+    if (importPollRef.current) {
+      window.clearInterval(importPollRef.current);
+      importPollRef.current = null;
+    }
+  };
+
+  const startImportPoll = (jobId, label) => {
+    stopImportPoll();
+    setImportProgress({ completed: 0, total: null, jobId, label });
+    importPollRef.current = window.setInterval(async () => {
+      try {
+        const data = await apiFetch(`/jobs/${jobId}`);
+        const job = data?.job;
+        if (!job) return;
+        const progress = job.meta?.progress;
+        const completed = Number(progress?.completed ?? 0);
+        const total = Number(progress?.total ?? 0);
+        setImportProgress({ completed, total, jobId, label });
+        const pct = total > 0 ? Math.round((completed / total) * 100) : null;
+        const pctLabel = pct !== null ? ` (${pct}% — ${completed}/${total})` : '';
+        setActionStatus(`${label}: виконується${pctLabel}...`);
+        if (job.status === 'success') {
+          stopImportPoll();
+          setImportProgress(null);
+          const rows = job.meta?.importedRows ?? job.meta?.rawCount ?? '';
+          const rowsLabel = rows ? ` — ${rows} рядків` : '';
+          setActionStatus(`${label}: завершено${rowsLabel}`);
+          await refreshCore();
+        } else if (job.status === 'failed' || job.status === 'canceled') {
+          stopImportPoll();
+          setImportProgress(null);
+          const errMsg = job.meta?.message || job.status;
+          setActionStatus(`${label}: помилка — ${errMsg}`);
+          await refreshCore();
+        }
+      } catch (_err) {
+        // мережева помилка під час polling — не критично, продовжуємо
+      }
+    }, 3000);
+  };
+
+  // Зупиняємо polling при unmount
+  useEffect(() => () => stopImportPoll(), []);
+
+  // Шляхи які тепер повертають { jobId } одразу (fire-and-forget на сервері)
+  const ASYNC_JOB_PATHS = new Set(['/jobs/import-all', '/jobs/finalize']);
+
   const runJob = async (label, path, payload = {}) => {
     setActionStatus(`${label}: запуск...`);
     try {
@@ -1758,8 +1781,12 @@ export default function App() {
           { retries: 1 }
         )
       );
-      setActionStatus(`${label}: ${toJsonString(result)}`);
-      await refreshCore();
+      if (ASYNC_JOB_PATHS.has(path) && result?.jobId) {
+        startImportPoll(result.jobId, label);
+      } else {
+        setActionStatus(`${label}: ${toJsonString(result)}`);
+        await refreshCore();
+      }
     } catch (error) {
       setActionStatus(`${label}: ${formatError(error)}`);
     }
@@ -1837,7 +1864,6 @@ export default function App() {
         refreshCore(),
         refreshSuppliers(),
         refreshMarkupRuleSets(),
-        refreshPriceOverrides(),
         refreshCronSettings()
       ]);
       setAuthReady(true);
@@ -1886,27 +1912,10 @@ export default function App() {
           await refreshCronSettings();
           return;
         }
-        if (tab === 'data') {
-          if (activeDataView === 'merged') {
-            await loadMerged();
-            return;
-          }
-          if (activeDataView === 'final') {
-            await loadFinal();
-            return;
-          }
-          if (activeDataView === 'compare') {
-            await loadCompare();
-            return;
-          }
-          if (activeDataView === 'store_now') {
-            await loadStoreMirror();
-            return;
-          }
-          // store_preview не auto-refresh: mode залежить від dataFilters (stale closure),
-          // користувач перезавантажує вручну або через зміну фільтрів
-          return;
-        }
+        // Вкладка "Дані" НЕ має авторефрешу:
+        // 1. Stale closure — авторефреш захоплює loadMerged зі старим offset і скидає пагінацію
+        // 2. Дані підвантажуються двічі при відкритті (цей ефект + filter useEffect нижче)
+        // Фільтр-ефект (нижче) повністю відповідає за завантаження даних на вкладці.
       } finally {
         autoRefreshInFlightRef.current = false;
       }
@@ -1920,7 +1929,7 @@ export default function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [authReady, meRole, tab, activeDataView, selectedSupplierId, selectedSourceId]);
+  }, [authReady, meRole, tab, selectedSupplierId, selectedSourceId]);
 
   useEffect(() => {
     if (!authReady || !meRole || tab !== 'suppliers') {
@@ -1966,10 +1975,17 @@ export default function App() {
     dataFilters.storePreviewMode
   ]);
 
-  // Debounced reload for search text input only (avoids request-per-keystroke)
+  // Debounced reload for search text input only (avoids request-per-keystroke).
+  // Skips the initial mount so it doesn't duplicate the filter-effect load below.
   useEffect(() => {
     if (!authReady || !meRole || tab !== 'data') {
+      // Reset flag when leaving the tab so it skips again on next tab entry
+      searchEffectMountedRef.current = false;
       return undefined;
+    }
+    if (!searchEffectMountedRef.current) {
+      searchEffectMountedRef.current = true;
+      return undefined; // skip initial mount — filter-effect handles the first load
     }
     const timeoutId = window.setTimeout(() => {
       if (activeDataView === 'merged') { void loadMerged(); return; }
@@ -2066,6 +2082,8 @@ export default function App() {
         <OverviewTab
           readiness={readiness}
           stats={stats}
+          jobs={jobs}
+          importProgress={importProgress}
         />
       ) : null}
 
@@ -2084,6 +2102,7 @@ export default function App() {
           runStoreImport={runStoreImport}
           runCleanupWithPreflight={runCleanupWithPreflight}
           actionStatus={actionStatus}
+          importProgress={importProgress}
         />
       ) : null}
 
@@ -2166,6 +2185,7 @@ export default function App() {
               markupRuleSets={markupRuleSets}
               isReadOnly={isReadOnly}
               setDefaultMarkupRuleSet={setDefaultMarkupRuleSet}
+              deleteMarkupRuleSet={deleteMarkupRuleSet}
               startCreateRuleSet={startCreateRuleSet}
               globalRuleSetId={globalRuleSetId}
               pricingStatus={pricingStatus}
@@ -2201,6 +2221,15 @@ export default function App() {
           storeMirrorState={storeMirrorState}
           storePreviewState={storePreviewState}
           suppliers={suppliers}
+          sizeMappings={sizeMappings}
+          unmappedSizes={unmappedSizes}
+          sizeMappingStatus={sizeMappingStatus}
+          refreshSizeMappings={refreshSizeMappings}
+          refreshUnmappedSizes={refreshUnmappedSizes}
+          createSizeMapping={createSizeMapping}
+          updateSizeMapping={updateSizeMapping}
+          deleteSizeMapping={deleteSizeMapping}
+          bulkImportSizeMappings={bulkImportSizeMappings}
         />
       ) : null}
 

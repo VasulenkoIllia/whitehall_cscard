@@ -102,6 +102,7 @@ export function PricingTab({
   markupRuleSets,
   isReadOnly,
   setDefaultMarkupRuleSet,
+  deleteMarkupRuleSet,
   startCreateRuleSet,
   globalRuleSetId,
   pricingStatus,
@@ -117,6 +118,7 @@ export function PricingTab({
 }) {
   const [ruleSetSearch, setRuleSetSearch] = useState('');
   const [isRuleSetModalOpen, setRuleSetModalOpen] = useState(false);
+  const [deleteRuleSetId, setDeleteRuleSetId] = useState(null);
   const previousRuleSetStatusRef = useRef('');
 
   const normalizedRuleSets = Array.isArray(markupRuleSets) ? markupRuleSets : [];
@@ -272,6 +274,15 @@ export function PricingTab({
                               Зробити основним
                             </button>
                           ) : null}
+                          {!isDefault ? (
+                            <button
+                              className="btn btn-sm danger"
+                              disabled={isReadOnly}
+                              onClick={() => setDeleteRuleSetId(rs.id)}
+                            >
+                              ×
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -415,6 +426,32 @@ export function PricingTab({
 
             <div className={`status-line ${isErrorStatus(ruleSetStatus) ? 'error' : ''}`}>
               {ruleSetStatus}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Delete rule set confirmation ─────────────────────────────────── */}
+      {deleteRuleSetId !== null ? (
+        <div className="modal-backdrop confirm-modal-backdrop" onClick={() => setDeleteRuleSetId(null)}>
+          <div className="modal-card confirm-modal-card" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginBottom: 6 }}>Видалити тип націнки?</h3>
+            <p className="muted" style={{ marginBottom: 16 }}>
+              Всі умови цього типу буде видалено. Постачальники з цим типом перейдуть на базову логіку.
+              Дію не можна скасувати.
+            </p>
+            <div className="actions">
+              <button
+                className="btn danger"
+                autoFocus
+                onClick={async () => {
+                  await deleteMarkupRuleSet(deleteRuleSetId);
+                  setDeleteRuleSetId(null);
+                }}
+              >
+                Так, видалити
+              </button>
+              <button className="btn" onClick={() => setDeleteRuleSetId(null)}>Скасувати</button>
             </div>
           </div>
         </div>

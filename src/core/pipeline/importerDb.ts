@@ -6,7 +6,8 @@ import type {
   SourceImporter
 } from './contracts';
 import { detectMappingFromRow, hasRequiredFields, normalizeHeader } from './mapping';
-import { getSheetInfo, getSheetRowChunk } from './googleSheetsService';
+import { getSheetClient, getSheetRowChunk } from './googleSheetsService';
+import type { ImportAllOptions } from './contracts';
 import { computePriceWithMarkup, type PricingContext } from './pricing';
 import {
   toFiniteNumber,
@@ -345,25 +346,56 @@ export class ImporterDb implements SourceImporter {
     jobId: number,
     sources: SourceRowRecord[],
     messages: { started: string; finished: string },
-    startData?: Record<string, unknown>
+    startData?: Record<string, unknown>,
+    onProgress?: ImportAllOptions['onProgress']
   ): Promise<SourceImportSummary> {
     await this.logService.log(jobId, 'info', messages.started, startData);
 
+    // Concurrency: N workers pull from a shared queue.
+    // API rate limiting is handled globally in googleSheetsService (leaky bucket),
+    // so parallel workers won't exceed the Google Sheets quota —
+    // they simply overlap non-API work (DB writes, row parsing) while waiting for their slot.
+    const concurrency = Math.max(
+      1,
+      Math.min(
+        Number.isFinite(Number(process.env.GOOGLE_SHEETS_IMPORT_CONCURRENCY))
+          ? Number(process.env.GOOGLE_SHEETS_IMPORT_CONCURRENCY)
+          : 3,
+        sources.length
+      )
+    );
+
+    const queue = sources.slice(); // shared mutable queue
+    const sourceItems: SourceImportItem[] = [];
+    const warnings: string[] = [];
     let importedRows = 0;
     let skippedRows = 0;
-    const warnings: string[] = [];
-    const sourceItems: SourceImportItem[] = [];
+    const total = sources.length;
+    let completed = 0;
 
-    for (let index = 0; index < sources.length; index += 1) {
-      const source = sources[index];
-      const { item, warning } = await this.importSourceWithSummary(jobId, source);
-      sourceItems.push(item);
-      importedRows += item.imported;
-      skippedRows += item.skipped;
-      if (warning) {
-        warnings.push(warning);
+    const workers = Array.from({ length: concurrency }, async () => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const source = queue.shift();
+        if (!source) break;
+        const { item, warning } = await this.importSourceWithSummary(jobId, source);
+        // Results accumulation is safe: JS is single-threaded,
+        // mutations only happen outside await points.
+        sourceItems.push(item);
+        importedRows += item.imported;
+        skippedRows += item.skipped;
+        if (warning) {
+          warnings.push(warning);
+        }
+        completed += 1;
+        if (onProgress) {
+          // A failed meta write must not abort the import — swallow errors.
+          await onProgress({ completed, total }).catch(() => undefined);
+        }
       }
-    }
+    });
+
+    await Promise.all(workers);
 
     const summary: SourceImportSummary = {
       importedSources: sources.length,
@@ -377,7 +409,7 @@ export class ImporterDb implements SourceImporter {
     return summary;
   }
 
-  async importAll(jobId: number): Promise<ImportSummary> {
+  async importAll(jobId: number, options?: ImportAllOptions): Promise<ImportSummary> {
     const sourcesResult = await this.pool.query<SourceRowRecord>(
       `SELECT s.*, sp.id AS supplier_id, sp.name AS supplier_name, s.name AS source_name
        FROM sources s
@@ -385,10 +417,13 @@ export class ImporterDb implements SourceImporter {
        WHERE s.is_active = TRUE AND sp.is_active = TRUE
        ORDER BY s.id ASC`
     );
-    const summary = await this.importSelectedSources(jobId, sourcesResult.rows, {
-      started: 'Import all sources started',
-      finished: 'Import all sources finished'
-    });
+    const summary = await this.importSelectedSources(
+      jobId,
+      sourcesResult.rows,
+      { started: 'Import all sources started', finished: 'Import all sources finished' },
+      undefined,
+      options?.onProgress
+    );
     return this.toFlatImportSummary(summary);
   }
 
@@ -480,7 +515,7 @@ export class ImporterDb implements SourceImporter {
     const sheetName = mappingMeta?.sheet_name || source.sheet_name;
     let sheetInfo;
     try {
-      sheetInfo = await getSheetInfo(source.source_url, sheetName);
+      sheetInfo = await getSheetClient(source.source_url, sheetName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await this.logService.log(jobId, 'error', 'Google sheet load failed', {

@@ -48,16 +48,12 @@ export class ExportPreviewDb implements ExportPreviewProvider {
       `SELECT
          pf.article,
          pf.size,
-         COALESCE(po.price_final, pf.price_final) AS price_final,
+         pf.price_final,
          pf.supplier_id,
          sp.name AS supplier_name,
          sp.sku_prefix AS supplier_sku_prefix
        FROM products_final pf
        LEFT JOIN suppliers sp ON sp.id = pf.supplier_id
-       LEFT JOIN price_overrides po
-         ON po.article = pf.article
-        AND NULLIF(po.size, '') IS NOT DISTINCT FROM NULLIF(pf.size, '')
-        AND po.is_active = TRUE
        ${where}
        ORDER BY pf.article ASC, pf.size ASC`,
       values

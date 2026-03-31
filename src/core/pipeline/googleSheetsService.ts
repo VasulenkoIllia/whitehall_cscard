@@ -3,7 +3,10 @@ import { google } from 'googleapis';
 const minIntervalMs = Number(process.env.GOOGLE_SHEETS_MIN_INTERVAL_MS || 1200);
 const quotaBackoffMs = Number(process.env.GOOGLE_SHEETS_QUOTA_BACKOFF_MS || 60000);
 const maxRetriesRaw = Number(process.env.GOOGLE_SHEETS_MAX_RETRIES ?? 0);
-let lastRequestAt = 0;
+
+// Leaky-bucket rate limiter — concurrent-safe in JS single-threaded event loop.
+// Each caller atomically reserves the next available slot (no two callers share the same slot).
+let nextRequestAt = 0;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -24,24 +27,30 @@ function isQuotaError(err: any): boolean {
 async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
   let attempt = 0;
   const maxRetries = Number.isFinite(maxRetriesRaw) ? maxRetriesRaw : 0;
-  const maxAttempts = maxRetries <= 0 ? Infinity : maxRetries;
+  const maxAttempts = maxRetries <= 0 ? 3 : maxRetries;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      // Atomically reserve the next rate-limit slot.
+      // No await between read and write → no race condition even with parallel callers.
       const now = Date.now();
-      const waitMs = Math.max(0, minIntervalMs - (now - lastRequestAt));
+      const mySlot = Math.max(now, nextRequestAt);
+      nextRequestAt = mySlot + minIntervalMs;
+      const waitMs = mySlot - now;
       if (waitMs > 0) {
         await sleep(waitMs);
       }
-      const result = await fn();
-      lastRequestAt = Date.now();
-      return result;
+      return await fn();
     } catch (err) {
       if (!isQuotaError(err) || attempt >= maxAttempts) {
         throw err;
       }
       attempt += 1;
-      await sleep(quotaBackoffMs * attempt);
+      // On quota error: back off AND push the global slot forward so other workers
+      // also slow down, not just this one.
+      const backoffMs = quotaBackoffMs * attempt;
+      nextRequestAt = Math.max(nextRequestAt, Date.now() + backoffMs);
+      await sleep(backoffMs);
     }
   }
 }
@@ -125,6 +134,47 @@ export interface SheetPreviewResult {
   headerRow: number;
   hasHeader: boolean;
   rows: string[][];
+}
+
+/**
+ * Fast path: skips the spreadsheets.get metadata API call when sheetName is already known.
+ * Falls back to a full metadata call only when sheetName is null/empty (rare — ~1 source).
+ * rowCount/columnCount will be null on the fast path; all callers already handle null gracefully.
+ */
+export async function getSheetClient(url: string, sheetName?: string | null): Promise<SheetInfo> {
+  const spreadsheetId = parseSheetId(url);
+  if (!spreadsheetId) {
+    throw new Error('Invalid Google Sheets URL or ID');
+  }
+  const auth = buildJwtClient();
+  const sheets = google.sheets({ version: 'v4', auth });
+
+  // Fast path — no API call needed
+  if (sheetName) {
+    return { sheets, spreadsheetId, sheetName, rowCount: null, columnCount: null };
+  }
+
+  // Slow path — resolve first sheet name via metadata (sheetName not configured)
+  try {
+    const meta = await requestWithRetry<any>(() => sheets.spreadsheets.get({ spreadsheetId }));
+    const targetSheetName = meta.data.sheets?.[0]?.properties?.title;
+    if (!targetSheetName) {
+      throw new Error('Sheet name not found');
+    }
+    const targetSheet =
+      (meta.data.sheets || []).find(
+        (sheet: any) => sheet.properties?.title === targetSheetName
+      ) || null;
+    return {
+      sheets,
+      spreadsheetId,
+      sheetName: targetSheetName,
+      rowCount: targetSheet?.properties?.gridProperties?.rowCount || null,
+      columnCount: targetSheet?.properties?.gridProperties?.columnCount || null
+    };
+  } catch (err) {
+    throw normalizeGoogleSheetsError(err);
+  }
 }
 
 export async function getSheetInfo(url: string, sheetName?: string | null): Promise<SheetInfo> {

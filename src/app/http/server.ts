@@ -568,6 +568,22 @@ export function createHttpServer(appContext: AppContext) {
     }
   );
 
+  app.delete(
+    '/admin/api/markup-rule-sets/:id',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const ruleSetId = parseRequiredPositiveInt(req.params.id, 'rule set id');
+        const result = await catalogAdmin.deleteMarkupRuleSet(ruleSetId);
+        return res.json(result);
+      } catch (err) {
+        return res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'markup_rule_set_delete_error') });
+      }
+    }
+  );
+
   app.post(
     '/admin/api/markup-rule-sets/default',
     authMw.requireRole('admin'),
@@ -598,59 +614,73 @@ export function createHttpServer(appContext: AppContext) {
     }
   );
 
-  app.get(
-    '/admin/api/price-overrides',
-    authMw.requireRole('viewer'),
-    async (req: Request, res: Response) => {
-      try {
-        const limit = parseLimit(req.query.limit, 100);
-        const offsetRaw = Number(req.query.offset);
-        const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.trunc(offsetRaw)) : 0;
-        const search = typeof req.query.search === 'string' ? req.query.search : null;
-        const result = await catalogAdmin.listPriceOverrides({
-          limit,
-          offset,
-          search
-        });
-        return res.json(result);
-      } catch (err) {
-        return res
-          .status(readErrorStatus(err))
-          .json({ error: readErrorMessage(err, 'price_overrides_list_error') });
-      }
-    }
-  );
+  // ─── Size Mappings ──────────────────────────────────────────────────────────
 
-  app.post(
-    '/admin/api/price-overrides',
-    authMw.requireRole('admin'),
-    async (req: Request, res: Response) => {
-      try {
-        const result = await catalogAdmin.upsertPriceOverride(req.body || {});
-        return res.json(result);
-      } catch (err) {
-        return res
-          .status(readErrorStatus(err))
-          .json({ error: readErrorMessage(err, 'price_override_save_error') });
-      }
+  app.get('/admin/api/size-mappings/unmapped', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const limit = req.query.limit ? Number(req.query.limit) : 200;
+      const result = await catalogAdmin.listUnmappedSizes(limit);
+      return res.json(result);
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mappings_unmapped_error') });
     }
-  );
+  });
 
-  app.put(
-    '/admin/api/price-overrides/:id',
-    authMw.requireRole('admin'),
-    async (req: Request, res: Response) => {
-      try {
-        const overrideId = parseRequiredPositiveInt(req.params.id, 'override id');
-        const result = await catalogAdmin.updatePriceOverride(overrideId, req.body || {});
-        return res.json(result);
-      } catch (err) {
-        return res
-          .status(readErrorStatus(err))
-          .json({ error: readErrorMessage(err, 'price_override_update_error') });
-      }
+  app.get('/admin/api/size-mappings', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : 200;
+      const offset = req.query.offset ? Number(req.query.offset) : 0;
+      const result = await catalogAdmin.listSizeMappings({ search, limit, offset });
+      return res.json(result);
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mappings_list_error') });
     }
-  );
+  });
+
+  app.post('/admin/api/size-mappings', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const result = await catalogAdmin.createSizeMapping(req.body || {});
+      return res.json(result);
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mapping_create_error') });
+    }
+  });
+
+  app.put('/admin/api/size-mappings/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const id = parseRequiredPositiveInt(req.params.id, 'mapping id');
+      const result = await catalogAdmin.updateSizeMapping(id, req.body || {});
+      if (!result) return res.status(404).json({ error: 'size mapping not found' });
+      return res.json(result);
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mapping_update_error') });
+    }
+  });
+
+  app.delete('/admin/api/size-mappings/:id', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const id = parseRequiredPositiveInt(req.params.id, 'mapping id');
+      const result = await catalogAdmin.deleteSizeMapping(id);
+      if (!result) return res.status(404).json({ error: 'size mapping not found' });
+      return res.json(result);
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mapping_delete_error') });
+    }
+  });
+
+  app.post('/admin/api/size-mappings/bulk-import', authMw.requireRole('admin'), async (req: Request, res: Response) => {
+    try {
+      const rows = req.body?.rows;
+      if (!Array.isArray(rows)) return res.status(400).json({ error: 'rows must be an array' });
+      const result = await catalogAdmin.bulkImportSizeMappings(rows);
+      return res.json(result);
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mapping_bulk_import_error') });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
 
   app.get('/admin/api/preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
     const supplier = typeof req.query.supplier === 'string' ? req.query.supplier : null;
@@ -1225,8 +1255,10 @@ export function createHttpServer(appContext: AppContext) {
 
   app.post('/admin/api/jobs/import-all', authMw.requireRole('admin'), async (_req: Request, res: Response) => {
     try {
-      const result = await jobRunner.runImportAll();
-      res.json(result);
+      const { jobId, bgPromise } = await jobRunner.startImportAllAsync();
+      // bgPromise handles its own errors internally; this is belt-and-suspenders.
+      bgPromise.catch(() => undefined);
+      res.json({ jobId });
     } catch (err) {
       res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'import_all_error') });
     }
@@ -1278,8 +1310,9 @@ export function createHttpServer(appContext: AppContext) {
 
   app.post('/admin/api/jobs/finalize', authMw.requireRole('admin'), async (_req: Request, res: Response) => {
     try {
-      const result = await jobRunner.runFinalize();
-      res.json(result);
+      const { jobId, bgPromise } = await jobRunner.startFinalizeAsync();
+      bgPromise.catch(() => undefined);
+      res.json({ jobId });
     } catch (err) {
       res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'finalize_error') });
     }

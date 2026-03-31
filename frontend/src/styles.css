@@ -208,6 +208,28 @@ body,
   font-size: 13px;
 }
 
+.import-progress-wrap {
+  margin-top: 10px;
+}
+.import-progress-track {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.import-progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.import-progress-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 .status-line {
   font-size: 13px;
   color: var(--muted);
@@ -836,6 +858,58 @@ pre {
   font-size: 18px;
   font-weight: 700;
 }
+
+/* ── Pipeline status panel ────────────────────────────────── */
+.pipeline-running-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pipeline-running-item {
+  border: 1px solid #d8e3f3;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7faff;
+}
+
+.pipeline-running-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pipeline-running-type {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a3a5c;
+}
+
+.pipeline-running-id {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.pipeline-running-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pipeline-running-spinner {
+  font-size: 12px;
+  color: #3b82f6;
+  margin-top: 4px;
+}
+
+.pipeline-job-id {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── end Pipeline status panel ───────────────────────────── */
 
 .mini-tabs {
   display: flex;
@@ -1509,4 +1583,225 @@ pre {
   .pricing-conditions-table {
     min-width: 860px;
   }
+}
+
+/* ── Size Mappings ──────────────────────────────────────────────────────────── */
+
+/* Root wrapper — fills the data-grid column */
+.size-mappings-root {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Main view tab strip */
+.size-view-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #dbe6f7;
+  margin-bottom: 0;
+}
+
+.size-view-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b8aaf;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.size-view-tab:hover {
+  color: #1a3558;
+}
+
+.size-view-tab.active {
+  color: #1a6ef5;
+  border-bottom-color: #1a6ef5;
+}
+
+/* Badge on the main view tab */
+.size-view-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #e8effc;
+  color: #2c5282;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.size-view-badge.warn {
+  background: #fff3cd;
+  color: #b45309;
+}
+
+.size-view-tab.active .size-view-badge {
+  background: #d6e6ff;
+  color: #1a6ef5;
+}
+
+/* Panel area below the tabs */
+.size-panel {
+  padding: 14px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Status bar at the bottom of each panel */
+.size-status-bar {
+  font-size: 12px;
+  color: #8fa8c8;
+  padding: 6px 2px 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.size-status-bar.error {
+  color: #c0392b;
+}
+
+/* Pagination inside size-status-bar */
+.size-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.size-page-indicator {
+  font-size: 12px;
+  color: #8fa8c8;
+  white-space: nowrap;
+}
+
+/* Truncation warning banner */
+.size-truncated-note {
+  font-size: 12px;
+  color: #a16704;
+  background: #fffbea;
+  border: 1px solid #f5d88a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+
+/* Empty state */
+.size-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: #8fa8c8;
+  font-size: 13px;
+}
+
+.size-section-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.size-search-input {
+  flex: 1 1 200px;
+  min-width: 140px;
+}
+
+.size-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dce9fa;
+  color: #2c5282;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tab.active .size-tab-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.size-table-wrap {
+  border: 1px solid #dbe6f7;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  margin-bottom: 6px;
+}
+
+.size-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.size-table thead th {
+  padding: 8px 12px;
+  background: #f4f8ff;
+  color: #49658d;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  border-bottom: 1px solid #dbe6f7;
+}
+
+.size-table tbody tr {
+  border-bottom: 1px solid #eef3fb;
+}
+
+.size-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.size-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.size-table td {
+  padding: 7px 12px;
+  font-size: 13px;
+  color: #1f3557;
+}
+
+.size-code {
+  display: inline-block;
+  padding: 1px 6px;
+  background: #f0f4fa;
+  border: 1px solid #d5e2f5;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #2a4a70;
+}
+
+.size-will-become {
+  font-weight: 600;
+  color: #1a3558;
+}
+
+.size-will-become-note {
+  font-size: 11px;
+  color: #8fa8c8;
+  margin-left: 3px;
 }
