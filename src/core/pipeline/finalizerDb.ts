@@ -223,6 +223,23 @@ const deleteStaleFinalRowsSql = `
   WHERE job_id IS DISTINCT FROM $1;
 `;
 
+/**
+ * Remove legacy size='' rows that coexist with a size=NULL row for the same article.
+ * This can happen when a finalize run before the NULLIF fix left size='' in products_final,
+ * and the next finalize updated both rows to the new job_id (since NULLIF('','')=NULL
+ * matches IS NOT DISTINCT FROM NULL). After this cleanup only the NULL row remains.
+ */
+const deduplicateEmptySizeRowsSql = `
+  DELETE FROM products_final pf1
+  WHERE pf1.size = ''
+    AND EXISTS (
+      SELECT 1 FROM products_final pf2
+      WHERE pf2.article = pf1.article
+        AND pf2.size IS NULL
+        AND pf2.job_id = pf1.job_id
+    );
+`;
+
 export class FinalizerDb implements Finalizer {
   constructor(
     private readonly pool: Pool,
@@ -275,6 +292,8 @@ export class FinalizerDb implements Finalizer {
       if (this.options.finalizeDeleteEnabled) {
         await client.query(deleteStaleFinalRowsSql, [jobId]);
       }
+      // Clean up legacy size='' rows that coexist with size=NULL for the same article.
+      await client.query(deduplicateEmptySizeRowsSql);
 
       const finalCountResult = await client.query(
         'SELECT COUNT(*) FROM products_final WHERE job_id = $1',
