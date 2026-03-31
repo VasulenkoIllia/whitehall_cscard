@@ -464,7 +464,7 @@ export function SizeMappingsTab({
               </p>
               {csvPreview.truncated ? (
                 <p className="muted" style={{ fontSize: '0.85em', marginBottom: 6 }}>
-                  Буде надіслано всі <strong>{csvPreview.all.length}</strong> записів на сервер — існуючі маппінги будуть пропущені автоматично.
+                  Буде надіслано всі <strong>{csvPreview.all.length}</strong> записів на сервер — існуючі маппінги будуть <strong>перезаписані</strong>.
                 </p>
               ) : (
                 <>
@@ -476,7 +476,7 @@ export function SizeMappingsTab({
                   </p>
                   <p className="muted" style={{ fontSize: '0.85em' }}>
                     Решта {csvPreview.all.length - csvPreview.matched.length} записів не мають відповідності в поточних даних і будуть пропущені.
-                    Якщо розмір вже має маппінг — він також буде пропущений.
+                    Якщо розмір вже має маппінг — він буде <strong>перезаписаний</strong>.
                   </p>
                 </>
               )}

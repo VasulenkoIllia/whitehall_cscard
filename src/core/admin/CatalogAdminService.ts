@@ -2041,7 +2041,10 @@ export class CatalogAdminService {
        SELECT trim(sf), trim(st), n
        FROM unnest($1::text[], $2::text[], $3::text[]) AS t(sf, st, n)
        WHERE trim(sf) <> ''
-       ON CONFLICT (LOWER(TRIM(size_from))) DO NOTHING
+       ON CONFLICT (LOWER(TRIM(size_from))) DO UPDATE
+         SET size_to = EXCLUDED.size_to,
+             notes   = COALESCE(EXCLUDED.notes, size_mappings.notes),
+             is_active = TRUE
        RETURNING id`,
       [sizeFromArr, sizeToArr, notesArr]
     );
