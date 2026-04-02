@@ -61,6 +61,7 @@ export function SizeMappingsTab({
   updateSizeMapping,
   deleteSizeMapping,
   bulkImportSizeMappings,
+  isReadOnly,
 }) {
   const mappingRows = Array.isArray(sizeMappings?.rows) ? sizeMappings.rows : [];
   const unmappedRows = Array.isArray(unmappedSizes?.rows) ? unmappedSizes.rows : [];
@@ -162,6 +163,7 @@ export function SizeMappingsTab({
   };
 
   const handleSave = async () => {
+    if (isReadOnly) return;
     if (!validateDraft()) return;
     const payload = {
       size_from:           String(draft.size_from).trim(),
@@ -178,6 +180,7 @@ export function SizeMappingsTab({
   };
 
   const handleDelete = async () => {
+    if (isReadOnly) return;
     if (!deleteId) return;
     await deleteSizeMapping(deleteId);
     setDeleteId(null);
@@ -320,6 +323,7 @@ export function SizeMappingsTab({
                         <td style={{ textAlign: 'right' }}>
                           <button
                             className="btn btn-sm primary"
+                            disabled={isReadOnly}
                             onClick={() => {
                               openCreate({ size_from: row.raw_size, size_to: row.will_become });
                               setActiveView('mappings');
@@ -373,8 +377,8 @@ export function SizeMappingsTab({
             </div>
             <div className="actions" style={{ flexWrap: 'nowrap' }}>
               <button className="btn" onClick={refreshSizeMappings}>Оновити</button>
-              <button className="btn" onClick={() => fileInputRef.current?.click()}>Імпорт CSV</button>
-              <button className="btn primary" onClick={() => openCreate()}>+ Новий</button>
+              <button className="btn" disabled={isReadOnly} onClick={() => fileInputRef.current?.click()}>Імпорт CSV</button>
+              <button className="btn primary" disabled={isReadOnly} onClick={() => openCreate()}>+ Новий</button>
             </div>
           </div>
 
@@ -384,6 +388,7 @@ export function SizeMappingsTab({
             type="file"
             accept=".csv,text/csv"
             style={{ display: 'none' }}
+            disabled={isReadOnly}
             onChange={handleFileChange}
           />
 
@@ -426,8 +431,8 @@ export function SizeMappingsTab({
                         </td>
                         <td>
                           <div className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                            <button className="btn btn-sm" onClick={() => openEdit(row)}>Ред.</button>
-                            <button className="btn btn-sm danger" onClick={() => setDeleteId(row.id)}>×</button>
+                            <button className="btn btn-sm" disabled={isReadOnly} onClick={() => openEdit(row)}>Ред.</button>
+                            <button className="btn btn-sm danger" disabled={isReadOnly} onClick={() => setDeleteId(row.id)}>×</button>
                           </div>
                         </td>
                       </tr>
@@ -521,7 +526,7 @@ export function SizeMappingsTab({
               <div className="actions" style={{ marginTop: 8 }}>
                 <button
                   className="btn primary"
-                  disabled={csvImporting}
+                  disabled={isReadOnly || csvImporting}
                   onClick={handleCsvConfirm}
                 >
                   {csvImporting ? 'Імпортую...' : `Імпортувати ${csvPreview.toImport.length} маппінгів`}
@@ -602,7 +607,7 @@ export function SizeMappingsTab({
             )}
 
             <div className="actions" style={{ marginTop: 14 }}>
-              <button className="btn primary" onClick={handleSave}>
+              <button className="btn primary" disabled={isReadOnly} onClick={handleSave}>
                 {draftMode === 'edit' ? 'Зберегти' : 'Створити'}
               </button>
             </div>
@@ -619,7 +624,7 @@ export function SizeMappingsTab({
               Розмір більше не нормалізуватиметься і перейде в автоматичний UPPER.
             </p>
             <div className="actions">
-              <button className="btn danger" autoFocus onClick={handleDelete}>
+              <button className="btn danger" autoFocus disabled={isReadOnly} onClick={handleDelete}>
                 Так, видалити
               </button>
               <button className="btn" onClick={() => setDeleteId(null)}>Скасувати</button>

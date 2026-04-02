@@ -2217,6 +2217,7 @@ export default function App() {
           storeMirrorState={storeMirrorState}
           storePreviewState={storePreviewState}
           suppliers={suppliers}
+          isReadOnly={isReadOnly}
           sizeMappings={sizeMappings}
           unmappedSizes={unmappedSizes}
           sizeMappingStatus={sizeMappingStatus}

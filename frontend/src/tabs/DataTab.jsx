@@ -164,6 +164,7 @@ export function DataTab({
   storeMirrorState,
   storePreviewState,
   suppliers,
+  isReadOnly,
   // size mappings
   sizeMappings,
   unmappedSizes,
@@ -262,6 +263,7 @@ export function DataTab({
           updateSizeMapping={updateSizeMapping}
           deleteSizeMapping={deleteSizeMapping}
           bulkImportSizeMappings={bulkImportSizeMappings}
+          isReadOnly={isReadOnly}
         />
       </div>
     );
@@ -404,6 +406,21 @@ export function DataTab({
             const totalPages = total > 0 ? Math.ceil(total / limit) : 1;
             const isFirst = offset === 0;
             const isLast = total > 0 ? page >= totalPages : false;
+
+            const exportHref = (() => {
+              if (!currentConfig.exportHref) return null;
+              const params = new URLSearchParams();
+              if (dataFilters.search) params.set('search', dataFilters.search);
+              if (currentConfig.supportsSupplierFilter && dataFilters.supplierId) params.set('supplierId', dataFilters.supplierId);
+              if (currentConfig.supportsMissingOnly && dataFilters.missingOnly) params.set('missingOnly', '1');
+              if (currentConfig.supportsMergedSort && dataFilters.mergedSort) params.set('sort', dataFilters.mergedSort);
+              if (currentConfig.supportsFinalSort && dataFilters.finalSort) params.set('sort', dataFilters.finalSort);
+              // job IDs are positive integers (>0), so truthiness check is safe
+              if (currentState.jobId) params.set('jobId', String(currentState.jobId));
+              const qs = params.toString();
+              return qs ? `${currentConfig.exportHref}&${qs}` : currentConfig.exportHref;
+            })();
+
             return (
               <>
                 <button className="btn primary" onClick={runLoadActive}>
@@ -411,6 +428,9 @@ export function DataTab({
                 </button>
                 <button className="btn" onClick={() => shiftDataOffset(-1)} disabled={isFirst}>← Назад</button>
                 <button className="btn" onClick={() => shiftDataOffset(1)} disabled={isLast}>Вперед →</button>
+                {exportHref ? (
+                  <a className="btn" href={exportHref} download>⬇ Скачати CSV</a>
+                ) : null}
                 <span className="chip">сторінка {page} з {totalPages}</span>
                 <span className="chip">всього: {total}</span>
               </>

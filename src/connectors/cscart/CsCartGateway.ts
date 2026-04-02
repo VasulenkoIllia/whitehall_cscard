@@ -110,12 +110,18 @@ export class CsCartGateway {
     }
   }
 
+  private normalizeAmount(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 0;
+  }
+
   private async fetchProductIndexByCode(): Promise<
     Map<
       string,
       {
         productId: string;
         status: 'A' | 'H';
+        amount: number;
         price: number;
         parentProductId: string | null;
       }
@@ -126,6 +132,7 @@ export class CsCartGateway {
       {
         productId: string;
         status: 'A' | 'H';
+        amount: number;
         price: number;
         parentProductId: string | null;
       }
@@ -146,6 +153,7 @@ export class CsCartGateway {
         byCode.set(code, {
           productId: String(product.product_id),
           status: this.normalizeStatus(product.status),
+          amount: this.normalizeAmount(product.amount),
           price: this.normalizePrice(product.price),
           parentProductId: this.normalizeParentProductId(product.parent_product_id)
         });
@@ -163,10 +171,13 @@ export class CsCartGateway {
   }
 
   private isSameProductState(
-    current: { status: 'A' | 'H'; price: number; parentProductId: string | null },
-    next: { status: 'A' | 'H'; price: number; parentProductId: string | null }
+    current: { status: 'A' | 'H'; amount: number; price: number; parentProductId: string | null },
+    next: { status: 'A' | 'H'; amount: number; price: number; parentProductId: string | null }
   ): boolean {
     if (current.status !== next.status) {
+      return false;
+    }
+    if (current.amount !== next.amount) {
       return false;
     }
     if (Math.abs(current.price - next.price) > 0.01) {
@@ -349,14 +360,17 @@ export class CsCartGateway {
         const productCode = this.normalizeProductCode(row.productCode);
         const parentCode = this.normalizeProductCode(row.parentProductCode);
         const parentFromIndex = parentCode ? indexByCode.get(parentCode) || null : null;
+        const desiredAmount = row.visibility ? 1 : 0;
         const desiredState = {
           status: row.visibility ? 'A' as const : 'H' as const,
+          amount: desiredAmount,
           price: this.normalizePrice(row.price),
           parentProductId: parentFromIndex ? parentFromIndex.productId : null
         };
         const payload = {
           product_code: productCode,
           status: desiredState.status,
+          amount: desiredAmount,
           price: desiredState.price,
           parent_product_id: desiredState.parentProductId || 0
         };
@@ -375,6 +389,7 @@ export class CsCartGateway {
             indexByCode.set(productCode, {
               productId: current.productId,
               status: desiredState.status,
+              amount: desiredState.amount,
               price: desiredState.price,
               parentProductId: desiredState.parentProductId
             });
@@ -402,6 +417,7 @@ export class CsCartGateway {
             indexByCode.set(productCode, {
               productId: createdProductId,
               status: desiredState.status,
+              amount: desiredState.amount,
               price: desiredState.price,
               parentProductId: desiredState.parentProductId
             });
