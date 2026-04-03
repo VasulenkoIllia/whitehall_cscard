@@ -149,7 +149,7 @@ export function CronSettingsTab({
   const [hourPickerByTask, setHourPickerByTask] = useState({});
 
   const visibleTasks = useMemo(
-    () => cronSettingsDraft.filter((t) => VISIBLE_TASKS.includes(t.name)),
+    () => VISIBLE_TASKS.map((name) => cronSettingsDraft.find((t) => t.name === name)).filter(Boolean),
     [cronSettingsDraft]
   );
 
