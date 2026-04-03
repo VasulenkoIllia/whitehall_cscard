@@ -418,7 +418,9 @@ export function DataTab({
               // job IDs are positive integers (>0), so truthiness check is safe
               if (currentState.jobId) params.set('jobId', String(currentState.jobId));
               const qs = params.toString();
-              return qs ? `${currentConfig.exportHref}&${qs}` : currentConfig.exportHref;
+              if (!qs) return currentConfig.exportHref;
+              const sep = currentConfig.exportHref.includes('?') ? '&' : '?';
+              return `${currentConfig.exportHref}${sep}${qs}`;
             })();
 
             return (
