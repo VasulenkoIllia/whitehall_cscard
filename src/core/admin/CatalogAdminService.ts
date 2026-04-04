@@ -302,8 +302,8 @@ function normalizeSort(sort: string | null, fallback: string): string {
   return value || fallback;
 }
 
-function normalizePagination(limit: number, offset: number): { limit: number; offset: number } {
-  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.trunc(limit))) : 100;
+function normalizePagination(limit: number, offset: number, maxLimit = 1000): { limit: number; offset: number } {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(maxLimit, Math.trunc(limit))) : 100;
   const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
   return {
     limit: safeLimit,
@@ -1537,7 +1537,7 @@ export class CatalogAdminService {
   async listMergedPreview(
     options: MergedPreviewOptions
   ): Promise<{ jobId: number | null; total: number; rows: Record<string, unknown>[] }> {
-    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const { limit, offset } = normalizePagination(options.limit, options.offset, 5000);
     const search = String(options.search || '').trim();
     let jobId = options.jobId && Number.isFinite(options.jobId) ? Math.trunc(options.jobId) : null;
     if (!jobId) {
@@ -1588,7 +1588,7 @@ export class CatalogAdminService {
   async listFinalPreview(
     options: FinalPreviewOptions
   ): Promise<{ jobId: number | null; total: number; rows: Record<string, unknown>[] }> {
-    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const { limit, offset } = normalizePagination(options.limit, options.offset, 5000);
     const search = String(options.search || '').trim();
     let jobId = options.jobId && Number.isFinite(options.jobId) ? Math.trunc(options.jobId) : null;
     if (!jobId) {
@@ -1653,7 +1653,7 @@ export class CatalogAdminService {
   async listComparePreview(
     options: ComparePreviewOptions
   ): Promise<{ total: number; rows: Record<string, unknown>[] }> {
-    const { limit, offset } = normalizePagination(options.limit, options.offset);
+    const { limit, offset } = normalizePagination(options.limit, options.offset, 5000);
     const search = String(options.search || '').trim();
     const supplierId =
       options.supplierId && Number.isFinite(options.supplierId) && options.supplierId > 0
