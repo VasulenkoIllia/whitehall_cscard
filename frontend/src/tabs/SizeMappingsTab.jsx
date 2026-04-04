@@ -275,6 +275,7 @@ export function SizeMappingsTab({
               ))}
             </div>
             <button className="btn" onClick={refreshUnmappedSizes}>Оновити</button>
+            <a className="btn" href="/admin/api/size-mappings/unmapped-export" download>⬇ Скачати CSV</a>
           </div>
 
           {unmappedTruncated && !unmappedSizes?.status && (
@@ -377,6 +378,7 @@ export function SizeMappingsTab({
             </div>
             <div className="actions" style={{ flexWrap: 'nowrap' }}>
               <button className="btn" onClick={refreshSizeMappings}>Оновити</button>
+              <a className="btn" href="/admin/api/size-mappings/export" download>⬇ Скачати CSV</a>
               <button className="btn" disabled={isReadOnly} onClick={() => fileInputRef.current?.click()}>Імпорт CSV</button>
               <button className="btn primary" disabled={isReadOnly} onClick={() => openCreate()}>+ Новий</button>
             </div>

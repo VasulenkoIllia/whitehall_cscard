@@ -688,6 +688,51 @@ export function createHttpServer(appContext: AppContext) {
     }
   });
 
+  app.get('/admin/api/size-mappings/export', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      const pageSize = 5000;
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      let offset = 0;
+
+      startCsvDownload(res, 'size_mappings');
+      writeCsvRow(res, ['size_from', 'size_to', 'notes', 'is_active', 'created_at']);
+
+      while (true) {
+        // eslint-disable-next-line no-await-in-loop
+        const chunk = await catalogAdmin.listSizeMappings({ search, limit: pageSize, offset, maxLimit: pageSize });
+        for (let index = 0; index < chunk.rows.length; index += 1) {
+          const row = chunk.rows[index] as Record<string, unknown>;
+          writeCsvRow(res, [row.size_from, row.size_to, row.notes, row.is_active, row.created_at]);
+        }
+        if (chunk.rows.length < pageSize) {
+          break;
+        }
+        offset += pageSize;
+      }
+
+      res.end();
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mappings_export_error') });
+    }
+  });
+
+  app.get('/admin/api/size-mappings/unmapped-export', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
+    try {
+      startCsvDownload(res, 'unmapped_sizes');
+      writeCsvRow(res, ['raw_size', 'will_become', 'product_count', 'supplier_count']);
+
+      const result = await catalogAdmin.listUnmappedSizes(100000, 100000);
+      for (let index = 0; index < result.rows.length; index += 1) {
+        const row = result.rows[index];
+        writeCsvRow(res, [row.raw_size, row.will_become, row.product_count, row.supplier_count]);
+      }
+
+      res.end();
+    } catch (err) {
+      return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'unmapped_sizes_export_error') });
+    }
+  });
+
   // ────────────────────────────────────────────────────────────────────────────
 
   app.get('/admin/api/preview', authMw.requireRole('viewer'), async (req: Request, res: Response) => {

@@ -22,6 +22,7 @@ type SizeMappingListOptions = {
   search?: string;
   limit?: number;
   offset?: number;
+  maxLimit?: number;
 };
 
 type SupplierUpdatePayload = {
@@ -1894,7 +1895,7 @@ export class CatalogAdminService {
     total: number;
     rows: Record<string, unknown>[];
   }> {
-    const limit = Math.min(Math.max(1, Math.trunc(Number(options.limit) || 200)), 1000);
+    const limit = Math.min(Math.max(1, Math.trunc(Number(options.limit) || 200)), options.maxLimit ?? 1000);
     const offset = Math.max(0, Math.trunc(Number(options.offset) || 0));
     const values: unknown[] = [];
     const whereParts: string[] = [];
@@ -2052,12 +2053,12 @@ export class CatalogAdminService {
     return { imported, skipped: sizeFromArr.length - imported };
   }
 
-  async listUnmappedSizes(limit = 200): Promise<{
+  async listUnmappedSizes(limit = 200, maxLimit = 2000): Promise<{
     total: number;
     fetchedCount: number;
     rows: { raw_size: string; will_become: string; product_count: number; supplier_count: number }[];
   }> {
-    const safeLimit = Math.min(Math.max(1, Math.trunc(Number(limit) || 200)), 2000);
+    const safeLimit = Math.min(Math.max(1, Math.trunc(Number(limit) || 200)), maxLimit);
     const result = await this.pool.query(
       `WITH unmapped AS (
          SELECT

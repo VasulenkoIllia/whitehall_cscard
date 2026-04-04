@@ -1628,6 +1628,28 @@ pre {
   border-bottom-color: #1a6ef5;
 }
 
+/* Badge on the .tab pill (e.g. "Розміри 3973") */
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.3);
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.tab:not(.active) .tab-badge {
+  background: #e8effc;
+  color: #2c5282;
+}
+
 /* Badge on the main view tab */
 .size-view-badge {
   display: inline-flex;
