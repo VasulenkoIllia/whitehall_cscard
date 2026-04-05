@@ -4,7 +4,9 @@
 - Активний сценарій міграції: тільки `CS-Cart`.
 - `Horoshop` тимчасово винесено за межі поточного етапу.
 - Frontend перенесення на React закрито по плану (Phase 5).
-- Проект задеплоєний на `https://whitehallshop.workflo.space/admin` (Docker + Traefik).
+- **PROD:** `https://whitehallshop.workflo.space/admin` — гілка `main`, папка `/var/www/projects/whitehall_cscard`
+- **TEST:** `https://whitehallshoptest.workflo.space/admin` — гілка `develop`, папка `/var/www/projects/whitehall_cscard_test`
+- Деплой та workflow описані в [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md).
 
 ## UI (React-адмінка)
 - `Огляд` — системні KPI/readiness + JSON snapshot + **Активні джоби** (progress bar для `import_all`) + **Останні пайплайни** (тип / статус / тривалість / час).
