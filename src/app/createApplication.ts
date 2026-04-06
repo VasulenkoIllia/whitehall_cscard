@@ -249,6 +249,8 @@ export interface Application {
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
   auth: AuthService;
+  /** Resolves when orphaned-job cleanup has completed. Await before starting the scheduler. */
+  startupCleanup: Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -257,8 +259,9 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const pool = createPgPoolOrThrow(config.base.databaseUrl);
 
   // Cleanup orphaned running jobs from a previous crash or SIGKILL.
-  // Fire-and-forget: startup must not block even if DB is briefly unavailable.
-  void pool
+  // Stored as a promise so index.ts can await it before starting the scheduler,
+  // preventing a race where the scheduler sees stale 'running' jobs and throws 409.
+  const startupCleanup: Promise<void> = pool
     .query(`
       UPDATE jobs
       SET status      = 'failed',
@@ -267,6 +270,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
       WHERE status = 'running'
     `)
     .then(() => pool.query(`DELETE FROM job_locks`))
+    .then(() => undefined)
     .catch(() => undefined);
 
   const telegramAlertService = createTelegramAlertServiceFromEnv(env);
@@ -356,6 +360,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     cleanupService,
     storeMirrorService,
     auth,
+    startupCleanup,
     close: async (): Promise<void> => {
       scheduler.stop();
       // Mark any still-running jobs as failed so they don't appear stuck after restart.

@@ -47,6 +47,7 @@ async function main(): Promise<void> {
       server.keepAliveTimeout = 30 * 60 * 1000; // 30 min keep-alive
     }
     void (async () => {
+      await application.startupCleanup;
       await application.schedulerSettingsService.initialize();
       application.scheduler.start();
       // eslint-disable-next-line no-console
