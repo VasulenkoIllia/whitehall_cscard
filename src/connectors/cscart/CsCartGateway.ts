@@ -271,7 +271,15 @@ export class CsCartGateway {
     let skipped = 0;
     const warnings: string[] = [];
 
-    const indexByCode = await this.fetchProductIndexByCode();
+    // Build fallback index only when rows were NOT enriched by filterCsCartDelta
+    // (i.e. mirror was stale/empty and productId was not pre-resolved).
+    // In the normal update_pipeline flow (fresh mirror), all rows have productId set
+    // and this expensive API fetch is skipped entirely.
+    const needsFallback = rows.some(
+      (r) => this.normalizeProductCode(r.productCode) && r.productId === undefined
+    );
+    const indexByCode = needsFallback ? await this.fetchProductIndexByCode() : null;
+
     let cursor = 0;
     const totalRows = rows.length;
     const totalValidRows = rows.reduce(
@@ -358,40 +366,51 @@ export class CsCartGateway {
           break;
         }
         const productCode = this.normalizeProductCode(row.productCode);
-        const parentCode = this.normalizeProductCode(row.parentProductCode);
-        const parentFromIndex = parentCode ? indexByCode.get(parentCode) || null : null;
         const desiredAmount = row.visibility ? 1 : 0;
-        const desiredState = {
-          status: row.visibility ? 'A' as const : 'H' as const,
-          amount: desiredAmount,
-          price: this.normalizePrice(row.price),
-          parentProductId: parentFromIndex ? parentFromIndex.productId : null
-        };
-        const payload = {
-          product_code: productCode,
-          status: desiredState.status,
-          amount: desiredAmount,
-          price: desiredState.price,
-          parent_product_id: desiredState.parentProductId || 0
-        };
+        const desiredStatus = row.visibility ? 'A' as const : 'H' as const;
+        const desiredPrice = this.normalizePrice(row.price);
 
-        try {
-          const current = indexByCode.get(productCode) || null;
-          if (current) {
-            if (this.isSameProductState(current, desiredState)) {
+        // Resolve productId and parentProductId.
+        // Prefer pre-resolved values from store_mirror (row.productId !== undefined).
+        // Fall back to the API index only when mirror was stale/empty.
+        let productId: string | null;
+        let parentProductId: string | null;
+
+        if (row.productId !== undefined) {
+          // Normal path: enriched by filterCsCartDelta (fresh mirror)
+          productId = row.productId || null;
+          parentProductId = row.resolvedParentProductId ?? null;
+        } else {
+          // Fallback path: mirror was stale, use API index
+          const fromIndex = indexByCode?.get(productCode) || null;
+          const parentCode = this.normalizeProductCode(row.parentProductCode);
+          const parentFromIndex = parentCode && indexByCode ? indexByCode.get(parentCode) || null : null;
+          productId = fromIndex?.productId || null;
+          parentProductId = parentFromIndex?.productId || null;
+
+          // Second-level delta check (filterCsCartDelta was bypassed in stale mirror case)
+          if (fromIndex) {
+            const desiredState = { status: desiredStatus, amount: desiredAmount, price: desiredPrice, parentProductId };
+            if (this.isSameProductState(fromIndex, desiredState)) {
               skipped += 1;
               continue;
             }
-            await this.request(`/api/products/${current.productId}`, {
+          }
+        }
+
+        const payload = {
+          product_code: productCode,
+          status: desiredStatus,
+          amount: desiredAmount,
+          price: desiredPrice,
+          parent_product_id: parentProductId || 0
+        };
+
+        try {
+          if (productId) {
+            await this.request(`/api/products/${productId}`, {
               method: 'PUT',
               body: JSON.stringify(payload)
-            });
-            indexByCode.set(productCode, {
-              productId: current.productId,
-              status: desiredState.status,
-              amount: desiredState.amount,
-              price: desiredState.price,
-              parentProductId: desiredState.parentProductId
             });
             imported += 1;
             continue;
@@ -413,13 +432,13 @@ export class CsCartGateway {
           const createdProductId = String(
             created?.product_id || created?.response?.product_id || ''
           ).trim();
-          if (createdProductId) {
+          if (createdProductId && indexByCode) {
             indexByCode.set(productCode, {
               productId: createdProductId,
-              status: desiredState.status,
-              amount: desiredState.amount,
-              price: desiredState.price,
-              parentProductId: desiredState.parentProductId
+              status: desiredStatus,
+              amount: desiredAmount,
+              price: desiredPrice,
+              parentProductId
             });
           }
           imported += 1;

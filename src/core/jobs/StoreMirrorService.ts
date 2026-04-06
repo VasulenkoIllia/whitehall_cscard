@@ -13,6 +13,9 @@ export interface CsCartDeltaInputRow {
   parentProductCode: string | null;
   visibility: boolean;
   price: number | null;
+  // Pre-resolved from store_mirror by filterCsCartDelta (undefined = not enriched / mirror was stale)
+  productId?: string | null;
+  resolvedParentProductId?: string | null;
 }
 
 export interface CsCartDeltaSummary {
@@ -62,6 +65,7 @@ interface StoreMirrorRow {
   parentArticle: string | null;
   visibility: boolean;
   price: number | null;
+  amount: number;
   raw: unknown;
   seenAt: string;
 }
@@ -72,6 +76,7 @@ interface CsCartMirrorStateRow {
   article: string;
   visibility: boolean;
   price: string | number | null;
+  amount: string | number | null;
   parentProductId: string | null;
   productId: string | null;
 }
@@ -101,11 +106,21 @@ function normalizeParentProductId(value: unknown): string | null {
   return normalized;
 }
 
+function normalizeAmount(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 0;
+}
+
 function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): StoreMirrorRow | null {
   const article = normalizeArticle(row.article);
   if (!article) {
     return null;
   }
+  const rawObj = row.raw as Record<string, unknown> | null;
+  const amount =
+    rawObj && typeof rawObj === 'object' && !Array.isArray(rawObj)
+      ? normalizeAmount(rawObj.amount)
+      : 0;
   return {
     store,
     article,
@@ -113,6 +128,7 @@ function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): Store
     parentArticle: row.parentArticle || null,
     visibility: row.visibility === true,
     price: normalizePrice(row.price),
+    amount,
     raw: row.raw ?? null,
     seenAt
   };
@@ -204,6 +220,7 @@ export class StoreMirrorService {
          article,
          visibility,
          price,
+         amount,
          COALESCE(NULLIF(raw->>'parent_product_id', ''), NULLIF(parent_article, '')) AS "parentProductId",
          NULLIF(raw->>'product_id', '') AS "productId"
        FROM store_mirror
@@ -215,6 +232,7 @@ export class StoreMirrorService {
       {
         visibility: boolean;
         price: number;
+        amount: number;
         parentProductId: string | null;
         productId: string | null;
       }
@@ -228,6 +246,7 @@ export class StoreMirrorService {
       stateByCode.set(code, {
         visibility: row.visibility === true,
         price: Number(row.price || 0) || 0,
+        amount: normalizeAmount(row.amount),
         parentProductId: normalizeParentProductId(row.parentProductId),
         productId: normalizeParentProductId(row.productId)
       });
@@ -242,19 +261,20 @@ export class StoreMirrorService {
       const row = rows[index];
       const code = normalizeArticle(row.productCode);
       if (!code) {
-        changedRows.push(row);
+        changedRows.push({ ...row, productId: null, resolvedParentProductId: null });
         continue;
       }
 
       const current = stateByCode.get(code);
       if (!current) {
         missingInMirror += 1;
-        changedRows.push(row);
+        changedRows.push({ ...row, productId: null, resolvedParentProductId: null });
         continue;
       }
 
       const desiredVisibility = row.visibility === true;
       const desiredPrice = Number(row.price || 0) || 0;
+      const desiredAmount = desiredVisibility ? 1 : 0;
       const parentCode = normalizeArticle(row.parentProductCode);
 
       let parentComparable = true;
@@ -271,14 +291,19 @@ export class StoreMirrorService {
 
       const priceSame = Math.abs(current.price - desiredPrice) <= 0.01;
       const visibilitySame = current.visibility === desiredVisibility;
+      const amountSame = current.amount === desiredAmount;
       const parentSame = !parentComparable || current.parentProductId === desiredParentProductId;
 
-      if (visibilitySame && priceSame && parentComparable && parentSame) {
+      if (visibilitySame && priceSame && amountSame && parentComparable && parentSame) {
         skippedUnchanged += 1;
         continue;
       }
 
-      changedRows.push(row);
+      changedRows.push({
+        ...row,
+        productId: current.productId,
+        resolvedParentProductId: desiredParentProductId
+      });
     }
 
     return {
@@ -507,6 +532,7 @@ export class StoreMirrorService {
       visibility: boolean;
       price: number | null;
       parentProductId: string | null;
+      productId: string | null;
     }> = [];
 
     for (let index = 0; index < mirrorResult.rows.length; index += 1) {
@@ -523,7 +549,8 @@ export class StoreMirrorService {
         article,
         visibility: row.visibility === true,
         price: normalizePrice(row.price),
-        parentProductId: normalizeParentProductId(row.parentProductId)
+        parentProductId: normalizeParentProductId(row.parentProductId),
+        productId
       });
     }
 
@@ -551,7 +578,9 @@ export class StoreMirrorService {
         productCode: row.article,
         parentProductCode,
         visibility: false,
-        price: row.price
+        price: row.price,
+        productId: row.productId,
+        resolvedParentProductId: row.parentProductId
       });
     }
 
@@ -583,7 +612,7 @@ export class StoreMirrorService {
 
     const values: Array<string | number | boolean | null> = [];
     const placeholders = dedupedRows.map((row, index) => {
-      const base = index * 8;
+      const base = index * 9;
       values.push(
         row.store,
         row.article,
@@ -591,21 +620,23 @@ export class StoreMirrorService {
         row.parentArticle,
         row.visibility,
         row.price,
+        row.amount,
         JSON.stringify(row.raw),
         row.seenAt
       );
-      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`;
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`;
     });
 
     await this.pool.query(
       `INSERT INTO store_mirror
-         (store, article, supplier, parent_article, visibility, price, raw, seen_at)
+         (store, article, supplier, parent_article, visibility, price, amount, raw, seen_at)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (store, article) DO UPDATE
          SET supplier = EXCLUDED.supplier,
              parent_article = EXCLUDED.parent_article,
              visibility = EXCLUDED.visibility,
              price = EXCLUDED.price,
+             amount = EXCLUDED.amount,
              raw = EXCLUDED.raw,
              synced_at = NOW(),
              seen_at = EXCLUDED.seen_at`,

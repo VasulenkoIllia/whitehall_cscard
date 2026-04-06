@@ -7,6 +7,9 @@ export interface CsCartImportRow {
   parentProductCode: string | null;
   visibility: boolean;
   price: number | null;
+  // Pre-resolved from store_mirror (undefined = mirror was stale, use fallback index)
+  productId?: string | null;
+  resolvedParentProductId?: string | null;
 }
 
 export interface CsCartGatewayClient {
