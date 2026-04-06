@@ -398,13 +398,18 @@ export class CsCartGateway {
           }
         }
 
-        const payload = {
+        // Only include parent_product_id when we have an explicit value to set.
+        // Sending parent_product_id: 0 for a CS-Cart variant product causes CS-Cart
+        // to reject or silently ignore the entire PUT (including the amount update).
+        const payload: Record<string, unknown> = {
           product_code: productCode,
           status: desiredStatus,
           amount: desiredAmount,
           price: desiredPrice,
-          parent_product_id: parentProductId || 0
         };
+        if (parentProductId !== null) {
+          payload.parent_product_id = parentProductId;
+        }
 
         try {
           if (productId) {

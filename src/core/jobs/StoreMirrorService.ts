@@ -292,7 +292,10 @@ export class StoreMirrorService {
       const priceSame = Math.abs(current.price - desiredPrice) <= 0.01;
       const visibilitySame = current.visibility === desiredVisibility;
       const amountSame = current.amount === desiredAmount;
-      const parentSame = !parentComparable || current.parentProductId === desiredParentProductId;
+      // If parentCode is empty we have no desired parent — skip the comparison entirely.
+      // We do not manage parent-child relationships; sending parent_product_id: 0
+      // for CS-Cart variant products breaks the PUT request.
+      const parentSame = !parentComparable || !parentCode || current.parentProductId === desiredParentProductId;
 
       if (visibilitySame && priceSame && amountSame && parentComparable && parentSame) {
         skippedUnchanged += 1;
