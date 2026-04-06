@@ -48,6 +48,7 @@ export class ExportPreviewDb implements ExportPreviewProvider {
       `SELECT
          pf.article,
          pf.size,
+         pf.quantity,
          pf.price_final,
          pf.supplier_id,
          sp.name AS supplier_name,
@@ -60,12 +61,22 @@ export class ExportPreviewDb implements ExportPreviewProvider {
     );
 
     const rows = result.rows.map((row) => {
-      const parentArticle = deriveParentArticle(row.article, row.size);
+      // If products_final stores article ("GY6433") and size ("37.5") separately,
+      // combine them into the full SKU that CS-Cart knows ("GY6433-37.5").
+      // Products where the article already contains the size (e.g. "NK1234-37")
+      // have size=null and are kept as-is.
+      const sizeValue = String(row.size || '').trim();
+      const fullArticle = sizeValue ? `${row.article}-${sizeValue}` : row.article;
+      // Do not attempt to derive a parent article from a size-suffixed full article —
+      // CS-Cart parent-child relationships are read from store_mirror, not products_final.
+      const parentArticle = sizeValue ? null : deriveParentArticle(row.article, row.size);
+      const quantity = Number(row.quantity || 0);
       return {
-        article: row.article,
+        article: fullArticle,
         size: row.size,
+        quantity,
         priceFinal: row.price_final === null ? null : Number(row.price_final),
-        visibility: true,
+        visibility: quantity > 0,
         parentArticle,
         supplier: row.supplier_name || null,
         supplierSkuPrefix: row.supplier_sku_prefix || null

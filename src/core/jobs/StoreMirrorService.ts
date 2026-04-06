@@ -13,6 +13,7 @@ export interface CsCartDeltaInputRow {
   parentProductCode: string | null;
   visibility: boolean;
   price: number | null;
+  amount: number;
   // Pre-resolved from store_mirror by filterCsCartDelta (undefined = not enriched / mirror was stale)
   productId?: string | null;
   resolvedParentProductId?: string | null;
@@ -274,7 +275,9 @@ export class StoreMirrorService {
 
       const desiredVisibility = row.visibility === true;
       const desiredPrice = Number(row.price || 0) || 0;
-      const desiredAmount = desiredVisibility ? 1 : 0;
+      // Use the actual stock quantity from products_final.
+      // If the product is hidden (visibility=false) the amount is always 0.
+      const desiredAmount = desiredVisibility ? Math.max(0, Math.trunc(Number(row.amount) || 0)) : 0;
       const parentCode = normalizeArticle(row.parentProductCode);
 
       let parentComparable = true;
@@ -580,6 +583,7 @@ export class StoreMirrorService {
         parentProductCode,
         visibility: false,
         price: row.price,
+        amount: 0,
         productId: row.productId,
         resolvedParentProductId: row.parentProductId
       });

@@ -108,7 +108,8 @@ function buildImportRows(
     supplier: null,
     parentProductCode: item.parentProductCode,
     visibility: item.originalVisibility,
-    price: mode === 'apply_plus_delta' ? item.newPrice : item.originalPrice
+    price: mode === 'apply_plus_delta' ? item.newPrice : item.originalPrice,
+    amount: item.originalVisibility ? 1 : 0
   }));
 }
 

@@ -366,7 +366,9 @@ export class CsCartGateway {
           break;
         }
         const productCode = this.normalizeProductCode(row.productCode);
-        const desiredAmount = row.visibility ? 1 : 0;
+        // Use the actual stock quantity from products_final.
+        // Hidden products always get amount=0 regardless of the stored quantity.
+        const desiredAmount = row.visibility ? this.normalizeAmount(row.amount) : 0;
         const desiredStatus = row.visibility ? 'A' as const : 'H' as const;
         const desiredPrice = this.normalizePrice(row.price);
 

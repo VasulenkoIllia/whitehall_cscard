@@ -7,6 +7,7 @@ export interface CsCartImportRow {
   parentProductCode: string | null;
   visibility: boolean;
   price: number | null;
+  amount: number;
   // Pre-resolved from store_mirror (undefined = mirror was stale, use fallback index)
   productId?: string | null;
   resolvedParentProductId?: string | null;
@@ -51,7 +52,8 @@ export class CsCartConnector implements StoreConnector<CsCartImportRow> {
         supplier: row.supplier,
         parentProductCode: row.parentArticle,
         visibility: row.visibility,
-        price: row.priceFinal
+        price: row.priceFinal,
+        amount: row.quantity
       });
     }
 

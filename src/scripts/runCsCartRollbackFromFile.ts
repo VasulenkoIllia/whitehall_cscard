@@ -45,7 +45,8 @@ function toRollbackRows(rows: RollbackFileRow[]): CsCartImportRow[] {
           ? null
           : String(row.parentProductCode).trim() || null,
       visibility: row.originalVisibility === true,
-      price: Number.isFinite(Number(row.originalPrice)) ? Number(row.originalPrice) : 0
+      price: Number.isFinite(Number(row.originalPrice)) ? Number(row.originalPrice) : 0,
+      amount: row.originalVisibility === true ? 1 : 0
     }))
     .filter((row) => row.productCode.length > 0);
 }

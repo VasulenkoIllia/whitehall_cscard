@@ -3,6 +3,7 @@ import type { ActiveStore } from '../config/types';
 export interface ExportPreviewRow {
   article: string;
   size: string | null;
+  quantity: number;
   priceFinal: number | null;
   visibility: boolean;
   parentArticle: string | null;
