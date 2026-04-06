@@ -101,6 +101,7 @@
 | 020-028 | ... | Users, partitions, indexes, mirror, cron, mappings, markup, comment, sku_prefix |
 | 029 | `029_add_size_mappings.sql` | Таблиця `size_mappings` + CI unique index + CHECK constraint |
 | 030 | `030_allow_empty_size_to.sql` | Знімає CHECK constraint — дозволяє `size_to = ''` |
+| 031 | `031_add_amount_to_store_mirror.sql` | Додає колонку `amount INTEGER NOT NULL DEFAULT 0` до `store_mirror` |
 
 ### Config snapshot (перенос даних між середовищами)
 - `npm run export:config` → `output/prod_config_snapshot.json` (постачальники, джерела, маппінги колонок, націнки, розміри).
@@ -121,19 +122,39 @@
 - Preview з `products_final` з optional supplier-фільтром.
 
 ## CS-Cart import
-- Mirror-index каталогу перед імпортом (`product_code → product_id/state/price/parent`).
 - Scope: тільки SKU з feature `Оновлення товару API` = `"Y"` (feature_id=564).
 - Optimizer (3 рівні): feature scope → deactivate missing → delta filter.
 - Auto-hidden missing SKU при full import (без supplier-фільтра).
-- `parent_article` — метадані для групування варіантів, **не блокує** товар від відправки (відмінність від старого Horoshop-коду де `realParentArticles` блокував товар).
+- `parent_article` — метадані для групування варіантів, **не блокує** товар від відправки.
 - Resume після failed `store_import`.
 - Progress checkpoints у `jobs.meta`.
 
+### Архітектура імпорту (memory-safe, 500K+ scale)
+
+**Feature scope filter** (`filterCsCartRowsByFeature`):
+- Два паралельних SQL-запити: один фільтрує по feature value в JSONB, другий отримує всі article.
+- Node.js отримує тільки рядки article — **не завантажує raw JSONB** (~5KB/товар) у пам'ять.
+- До рефакторингу: `SELECT article, raw FROM store_mirror` → 177K × 5KB ≈ 885MB → OOM.
+- Після: тільки `Set<string>` з article-кодів, ~10MB незалежно від розміру каталогу.
+
+**Delta filter** (`filterCsCartDelta`):
+- Порівнює `visibility`, `price`, `amount`, `parentProductId` з `store_mirror`.
+- Поле `amount` синхронізується через міграцію 031.
+- Збагачує рядки `productId` та `resolvedParentProductId` прямо з `store_mirror` — без API-запиту.
+
+**Gateway import** (`CsCartGateway.importProducts`):
+- **Normal path** (дзеркало актуальне): `productId` вже pre-resolved з `store_mirror` → тільки PUT-запити до CS-Cart, `fetchProductIndexByCode()` не викликається.
+- **Fallback path** (дзеркало застаріле/порожнє): завантажує індекс через API → другорівнева delta-перевірка → PUT/POST.
+- `needsFallback` = `true` тільки якщо хоча б один рядок має `productId === undefined`.
+- В нормальному `update_pipeline` (mirror_sync → store_import) fallback ніколи не спрацьовує.
+
 ## Jobs / scheduler
-- **Graceful shutdown:** SIGTERM → позначає running jobs як failed перед закриттям pool.
-- **Startup cleanup:** orphaned `running` jobs → `failed` при старті.
+- **Graceful shutdown:** SIGTERM → позначає running jobs як failed + видаляє job_locks перед закриттям pool.
+- **Startup cleanup:** orphaned `running` jobs → `failed` + `DELETE FROM job_locks` при старті.
+  - Cleanup awaited перед `scheduler.start()` — усуває race condition де scheduler знаходив застарілі `running` jobs і кидав 409 ("інший джоб виконується").
 - Scheduler (env-driven): `update_pipeline`, `store_mirror_sync`, `cleanup`.
 - Runtime API для scheduler: `GET/PUT /admin/api/cron-settings` (персистенс у `cron_settings`, без рестарту).
+- **Job lock self-healing:** `acquireJobLock` автоматично видаляє stale lock якщо referenced job вже не `running`.
 
 ## Стабільність
 - Daily partition для `products_raw`.
@@ -142,6 +163,8 @@
 - Telegram alert-sink для error-рівня.
 - Scripted аудити: `audit:load`, `audit:stress`, `test:invariants`, `backend:readiness`, `store:sku-audit`.
 - Live benchmark (2026-03-25): 10K SKU, ~22 SKU/s, повний rollback підтверджено.
+- **Memory profile (2026-04-06):** пік ~202MB при повному sync 177K товарів після усунення OOM-вектора `filterCsCartRowsByFeature`.
+- `NODE_OPTIONS=--max-old-space-size=4096` — тимчасово додано в `.env` прод як safety net; може бути прибрано після підтвердження стабільності.
 
 ## Ще не закрито
 - E2E cutover-прогін на production-like даних (`import_supplier → finalize → store_import`) з фіксацією метрик.
