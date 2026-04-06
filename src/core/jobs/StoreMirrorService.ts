@@ -389,34 +389,32 @@ export class StoreMirrorService {
     const managedCodes = new Set<string>();
     const mirrorCodes = new Set<string>();
     if (normalizedFeatureId) {
-      const mirrorResult = await this.pool.query<{ article: string; raw: unknown }>(
-        `SELECT article, raw
-         FROM store_mirror
-         WHERE store = 'cscart'`
-      );
+      // Push feature filter and article enumeration to PostgreSQL.
+      // Avoids loading all raw JSONB (~5 KB/row) into Node.js memory
+      // which caused OOM at 177 K+ products and would not scale to 500 K+.
+      const [managedResult, allArticlesResult] = await Promise.all([
+        this.pool.query<{ article: string }>(
+          `SELECT article
+           FROM store_mirror
+           WHERE store = 'cscart'
+             AND LOWER((raw->'product_features'->($1::text))->>'value') = $2`,
+          [normalizedFeatureId, normalizedExpected]
+        ),
+        this.pool.query<{ article: string }>(
+          `SELECT article FROM store_mirror WHERE store = 'cscart'`
+        )
+      ]);
 
-      for (let index = 0; index < mirrorResult.rows.length; index += 1) {
-        const row = mirrorResult.rows[index];
-        const article = normalizeArticle(row.article);
-        if (!article) {
-          continue;
-        }
-        mirrorCodes.add(article);
-        const raw = row.raw as Record<string, unknown> | null;
-        const features =
-          raw && typeof raw === 'object' && !Array.isArray(raw)
-            ? (raw.product_features as Record<string, unknown> | undefined)
-            : undefined;
-        const featureRaw =
-          features && typeof features === 'object' && !Array.isArray(features)
-            ? (features[normalizedFeatureId] as Record<string, unknown> | undefined)
-            : undefined;
-        const featureValue = String(featureRaw?.value || '').trim().toLowerCase();
-        if (!featureValue) {
-          continue;
-        }
-        if (featureValue === normalizedExpected) {
+      for (let index = 0; index < managedResult.rows.length; index += 1) {
+        const article = normalizeArticle(managedResult.rows[index].article);
+        if (article) {
           managedCodes.add(article);
+        }
+      }
+      for (let index = 0; index < allArticlesResult.rows.length; index += 1) {
+        const article = normalizeArticle(allArticlesResult.rows[index].article);
+        if (article) {
+          mirrorCodes.add(article);
         }
       }
     }
