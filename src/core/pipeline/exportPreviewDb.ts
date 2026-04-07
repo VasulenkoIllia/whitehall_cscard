@@ -66,20 +66,10 @@ export class ExportPreviewDb implements ExportPreviewProvider {
       // Products where the article already contains the size (e.g. "NK1234-37")
       // have size=null and are kept as-is.
       const sizeValue = String(row.size || '').trim();
-      // Guard against double-size: if the article already ends with "-{size}"
-      // (e.g. article="010282-700-105", size="105"), do not append the size again.
-      // This happens when a supplier embeds the size in the article field AND also
-      // populates the size column — appending would produce "010282-700-105-105"
-      // which never matches any CS-Cart product code.
-      const articleAlreadyHasSize = sizeValue
-        ? String(row.article || '').endsWith(`-${sizeValue}`)
-        : false;
-      const fullArticle = (sizeValue && !articleAlreadyHasSize)
-        ? `${row.article}-${sizeValue}`
-        : row.article;
+      const fullArticle = sizeValue ? `${row.article}-${sizeValue}` : row.article;
       // Do not attempt to derive a parent article from a size-suffixed full article —
       // CS-Cart parent-child relationships are read from store_mirror, not products_final.
-      const parentArticle = (sizeValue && !articleAlreadyHasSize) ? null : deriveParentArticle(row.article, row.size);
+      const parentArticle = sizeValue ? null : deriveParentArticle(row.article, row.size);
       const quantity = Number(row.quantity || 0);
       return {
         article: fullArticle,
