@@ -443,9 +443,9 @@ export function DataTab({
           })()}
           {isStorePreview && storePreviewMode === 'delta' && currentState.batchTotal !== null ? (
             <>
-              <span className="chip">оновлень цін/к-сті: {Number(currentState.previewTotal || 0)}</span>
-              <span className="chip">будуть приховані: {Math.max(0, Number(currentState.batchTotal || 0) - Number(currentState.previewTotal || 0))}</span>
-              <span className="chip">всього відправиться: {Number(currentState.batchTotal || 0)}</span>
+              <span className="chip" title="Кількість товарів у products_final (до фільтрів дельти)">кандидатів у products_final: {Number(currentState.previewTotal || 0)}</span>
+              <span className="chip" title="Реальна кількість рядків що підуть у CS-Cart після всіх фільтрів (feature scope + дельта)">реально відправиться: {Number(currentState.batchTotal || 0)}</span>
+              <span className="chip" title="Кількість керованих SKU що будуть приховані (зникли з products_final)">будуть приховані: {Number(currentState.batchMeta?.deactivateMissing?.appended || 0)}</span>
             </>
           ) : null}
           {isStorePreview && storePreviewMode === 'candidates' ? (
@@ -457,8 +457,8 @@ export function DataTab({
         {isStorePreview && storePreviewMode === 'delta' && currentState.batchTotal !== null ? (
           <div className="preflight-warning" style={{ marginTop: 8 }}>
             <strong>Scope:</strong> тільки товари з характеристикою <strong>«Оновлення товару API» = Y</strong> (feature_id=564) в CS-Cart потрапляють у обробку.
-            {Number(currentState.batchTotal || 0) > Number(currentState.previewTotal || 0) ? (
-              <> {Math.max(0, Number(currentState.batchTotal || 0) - Number(currentState.previewTotal || 0))} з них <strong>будуть приховані</strong> (status=H) — керовані SKU яких більше немає в постачальників. Це штатна поведінка повного імпорту без фільтра постачальника.</>
+            {Number(currentState.batchMeta?.deactivateMissing?.appended || 0) > 0 ? (
+              <> {Number(currentState.batchMeta.deactivateMissing.appended)} з них <strong>будуть приховані</strong> (status=H) — керовані SKU яких більше немає в постачальників. Це штатна поведінка повного імпорту без фільтра постачальника.</>
             ) : null}
           </div>
         ) : null}
@@ -467,7 +467,7 @@ export function DataTab({
       <Section
         title={currentConfig.title}
         subtitle={isStorePreview && storePreviewMode === 'delta' && currentState.batchTotal !== null
-          ? `Scope: лише SKU з «Оновлення товару API» = Y · оновлень: ${Number(currentState.previewTotal || 0)} · прихувань: ${Math.max(0, Number(currentState.batchTotal || 0) - Number(currentState.previewTotal || 0))}`
+          ? `Scope: лише SKU з «Оновлення товару API» = Y · відправиться: ${Number(currentState.batchTotal || 0)} · прихувань: ${Number(currentState.batchMeta?.deactivateMissing?.appended || 0)}`
           : undefined}
       >
         <div className="status-line">{currentState.status}</div>
