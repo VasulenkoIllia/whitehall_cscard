@@ -8,11 +8,11 @@
 - Режим за замовчуванням: **update-only** (PUT по існуючому product_id з mirror). POST створення вмикається лише якщо `CSCART_ALLOW_CREATE=true`.
 
 Пропонований мапінг з нейтрального preview:
-- `article` → `product_code`
+- `article` + `size` → `product_code` (повний артикул: `article-size` коли size не порожній, або тільки `article` коли size=null)
 - `parent_article` → `parent_product_id` (для варіантів; якщо немає — null)
 - `visibility` → `status` (`A` коли true, `H` коли false)
 - `price_final` → `price`
-- `size` → поки що частина `product_code` (article-size), як у Horoshop-конекторі; окрема модель варіантів — наступний етап.
+- `quantity` → `amount` (реальна кількість товару; при visibility=false → amount=0)
 
 Auth / env для CS-Cart:
 - `CSCART_BASE_URL` — базовий URL магазину (без `/api` в кінці).
@@ -43,20 +43,24 @@ Auth / env для CS-Cart:
 - Рекомендований throttle: `CSCART_RATE_LIMIT_RPS` 10 (burst 20), конфігуровано; експоненційний backoff на 429/5xx.
 - Батч процесингу: логічні групи 50–100 запитів, рахувати успіх/фейл, ETA. При 10 RPS 300k оновлень ≈ 8.3 год; при 15 RPS ≈ 5.5 год — потрібен стейджинг-тест перед підняттям RPS.
 - `CSCART_ITEMS_PER_PAGE` ставити 1000 для mirror, щоб мінімізувати кількість сторінок.
-- Runtime optimization (implemented): перед імпортом збирається повний індекс каталогу `product_code -> product_id/status/price/parent_product_id`, після чого:
+- Runtime optimization (implemented): перед імпортом збирається повний індекс каталогу `product_code -> product_id/status/price/amount/parent_product_id`, після чого:
   - не робляться lookup-запити для кожного SKU,
-  - незмінені SKU пропускаються,
+  - незмінені SKU пропускаються (порівнюється visibility, price, amount, parentProductId),
+  - `amount` синхронізується з реальною кількістю з `products_final.quantity` через delta-фільтр,
   - `parent_product_id` резолвиться через індекс (по `parent_product_code`).
 - Scope керування оновленням (implemented, заміна legacy supplier-scope):
   - у CS-Cart керований асортимент визначається product feature `Оновлення товару API` (`feature_id=564`).
   - у sync потрапляють тільки SKU, де `product_features["564"].value = "Y"` (case-insensitive).
   - SKU без цього прапорця ніколи не оновлюються з пайплайна.
-- Missing товарів (implemented): для повного `store_import` (без supplier-фільтра) перед delta-фільтром додаються рядки де:
+- Missing товарів (implemented, покращено 2026-04-07): для повного `store_import` (без supplier-фільтра) перед delta-фільтром додаються рядки де:
   - SKU є в `store_mirror`, входить у керований scope (feature `564=Y`) і має `visibility=true`,
   - SKU відсутній у поточному `products_final` preview.
   - Такі SKU відправляються в CS-Cart зі `status=H` (hidden), без видалення.
   - Якщо SKU зʼявляється знову у постачальника, звичайний preview повертає `visibility=true` і товар оновлюється до `status=A`.
 - Для supplier-scoped запусків (`store-import?supplier=...`) auto-hidden missing SKU не виконується, щоб не ховати товари поза поточним partial-run.
+- **Додатковий захист від нерелевантних SKU** (2026-04-07): `skipDeactivationWithoutCreate` тепер робить пропорційну перевірку `matchedMissingInMirrorInput < matchedManagedInput`. Раніше деактивація вимикалась при будь-якій кількості SKU що не в store_mirror (106K+ нерелевантних SKU постачальників завжди це спричиняли). Тепер:
+  - якщо "пропущених" < "керованих" → це сценарій переіменування → деактивація пропускається (захист от помилкового ховання нових варіантів)
+  - якщо "пропущених" >= "керованих" → це нерелевантні SKU → деактивація запускається нормально
 - Feature-flag: `CSCART_DISABLE_MISSING_ON_FULL_IMPORT` (default `true`), `false` вимикає цей крок.
 - Feature-scope env:
   - `CSCART_API_UPDATE_FEATURE_ENABLED` (default `true`)

@@ -1,5 +1,7 @@
 # Поточний функціонал (CS-Cart scope)
 
+**Останнє оновлення:** 2026-04-07 (виправлення article format, quantity chain, deactivation logic)
+
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
 - `Horoshop` тимчасово винесено за межі поточного етапу.
@@ -101,7 +103,7 @@
 | 020-028 | ... | Users, partitions, indexes, mirror, cron, mappings, markup, comment, sku_prefix |
 | 029 | `029_add_size_mappings.sql` | Таблиця `size_mappings` + CI unique index + CHECK constraint |
 | 030 | `030_allow_empty_size_to.sql` | Знімає CHECK constraint — дозволяє `size_to = ''` |
-| 031 | `031_add_amount_to_store_mirror.sql` | Додає колонку `amount INTEGER NOT NULL DEFAULT 0` до `store_mirror` |
+| 031 | `031_add_amount_to_store_mirror.sql` | Додає колонку `amount INTEGER NOT NULL DEFAULT 0` до `store_mirror` (для синхронізації реальної кількості) |
 
 ### Config snapshot (перенос даних між середовищами)
 - `npm run export:config` → `output/prod_config_snapshot.json` (постачальники, джерела, маппінги колонок, націнки, розміри).
@@ -123,11 +125,27 @@
 
 ## CS-Cart import
 - Scope: тільки SKU з feature `Оновлення товару API` = `"Y"` (feature_id=564).
-- Optimizer (3 рівні): feature scope → deactivate missing → delta filter.
+- Optimizer (4 рівні): feature scope → deactivate missing → delta filter → store gateway.
 - Auto-hidden missing SKU при full import (без supplier-фільтра).
 - `parent_article` — метадані для групування варіантів, **не блокує** товар від відправки.
 - Resume після failed `store_import`.
 - Progress checkpoints у `jobs.meta`.
+- **Реальна кількість товару (quantity)** синхронізується від `products_final` через весь ланцюг.
+
+### Архітектура передачі даних: article + size + quantity
+
+**Побудова повного артикулу** (`exportPreviewDb.buildNeutralPreview`):
+- `products_final` зберігає: `article` = код товару (напр. `"GY6433"`), `size` = розмір (напр. `"37.5"`), `quantity` = кількість.
+- Повний артикул для CS-Cart: `article + '-' + size` коли `size` не порожній (напр. `"GY6433-37.5"`).
+- Товари де розмір вже в артикулі (напр. `article="NK1234-37"`, `size=null`) залишаються як-є.
+- `visibility` = `quantity > 0` (замість hardcoded `true`).
+- `parentArticle` = `null` для товарів з окремим полем size (не намагаємося виводити з-за суфіксу).
+
+**Ланцюг передачі quantity**:
+1. `ExportPreviewDb.buildNeutralPreview` → `ExportPreviewRow.quantity`
+2. `CsCartConnector.createImportBatch` → `CsCartImportRow.amount = row.quantity`
+3. `StoreMirrorService.filterCsCartDelta` → `CsCartDeltaInputRow.amount` (використовується для порівняння змін)
+4. `CsCartGateway.importProducts` → `desiredAmount = visibility ? normalizeAmount(row.amount) : 0`
 
 ### Архітектура імпорту (memory-safe, 500K+ scale)
 
@@ -139,7 +157,8 @@
 
 **Delta filter** (`filterCsCartDelta`):
 - Порівнює `visibility`, `price`, `amount`, `parentProductId` з `store_mirror`.
-- Поле `amount` синхронізується через міграцію 031.
+- Поле `amount` синхронізується через міграцію 031 та отримує реальне значення з `products_final.quantity`.
+- Логіка: `desiredAmount = visibility ? Math.max(0, Math.trunc(row.amount)) : 0` (приховані товари мають amount=0).
 - Збагачує рядки `productId` та `resolvedParentProductId` прямо з `store_mirror` — без API-запиту.
 
 **Gateway import** (`CsCartGateway.importProducts`):
@@ -147,6 +166,29 @@
 - **Fallback path** (дзеркало застаріле/порожнє): завантажує індекс через API → другорівнева delta-перевірка → PUT/POST.
 - `needsFallback` = `true` тільки якщо хоча б один рядок має `productId === undefined`.
 - В нормальному `update_pipeline` (mirror_sync → store_import) fallback ніколи не спрацьовує.
+- **Amount в PUT/POST**: `amount: desiredAmount` (реальна кількість, або 0 для прихованих товарів).
+
+### Механізм appendCsCartMissingAsHidden
+
+**Умова активації** (`createApplication.ts`):
+```
+appendCsCartMissingAsHidden ЗАПУСКАЄТЬСЯ якщо:
+- disableMissingOnFullImport === true (за замовчуванням)
+- Нема supplier-фільтра (full import)
+- skipDeactivationWithoutCreate === false
+```
+
+**Умова skipDeactivationWithoutCreate** (захист від нерелевантних SKU):
+```javascript
+const skipDeactivationWithoutCreate =
+  featureScopeEnabled &&
+  matchedMissingInMirrorInput > 0 &&          // є SKU що не в зеркалі
+  matchedMissingInMirrorInput < matchedManagedInput &&  // але менше ніж керованих
+  matchedManagedInput > 0 &&                  // és має керовані SKU
+  !allowCreateInStore;                        // й not allowed to create
+```
+
+**Root cause fix**: раніше `matchedMissingInMirrorInput > 0` завжди вимикало deactivation, але 106K+ нерелевантних SKU постачальників (які ніколи не були в CS-Cart) завжди це спричиняли → механізм ніколи не запускався → товари що зникли з асортименту залишалися видимими. Тепер додана пропорційна перевірка `< matchedManagedInput`.
 
 ## Jobs / scheduler
 - **Graceful shutdown:** SIGTERM → позначає running jobs як failed + видаляє job_locks перед закриттям pool.
@@ -165,6 +207,23 @@
 - Live benchmark (2026-03-25): 10K SKU, ~22 SKU/s, повний rollback підтверджено.
 - **Memory profile (2026-04-06):** пік ~202MB при повному sync 177K товарів після усунення OOM-вектора `filterCsCartRowsByFeature`.
 - `NODE_OPTIONS=--max-old-space-size=4096` — тимчасово додано в `.env` прод як safety net; може бути прибрано після підтвердження стабільності.
+
+## Root cause analysis (виправлені баги, 2026-04-07)
+
+**Bug #1: Article format mismatch → productId=null in store gateway**
+- **Симптом**: товари відправлялись в CS-Cart з productCode=null → відповідно не оновлювались (gateway пропускав).
+- **Root cause**: `products_final` зберігає article і size окремо (`article="GY6433"`, `size="37.5"`), але `store_mirror` (синхронізована з CS-Cart) містить повний артикул (`article="GY6433-37.5"`). `buildNeutralPreview` передавав тільки `article` як `productCode` → не знаходилось в store_mirror → `productId=null` → gateway не знав що оновлювати.
+- **Виправлення**: побудова повного артикулу: `article + '-' + size` в `buildNeutralPreview` (строки 68-69 `exportPreviewDb.ts`).
+
+**Bug #2: Quantity never passed through import chain → amount=1 for all products**
+- **Симптом**: усі видимі товари відправлялись в CS-Cart з `amount: 1` замість реальної кількості з `products_final.quantity`.
+- **Root cause**: поле `amount` не існувало в `CsCartDeltaInputRow` інтерфейсу. `filterCsCartDelta` завжди використовував `desiredAmount = visibility ? 1 : 0`. Реальна кількість з `products_final` просто ігнорувалась.
+- **Виправлення**: додано `amount: number` до `CsCartDeltaInputRow` (та пов'язані інтерфейси), передання `row.quantity` через весь ланцюг (`CsCartConnector` → `StoreMirrorService` → `CsCartGateway`), використання реальної кількості в gateway `desiredAmount = visibility ? normalizeAmount(row.amount) : 0` (строка 371 `CsCartGateway.ts`).
+
+**Bug #3: Deactivation logic always disabled → missing products never hidden**
+- **Симптом**: товари що зникли з асортименту постачальника залишались видимими в CS-Cart.
+- **Root cause**: `skipDeactivationWithoutCreate` умова спрацьовувала при будь-якій кількості SKU що не в `store_mirror` (`matchedMissingInMirrorInput > 0` = `true`). Але проект має 106K+ нерелевантних SKU від постачальників (які ніколи не були в CS-Cart) → це значення завжди було `> 0` → `skipDeactivationWithoutCreate` завжди = `true` → механізм приховування товарів ніколи не запускався.
+- **Виправлення**: додана пропорційна перевірка `matchedMissingInMirrorInput < matchedManagedInput` (строка 192 `createApplication.ts`). Тепер деактивація пропускається тільки якщо "пропущені" SKU менше ніж "керовані" → це сценарій переіменування; якщо "пропущених" більше → це нерелевантні SKU → деактивація запускається.
 
 ## Ще не закрито
 - E2E cutover-прогін на production-like даних (`import_supplier → finalize → store_import`) з фіксацією метрик.
