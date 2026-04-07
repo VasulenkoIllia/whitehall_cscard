@@ -181,9 +181,15 @@ function createImportBatchOptimizer(
     // genuinely-new rows that require allowCreate.  If matchedManagedInput === 0
     // every row is absent from the mirror — most likely a supplier prefix change —
     // and deactivation must run so old (pre-prefix) products are hidden in the store.
+    //
+    // Additional guard: only skip when missing-in-mirror rows are fewer than managed
+    // rows.  A large surplus of missing rows (e.g. 106K missing vs 1.7K managed)
+    // means they are unrelated supplier SKUs, not renamed managed products, and
+    // should not block deactivation of products that disappeared from products_final.
     const skipDeactivationWithoutCreate =
       featureScopeEnabled &&
       matchedMissingInMirrorInput > 0 &&
+      matchedMissingInMirrorInput < matchedManagedInput &&
       matchedManagedInput > 0 &&
       !allowCreateInStore;
 
