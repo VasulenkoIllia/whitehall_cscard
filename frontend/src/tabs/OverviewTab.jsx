@@ -154,6 +154,16 @@ export function OverviewTab({ readiness, stats, jobs = [], importProgress }) {
               const total = liveProgress?.total ?? metaProgress?.total ?? null;
               const pct = total > 0 && completed !== null ? Math.min(100, Math.round((completed / total) * 100)) : null;
 
+              // store_import specific progress from meta.storeImportProgress
+              const storeProgress = job.type === 'store_import' ? job.meta?.storeImportProgress : null;
+              const siTotal = storeProgress ? Number(storeProgress.total || 0) : null;
+              const siProcessed = storeProgress ? Number(storeProgress.processed || 0) : null;
+              const siImported = storeProgress ? Number(storeProgress.imported || 0) : null;
+              const siSkipped = storeProgress ? Number(storeProgress.skipped || 0) : null;
+              const siEta = storeProgress ? storeProgress.etaSeconds : null;
+              const siRate = storeProgress ? storeProgress.ratePerSecond : null;
+              const siPct = siTotal > 0 && siProcessed !== null ? Math.min(100, Math.round((siProcessed / siTotal) * 100)) : null;
+
               return (
                 <div key={job.id} className="pipeline-running-item">
                   <div className="pipeline-running-header">
@@ -165,7 +175,26 @@ export function OverviewTab({ readiness, stats, jobs = [], importProgress }) {
                       розпочато {formatTime(job.startedAt)} · {formatDuration(job.startedAt, null)}
                     </span>
                   </div>
-                  {pct !== null ? (
+                  {storeProgress && siTotal !== null ? (
+                    <div style={{ marginTop: 6 }}>
+                      <div className="import-progress-wrap">
+                        <div className="import-progress-track">
+                          <div className="import-progress-fill" style={{ width: `${siPct ?? 0}%` }} />
+                        </div>
+                        <span className="import-progress-label">
+                          {siProcessed} / {siTotal} ({siPct ?? 0}%)
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                        <span>✅ оновлено: <strong style={{ color: '#0f8a4b' }}>{siImported}</strong></span>
+                        <span>⏭ без змін: <strong>{siSkipped}</strong></span>
+                        {siRate !== null && <span>⚡ {Number(siRate).toFixed(1)} / сек</span>}
+                        {siEta !== null && siEta > 0 && (
+                          <span>⏱ залишилось ≈ {siEta >= 60 ? `${Math.floor(siEta / 60)} хв ${Math.floor(siEta % 60)} с` : `${Math.round(siEta)} с`}</span>
+                        )}
+                      </div>
+                    </div>
+                  ) : pct !== null ? (
                     <div className="import-progress-wrap" style={{ marginTop: 6 }}>
                       <div className="import-progress-track">
                         <div className="import-progress-fill" style={{ width: `${pct}%` }} />

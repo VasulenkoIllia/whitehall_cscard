@@ -229,12 +229,175 @@ const skipDeactivationWithoutCreate =
 
 ## Next Steps
 
-1. **Testing**: E2E run with actual supplier data
-2. **Monitoring**: Verify quantity synchronization in CS-Cart mirror syncs
-3. **Validation**: Check deactivation logic with 106K+ supplier SKU dataset
-4. **Production rollout**: When all tests pass
+~~1. Testing: E2E run with actual supplier data~~ ✅ (jobs #104, #120 — підтверджено)
+~~2. Monitoring: Verify quantity synchronization~~ ✅ (confirmed working)
+~~3. Validation: Check deactivation logic~~ ✅ (proportional check deployed)
+~~4. Production rollout: When all tests pass~~ ✅ (main branch updated)
 
 ---
 
-**Last Updated:** 2026-04-07
-**Commit:** 29850b8 (docs: update with article format, quantity chain, deactivation logic improvements)
+---
+
+# Зміни 2026-04-07 (сесія 6): UI Improvements — Кількість, Прогрес, Статуси
+
+**Дата:** 2026-04-07
+**Автор:** claude-code (session 6)
+**Статус:** Завершено
+**Файли змінено:** 6 (3 backend + 2 frontend + 1 docs)
+
+## Резюме
+
+Додано відображення кількості товарів у всіх відповідних вікнах адмін-панелі, порівняння "у постачальника vs у магазині", покращено статусні лейбли та додано детальний прогрес для `store_import` на панелі.
+
+---
+
+## Зміна 1 — "В магазині" (store_now): колонка К-сть
+
+### Backend: `src/core/admin/CatalogAdminService.ts`
+`listStoreMirrorPreview` SQL тепер вибирає `sm.amount`:
+```sql
+SELECT sm.article, sm.supplier, sm.parent_article,
+       sm.visibility, sm.price, sm.amount,   -- ← ДОДАНО
+       sm.seen_at, sm.synced_at, ...
+FROM store_mirror sm ...
+```
+
+### Frontend: `frontend/src/tabs/DataTab.jsx`
+В `VIEW_CONFIG.store_now.columns` додана колонка:
+```js
+{ key: 'amount', label: 'К-сть' }
+```
+Відображається стандартним рядковим рендером (значення з store_mirror.amount).
+
+---
+
+## Зміна 2 — "До відправки" дельта: колонки порівняння К-сть
+
+### Backend: `src/core/jobs/StoreMirrorService.ts`
+Додано поле `storeAmount` в інтерфейс `CsCartDeltaInputRow`:
+```typescript
+/** Current amount in store_mirror (set by filterCsCartDelta; null = missing in mirror) */
+storeAmount?: number | null;
+```
+В `filterCsCartDelta` — три місця де заповнюється:
+- Продукт знайдений у mirror: `storeAmount: current.amount`
+- Відсутній у mirror: `storeAmount: null`
+- Порожній productCode: `storeAmount: null`
+
+### Backend: `src/app/http/server.ts`
+Delta preparedRows тепер містять:
+```typescript
+quantity: payload.amount === null || typeof payload.amount === 'undefined'
+  ? null : Number(payload.amount),          // нова к-сть (з products_final)
+store_amount: payload.storeAmount === null || typeof payload.storeAmount === 'undefined'
+  ? null : Number(payload.storeAmount),     // поточна к-сть в магазині
+```
+
+### Frontend: `frontend/src/tabs/DataTab.jsx`
+Delta columns оновлено:
+```js
+{ key: 'store_amount', label: 'К-сть в магазині' },
+{ key: 'quantity',     label: 'К-сть (нова)' },
+{ key: 'visibility',   label: 'Статус' }
+```
+Рендер `quantity` — синій жирний якщо `newAmt !== oldAmt` (різні значення):
+```jsx
+changed ? <span style={{ color: '#1a6ef5', fontWeight: 600 }}>{newAmt}</span>
+        : <span>{newAmt}</span>
+```
+Рендер `store_amount` — приглушений сірий (muted), null → "-".
+
+---
+
+## Зміна 3 — Статус "Буде прихований"
+
+### Frontend: `frontend/src/tabs/DataTab.jsx`
+Тепер `visibility=false` в delta-режимі відображається по-різному:
+```jsx
+isPreviewVisibility
+  ? <span style={{ color: '#b36b00', fontWeight: 600 }}>Буде прихований</span>
+  : <span style={{ color: '#c22727' }}>Прихований</span>
+```
+- **Delta preview** (`isStorePreview && storePreviewMode === 'delta'`): бурштиновий колір — попередження про майбутню дію
+- **Всі інші view** (store_now, compare): червоний "Прихований" — поточний стан
+- `store_visibility` (compare): завжди "Прихований" червоним — поточний стан у магазині
+
+---
+
+## Зміна 4 — Панель: прогрес store_import
+
+### Frontend: `frontend/src/tabs/OverviewTab.jsx`
+Для запущеного джоба типу `store_import` — відображається блок прогресу з даних `job.meta.storeImportProgress`:
+
+**Структура storeImportProgress** (вже зберігалась у БД раніше, кожні 5 сек):
+```json
+{
+  "total": 185000,      // загальна к-сть рядків у дельті
+  "processed": 45000,   // оброблено
+  "imported": 12000,    // успішно оновлено в CS-Cart
+  "skipped": 33000,     // пропущено (без змін)
+  "failed": 0,          // помилки
+  "ratePerSecond": 12.4,
+  "etaSeconds": 11532
+}
+```
+
+**Що відображається:**
+- Прогрес-бар: `processed / total (pct%)`
+- `✅ оновлено: N` (зелений)
+- `⏭ без змін: N`
+- `⚡ N.N / сек` (якщо є ratePerSecond)
+- `⏱ залишилось ≈ X хв Y с` (якщо etaSeconds > 0, `Math.floor` для уникнення float-модуло)
+
+Якщо `storeImportProgress` відсутній (інші типи джобів або початок до першого persist) — fallback на `meta.progress` або просто "виконується...".
+
+---
+
+## Аналіз правильності
+
+### Потік даних (store_amount у delta)
+```
+products_final.quantity
+  → ExportPreviewDb.buildNeutralPreview() → quantity
+  → CsCartConnector.createImportBatch() → amount (CsCartImportRow)
+  → importBatchOptimizer (createApplication.ts) → CsCartDeltaInputRow.amount
+  → StoreMirrorService.filterCsCartDelta()
+      reads store_mirror.amount → storeAmount     ← НОВЕ
+      passes { ...row, storeAmount: current.amount }
+  → PipelineOrchestrator.runStoreExport() → batch.rows
+  → server.ts /admin/api/store-preview (delta mode)
+      preparedRows: quantity = row.amount, store_amount = row.storeAmount
+  → Frontend DataTab delta view
+      "К-сть в магазині" = store_amount
+      "К-сть (нова)" = quantity (синій якщо ≠ store_amount)
+```
+
+### Перевірені edge cases
+| Сценарій | Поведінка |
+|---|---|
+| Товар відсутній у store_mirror | `storeAmount: null` → показується "-" |
+| Кількість не змінилась | `newAmt === oldAmt` → чорний без виділення |
+| Кількість змінилась | `newAmt !== oldAmt` → синій жирний |
+| Товар буде прихований | `visibility=false` → amber "Буде прихований" |
+| ETA = float (напр. 63.7 сек) | `Math.floor(siEta % 60)` — без float garbage |
+| ratePerSecond = 12.3456 | `.toFixed(1)` → "12.3 / сек" |
+| siTotal = 0 (нема роботи) | `siPct = null`, прогрес-бар `0%` |
+| Інший тип джоба | `storeProgress = null` → fallback |
+
+---
+
+## Файли змінено
+
+| Файл | Зміна |
+|---|---|
+| `src/core/jobs/StoreMirrorService.ts` | Додано `storeAmount` в інтерфейс і changedRows |
+| `src/core/admin/CatalogAdminService.ts` | `sm.amount` в SQL SELECT |
+| `src/app/http/server.ts` | `quantity` та `store_amount` в delta preparedRows |
+| `frontend/src/tabs/DataTab.jsx` | Нові колонки, рендери, "Буде прихований" |
+| `frontend/src/tabs/OverviewTab.jsx` | Блок прогресу store_import |
+
+---
+
+**Last Updated:** 2026-04-07 (session 6)
+**TypeScript build:** ✅ pass
+**Frontend build:** ✅ pass

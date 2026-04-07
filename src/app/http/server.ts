@@ -816,7 +816,8 @@ export function createHttpServer(appContext: AppContext) {
                 payload.price === null || typeof payload.price === 'undefined'
                   ? null
                   : Number(payload.price),
-              quantity: null,
+              quantity: payload.amount === null || typeof payload.amount === 'undefined' ? null : Number(payload.amount),
+              store_amount: payload.storeAmount === null || typeof payload.storeAmount === 'undefined' ? null : Number(payload.storeAmount),
               price_base: null,
               comment: null
             };

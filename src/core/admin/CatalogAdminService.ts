@@ -1779,6 +1779,7 @@ export class CatalogAdminService {
          sm.parent_article,
          sm.visibility,
          sm.price,
+         sm.amount,
          sm.seen_at,
          sm.synced_at,
          COUNT(*) OVER() AS total

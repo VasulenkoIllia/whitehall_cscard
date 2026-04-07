@@ -17,6 +17,8 @@ export interface CsCartDeltaInputRow {
   // Pre-resolved from store_mirror by filterCsCartDelta (undefined = not enriched / mirror was stale)
   productId?: string | null;
   resolvedParentProductId?: string | null;
+  /** Current amount in store_mirror (set by filterCsCartDelta; null = missing in mirror) */
+  storeAmount?: number | null;
 }
 
 export interface CsCartDeltaSummary {
@@ -262,14 +264,14 @@ export class StoreMirrorService {
       const row = rows[index];
       const code = normalizeArticle(row.productCode);
       if (!code) {
-        changedRows.push({ ...row, productId: null, resolvedParentProductId: null });
+        changedRows.push({ ...row, productId: null, resolvedParentProductId: null, storeAmount: null });
         continue;
       }
 
       const current = stateByCode.get(code);
       if (!current) {
         missingInMirror += 1;
-        changedRows.push({ ...row, productId: null, resolvedParentProductId: null });
+        changedRows.push({ ...row, productId: null, resolvedParentProductId: null, storeAmount: null });
         continue;
       }
 
@@ -308,7 +310,8 @@ export class StoreMirrorService {
       changedRows.push({
         ...row,
         productId: current.productId,
-        resolvedParentProductId: desiredParentProductId
+        resolvedParentProductId: desiredParentProductId,
+        storeAmount: current.amount
       });
     }
 

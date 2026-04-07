@@ -111,6 +111,7 @@ const VIEW_CONFIG = {
       { key: 'supplier', label: 'Постачальник' },
       { key: 'parent_article', label: 'Батьківський артикул' },
       { key: 'price', label: 'Ціна' },
+      { key: 'amount', label: 'К-сть' },
       { key: 'visibility', label: 'Видимість' },
       { key: 'seen_at', label: 'Останній snapshot' },
       { key: 'synced_at', label: 'Останнє sync-оновлення' }
@@ -224,7 +225,9 @@ export function DataTab({
           { key: 'supplier_sku_prefix', label: 'SKU префікс' },
           { key: 'parent_article', label: 'Батьківський артикул' },
           { key: 'price_final', label: 'Ціна для оновлення' },
-          { key: 'visibility', label: 'Видимість' }
+          { key: 'store_amount', label: 'К-сть в магазині' },
+          { key: 'quantity', label: 'К-сть (нова)' },
+          { key: 'visibility', label: 'Статус' }
         ]
       : currentConfig.columns;
   const currentColumns = isStorePreview ? storePreviewColumns : currentConfig.columns;
@@ -489,13 +492,42 @@ export function DataTab({
                     <tr key={`row_${rowIndex}`} style={isHiding ? { opacity: 0.55 } : undefined}>
                       {currentColumns.map((column) => {
                         if (column.key === 'visibility' || column.key === 'store_visibility') {
+                          const isPreviewVisibility = column.key === 'visibility' && isStorePreview && storePreviewMode === 'delta';
                           return (
                             <td key={`${rowIndex}_${column.key}`}>
                               {row[column.key] === true ? (
                                 <span style={{ color: '#0f8a4b', fontWeight: 600 }}>Активний</span>
                               ) : row[column.key] === false ? (
-                                <span style={{ color: '#c22727' }}>{column.key === 'visibility' ? '→ Приховати' : 'Прихований'}</span>
+                                isPreviewVisibility ? (
+                                  <span style={{ color: '#b36b00', fontWeight: 600 }}>Буде прихований</span>
+                                ) : (
+                                  <span style={{ color: '#c22727' }}>Прихований</span>
+                                )
                               ) : '-'}
+                            </td>
+                          );
+                        }
+                        if (column.key === 'quantity' && isStorePreview && storePreviewMode === 'delta') {
+                          const newAmt = row.quantity === null || row.quantity === undefined ? null : Number(row.quantity);
+                          const oldAmt = row.store_amount === null || row.store_amount === undefined ? null : Number(row.store_amount);
+                          const changed = newAmt !== null && oldAmt !== null && newAmt !== oldAmt;
+                          return (
+                            <td key={`${rowIndex}_${column.key}`}>
+                              {newAmt === null ? (
+                                <span style={{ color: 'var(--muted)' }}>-</span>
+                              ) : changed ? (
+                                <span style={{ color: '#1a6ef5', fontWeight: 600 }}>{newAmt}</span>
+                              ) : (
+                                <span>{newAmt}</span>
+                              )}
+                            </td>
+                          );
+                        }
+                        if (column.key === 'store_amount') {
+                          const val = row.store_amount === null || row.store_amount === undefined ? null : Number(row.store_amount);
+                          return (
+                            <td key={`${rowIndex}_${column.key}`} style={{ color: 'var(--muted)' }}>
+                              {val === null ? '-' : val}
                             </td>
                           );
                         }
