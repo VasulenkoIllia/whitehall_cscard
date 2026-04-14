@@ -285,12 +285,7 @@ export async function getSheetPreview(
       endRow = Math.min(endRow, rowCount);
     }
 
-    // Always fetch from row 1 so that array-formula spill columns (e.g. a header derived
-    // from an array formula in row 1) are included in the Google Sheets API response.
-    // Spill cells outside the requested range are silently omitted by the API.
-    const fetchFrom = Math.min(1, startRow);
-    const allRows = await getSheetRowChunk(sheets, spreadsheetId, targetSheetName, fetchFrom, endRow);
-    const rows = fetchFrom < startRow ? allRows.slice(startRow - fetchFrom) : allRows;
+    const rows = await getSheetRowChunk(sheets, spreadsheetId, targetSheetName, startRow, endRow);
     return {
       spreadsheetId,
       sheetName: targetSheetName,
