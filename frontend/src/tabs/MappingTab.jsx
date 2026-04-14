@@ -137,7 +137,7 @@ export function MappingTab({
 
   const togglePreview = async () => {
     if (isPreviewVisible) { setPreviewVisible(false); return; }
-    if (sourcePreview.sampleRows.length === 0) await loadSourcePreview();
+    await loadSourcePreview();
     setPreviewVisible(true);
   };
 
