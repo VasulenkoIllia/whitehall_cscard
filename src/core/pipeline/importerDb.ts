@@ -143,10 +143,12 @@ async function loadSupplierPricingContext(pool: Pool, supplierId: number): Promi
        s.markup_percent,
        s.min_profit_enabled,
        s.min_profit_amount,
-       s.markup_rule_set_id,
-       COALESCE(rs.is_active, FALSE) AS rule_set_active
+       COALESCE(s.markup_rule_set_id, ms.global_rule_set_id) AS effective_rule_set_id,
+       COALESCE(rs.is_active, grs.is_active, FALSE) AS rule_set_active
      FROM suppliers s
+     LEFT JOIN markup_settings ms ON ms.id = 1
      LEFT JOIN markup_rule_sets rs ON rs.id = s.markup_rule_set_id
+     LEFT JOIN markup_rule_sets grs ON grs.id = ms.global_rule_set_id
      WHERE s.id = $1`,
     [supplierId]
   );
@@ -158,7 +160,7 @@ async function loadSupplierPricingContext(pool: Pool, supplierId: number): Promi
     markupPercent: toFiniteNumber(supplier.markup_percent, 0),
     minProfitEnabled: supplier.min_profit_enabled === true,
     minProfitAmount: toFiniteNumber(supplier.min_profit_amount, 0),
-    ruleSetId: supplier.rule_set_active ? supplier.markup_rule_set_id : null,
+    ruleSetId: supplier.rule_set_active ? Number(supplier.effective_rule_set_id) : null,
     conditions: []
   };
 
