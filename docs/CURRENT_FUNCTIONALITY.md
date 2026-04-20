@@ -1,6 +1,6 @@
 # Поточний функціонал (CS-Cart scope)
 
-**Останнє оновлення:** 2026-04-20 (виправлення skipDeactivationWithoutCreate — зниклі товари тепер правильно ховаються при повному імпорті)
+**Останнє оновлення:** 2026-04-20 (виправлення skipDeactivationWithoutCreate + фікс націнки "За замовчуванням")
 
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
@@ -118,6 +118,14 @@
 - `GET /admin/api/size-mappings/unmapped?limit=N` — повертає `{ total, fetchedCount, rows }` де `total` — реальний тотал через window function.
 - Review/export API: `merged-preview`, `final-preview`, `compare-preview`, `store-mirror-preview`, `store-preview`, CSV exports.
 - `store-preview` режими: `candidates` / `delta` (з `previewTotal`, `batchTotal`, `batchMeta`).
+
+## Націнки (markup rule sets)
+
+- Rule sets: список умов (price_from/price_to → action_type/action_value).
+- Кожен постачальник може мати **власний** rule set або **"За замовчуванням"** (`markup_rule_set_id = null`).
+- **"За замовчуванням"** (`markup_rule_set_id = null`) → пайплайн підтягує `markup_settings.global_rule_set_id` через SQL COALESCE при імпорті. Якщо глобальне правило зміниться — всі постачальники з null автоматично отримають нове.
+- **Виправлений баг (2026-04-20):** раніше коли `markup_rule_set_id = null`, LEFT JOIN до `markup_rule_sets` нічого не знаходив → `rule_set_active = false` → `ruleSetId = null` → **націнка не застосовувалась**. Фікс: додано `LEFT JOIN markup_settings` + `COALESCE(s.markup_rule_set_id, ms.global_rule_set_id)` — тепер fallback до глобального правила відбувається на рівні SQL.
+- `markup_settings` — singleton таблиця (id=1), зберігає `global_rule_set_id`.
 
 ## Finalize і preview
 - Finalize формує `products_final` через staged merge з `DISTINCT ON (article, size)`.
