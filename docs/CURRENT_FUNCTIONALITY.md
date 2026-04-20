@@ -1,6 +1,6 @@
 # Поточний функціонал (CS-Cart scope)
 
-**Останнє оновлення:** 2026-04-15 (відкат endsWith-фіксу артикулів, виправлення прев'ю в модалці мапінгу)
+**Останнє оновлення:** 2026-04-20 (виправлення skipDeactivationWithoutCreate — зниклі товари тепер правильно ховаються при повному імпорті)
 
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
@@ -176,21 +176,18 @@
 ```
 appendCsCartMissingAsHidden ЗАПУСКАЄТЬСЯ якщо:
 - disableMissingOnFullImport === true (за замовчуванням)
-- Нема supplier-фільтра (full import)
-- skipDeactivationWithoutCreate === false
+- Нема supplier-фільтра (full import, всі постачальники)
 ```
 
-**Умова skipDeactivationWithoutCreate** (захист від нерелевантних SKU):
-```javascript
-const skipDeactivationWithoutCreate =
-  featureScopeEnabled &&
-  matchedMissingInMirrorInput > 0 &&          // є SKU що не в зеркалі
-  matchedMissingInMirrorInput < matchedManagedInput &&  // але менше ніж керованих
-  matchedManagedInput > 0 &&                  // és має керовані SKU
-  !allowCreateInStore;                        // й not allowed to create
-```
+**Двосторонній автоматичний цикл:**
+- Товар зник від постачальника → повний імпорт → `appendCsCartMissingAsHidden` → прихований в CS-Cart.
+- Товар з'явився знову → будь-який імпорт → `filterCsCartDelta` бачить зміну visibility → відкривається в CS-Cart.
 
-**Root cause fix**: раніше `matchedMissingInMirrorInput > 0` завжди вимикало deactivation, але 106K+ нерелевантних SKU постачальників (які ніколи не були в CS-Cart) завжди це спричиняли → механізм ніколи не запускався → товари що зникли з асортименту залишалися видимими. Тепер додана пропорційна перевірка `< matchedManagedInput`.
+**Важливо:** механізм спрацьовує тільки на **повному імпорті** (без фільтра постачальника). При імпорті одного постачальника деактивація вимкнена — система не знає чи товар відсутній бо цей постачальник його прибрав, чи інший постачальник ще надає.
+
+**Нові товари постачальників не ховаються помилково:** вони присутні в `sourceCodes` (вхідні рядки), тому `appendCsCartMissingAsHidden` їх пропускає — навіть якщо їх нема в дзеркалі.
+
+**Виправлений баг (2026-04-20):** раніше існувала умова `skipDeactivationWithoutCreate` яка вимикала деактивацію якщо хоч один товар з `products_final` був відсутній у дзеркалі. З `CSCART_ALLOW_CREATE=false` (прод-конфіг) ця умова спрацьовувала майже завжди → "будуть приховані: 0" навіть при повному імпорті → зниклі товари ніколи не ховались. Умову видалено — дві операції незалежні.
 
 ## Jobs / scheduler
 - **Graceful shutdown:** SIGTERM → позначає running jobs як failed + видаляє job_locks перед закриттям pool.

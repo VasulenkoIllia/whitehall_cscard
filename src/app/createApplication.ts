@@ -171,29 +171,13 @@ function createImportBatchOptimizer(
 
     let rowsForDelta: CsCartImportRow[] = scopedRows;
     let deactivateMissingSummary: unknown;
-    const matchedMissingInMirrorInput = Number(
-      (featureScopeSummary as Record<string, unknown>)?.matchedMissingInMirrorInput || 0
-    );
-    const matchedManagedInput = Number(
-      (featureScopeSummary as Record<string, unknown>)?.matchedManagedInput || 0
-    );
-    // Skip deactivation only when the batch is a *mix* of known-managed rows and
-    // genuinely-new rows that require allowCreate.  If matchedManagedInput === 0
-    // every row is absent from the mirror — most likely a supplier prefix change —
-    // and deactivation must run so old (pre-prefix) products are hidden in the store.
-    //
-    // Additional guard: only skip when missing-in-mirror rows are fewer than managed
-    // rows.  A large surplus of missing rows (e.g. 106K missing vs 1.7K managed)
-    // means they are unrelated supplier SKUs, not renamed managed products, and
-    // should not block deactivation of products that disappeared from products_final.
-    const skipDeactivationWithoutCreate =
-      featureScopeEnabled &&
-      matchedMissingInMirrorInput > 0 &&
-      matchedMissingInMirrorInput < matchedManagedInput &&
-      matchedManagedInput > 0 &&
-      !allowCreateInStore;
 
-    if (disableMissingOnFullImport && !supplierFilter && !skipDeactivationWithoutCreate) {
+    // appendCsCartMissingAsHidden runs only on full imports (no supplier filter).
+    // It hides mirror-active products that are absent from products_final — completely
+    // independent of whether some products_final rows are new/missing in mirror.
+    // New products absent from the mirror are protected by being present in sourceCodes,
+    // so they are never incorrectly hidden.
+    if (disableMissingOnFullImport && !supplierFilter) {
       const deactivateMissing = await storeMirrorService.appendCsCartMissingAsHidden(
         scopedRows,
         maxMirrorAgeMinutes,
@@ -201,16 +185,6 @@ function createImportBatchOptimizer(
       );
       rowsForDelta = deactivateMissing.rows as CsCartImportRow[];
       deactivateMissingSummary = deactivateMissing.summary;
-    } else if (skipDeactivationWithoutCreate) {
-      deactivateMissingSummary = {
-        enabled: false,
-        reason: 'allow_create_required_for_missing_in_mirror',
-        supplier: supplierFilter,
-        inputTotal: scopedRows.length,
-        appended: 0,
-        matchedMissingInMirrorInput,
-        allowCreateInStore
-      };
     } else {
       deactivateMissingSummary = {
         enabled: false,
