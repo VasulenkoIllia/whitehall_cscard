@@ -450,7 +450,8 @@ export default function App() {
     jobId: null,
     mode: 'candidates',
     previewTotal: 0,
-    batchTotal: null
+    batchTotal: null,
+    batchMeta: null
   });
   const [dataFilters, setDataFilters] = useState({
     limit: '50',
@@ -1713,7 +1714,8 @@ export default function App() {
         batchTotal:
           parsedBatchTotal !== null && Number.isFinite(parsedBatchTotal) && parsedBatchTotal >= 0
             ? parsedBatchTotal
-            : null
+            : null,
+        batchMeta: result?.batchMeta || null
       });
     } catch (error) {
       setStorePreviewState((prev) => ({ ...prev, status: formatError(error) }));
