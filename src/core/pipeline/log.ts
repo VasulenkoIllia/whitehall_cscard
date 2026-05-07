@@ -20,6 +20,42 @@ const LOG_MAX_KEYS = 60;
 const LOG_MAX_ARRAY_ITEMS = 60;
 const LOG_MAX_STRING_LENGTH = 4000;
 
+/**
+ * Keys whose values must NEVER appear in logs verbatim (case-insensitive substring match).
+ * Centralized denylist — protects against accidentally logging credentials/tokens passed
+ * via job meta, error context, or HTTP headers. Add new patterns here, never remove.
+ */
+const SENSITIVE_KEY_PATTERNS = [
+  'authorization',
+  'api_key',
+  'apikey',
+  'password',
+  'passwd',
+  'secret',
+  'session_token',
+  'sessiontoken',
+  'cookie',
+  'private_key',
+  'privatekey',
+  'access_token',
+  'accesstoken',
+  'refresh_token',
+  'bearer',
+  'set-cookie'
+];
+
+function isSensitiveKey(key: string): boolean {
+  // Normalize separators so 'X-Refresh-Token', 'refresh_token', 'refreshToken' all match.
+  const lowered = key.toLowerCase().replace(/[-_]/g, '');
+  for (let i = 0; i < SENSITIVE_KEY_PATTERNS.length; i += 1) {
+    const pattern = SENSITIVE_KEY_PATTERNS[i].replace(/[-_]/g, '');
+    if (lowered.includes(pattern)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function trimString(value: string, maxLength = LOG_MAX_STRING_LENGTH): string {
   if (value.length <= maxLength) {
     return value;
@@ -62,6 +98,10 @@ function sanitizeLogValue(value: unknown, depth = 0): unknown {
     const normalized: Record<string, unknown> = {};
     for (let index = 0; index < limited.length; index += 1) {
       const [key, entryValue] = limited[index];
+      if (isSensitiveKey(key)) {
+        normalized[key] = '[redacted]';
+        continue;
+      }
       normalized[key] = sanitizeLogValue(entryValue, depth + 1);
     }
     if (entries.length > LOG_MAX_KEYS) {

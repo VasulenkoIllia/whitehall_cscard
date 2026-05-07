@@ -315,7 +315,19 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     `)
     .then(() => pool.query(`DELETE FROM job_locks`))
     .then(() => undefined)
-    .catch(() => undefined);
+    .catch((err) => {
+      // Surface the failure to stdout so it's visible in container logs. The promise
+      // still resolves (we don't want startup to hard-fail on cleanup error — the
+      // scheduler can self-heal on the next tick). LogService isn't usable here
+      // because it'd just go through the same DB pool that just failed.
+      // eslint-disable-next-line no-console
+      console.error(
+        JSON.stringify({
+          startup_cleanup: 'rejected',
+          error: err instanceof Error ? err.message : String(err)
+        })
+      );
+    });
 
   const telegramAlertService = createTelegramAlertServiceFromEnv(env);
   const logService = new LogService(pool, {

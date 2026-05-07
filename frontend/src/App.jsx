@@ -1049,7 +1049,6 @@ export default function App() {
     });
     if (!confirmed) {
       return;
-      return;
     }
     setSupplierFormStatus(`Видалення #${supplierId}...`);
     try {
@@ -1165,7 +1164,6 @@ export default function App() {
       keyword
     });
     if (!confirmed) {
-      return;
       return;
     }
     setSourceFormStatus(`Видалення source #${sourceId}...`);
@@ -1312,7 +1310,6 @@ export default function App() {
       keyword
     });
     if (!confirmed) {
-      return false;
       return false;
     }
     setMappingStatus(`Видалення мапінгу #${mappingId}...`);
@@ -1822,7 +1819,6 @@ export default function App() {
       keyword
     });
     if (!confirmed) {
-      return;
       return;
     }
     await runJob('cleanup', '/jobs/cleanup', {

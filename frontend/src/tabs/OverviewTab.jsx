@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Section, Tag } from '../components/ui';
+import { JOB_TYPE_LABELS, PIPELINE_JOB_TYPES } from '../lib/jobs';
 
 const GATE_LABELS = {
   ready_for_store_import: 'Готово до імпорту в магазин',
@@ -14,15 +15,9 @@ const GATE_LABELS = {
   has_final_products: 'Є фінальні товари'
 };
 
-const JOB_TYPE_LABELS = {
-  import_all: 'Імпорт усіх',
-  finalize: 'Фіналізація',
-  store_import: 'Відправка в магазин',
-  update_pipeline: 'Повне оновлення',
-  store_mirror_sync: 'Знімок магазину'
-};
-
-const PIPELINE_TYPES = new Set(Object.keys(JOB_TYPE_LABELS));
+// Backward-compat alias — keeps the existing reference name in this file unchanged
+// while pointing at the shared allowlist (same set of types, just deduplicated source).
+const PIPELINE_TYPES = PIPELINE_JOB_TYPES;
 
 function formatDuration(startedAt, finishedAt) {
   if (!startedAt) return '—';

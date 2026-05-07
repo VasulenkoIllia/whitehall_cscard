@@ -1,26 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { toJsonString } from '../lib/api';
 import { Tag } from '../components/ui';
+import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, jobStatusTone, logLevelTone } from '../lib/jobs';
 
-const JOB_STATUS_LABELS = {
-  completed: 'Виконано',
-  failed: 'Помилка',
-  running: 'Виконується',
-  queued: 'В черзі',
-  cancelled: 'Скасовано'
-};
-
-const JOB_TYPE_LABELS = {
-  import_all: 'Імпорт усіх',
-  import_source: 'Імпорт джерела',
-  import_supplier: 'Імпорт постачальника',
-  finalize: 'Фіналізація',
-  store_import: 'Відправка в магазин',
-  update_pipeline: 'Повне оновлення',
-  store_mirror_sync: 'Знімок магазину',
-  cleanup: 'Очищення'
-};
-
+// Local formatter — mirrors the original "today → HH:MM:SS, otherwise dd.mm HH:MM" UX.
+// Other tabs use slightly different formats; intentionally not unified here to preserve visuals.
 function formatDateTime(value) {
   if (!value) return '-';
   const parsed = new Date(value);
@@ -29,18 +13,6 @@ function formatDateTime(value) {
   const isToday = parsed.toDateString() === now.toDateString();
   if (isToday) return parsed.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   return parsed.toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-function jobStatusTone(status) {
-  if (status === 'completed') return 'ok';
-  if (status === 'failed') return 'error';
-  return 'warn';
-}
-
-function logLevelTone(level) {
-  if (level === 'error') return 'error';
-  if (level === 'warn' || level === 'warning') return 'warn';
-  return 'ok';
 }
 
 // ── Shared modal shell ────────────────────────────────────────

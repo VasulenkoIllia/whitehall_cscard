@@ -377,7 +377,15 @@ export class CsCartGateway {
 
     const text = await resp.text();
     if (!resp.ok) {
-      throw new Error(`CS-Cart API error ${resp.status}: ${text}`);
+      // Truncate error body before bubbling up: errors land in job logs (jobs.logs.data)
+      // and warnings tail. CS-Cart can echo arbitrary user-controlled data here, so
+      // we cap it to keep payloads bounded and reduce blast-radius for accidental leaks.
+      const ERROR_BODY_MAX_CHARS = 500;
+      const truncated =
+        text.length > ERROR_BODY_MAX_CHARS
+          ? `${text.slice(0, ERROR_BODY_MAX_CHARS)}...[truncated ${text.length - ERROR_BODY_MAX_CHARS} chars]`
+          : text;
+      throw new Error(`CS-Cart API error ${resp.status}: ${truncated}`);
     }
 
     if (!text) {
