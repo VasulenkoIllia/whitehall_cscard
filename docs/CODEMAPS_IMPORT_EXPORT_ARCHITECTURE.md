@@ -150,7 +150,7 @@ const skipDeactivationWithoutCreate =
 **What it does:**
 - Scans `store_mirror` for all articles with feature `564=Y` (API-managed)
 - For each article in mirror that is NOT in current `products_final` preview
-- Adds row with `visibility=false` (status=H in CS-Cart)
+- Adds row with `visibility=false` (status=D in CS-Cart)
 - These rows go through delta filter and may be sent if changed
 
 ## Feature Scope Filter (filterCsCartRowsByFeature)

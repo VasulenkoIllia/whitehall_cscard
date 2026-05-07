@@ -11,6 +11,11 @@ export interface CsCartImportRow {
   // Pre-resolved from store_mirror (undefined = mirror was stale, use fallback index)
   productId?: string | null;
   resolvedParentProductId?: string | null;
+  // Current state from store_mirror (undefined = not enriched)
+  storeVisibility?: boolean | null;
+  storePrice?: number | null;
+  storeAmount?: number | null;
+  storeParentProductId?: string | null;
 }
 
 export interface CsCartGatewayClient {

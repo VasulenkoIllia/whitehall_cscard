@@ -160,6 +160,10 @@ export function OverviewTab({ readiness, stats, jobs = [], importProgress }) {
               const siProcessed = storeProgress ? Number(storeProgress.processed || 0) : null;
               const siImported = storeProgress ? Number(storeProgress.imported || 0) : null;
               const siSkipped = storeProgress ? Number(storeProgress.skipped || 0) : null;
+              // siFailed = SKUs the store rejected (not_found_skus from products_update,
+              // or PUT errors for parent diffs / fallback batches). Surface it so an operator
+              // can see drift between mirror and the live store.
+              const siFailed = storeProgress ? Number(storeProgress.failed || 0) : null;
               const siEta = storeProgress ? storeProgress.etaSeconds : null;
               const siRate = storeProgress ? storeProgress.ratePerSecond : null;
               const siPct = siTotal > 0 && siProcessed !== null ? Math.min(100, Math.round((siProcessed / siTotal) * 100)) : null;
@@ -188,6 +192,11 @@ export function OverviewTab({ readiness, stats, jobs = [], importProgress }) {
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                         <span>✅ оновлено: <strong style={{ color: '#0f8a4b' }}>{siImported}</strong></span>
                         <span>⏭ без змін: <strong>{siSkipped}</strong></span>
+                        {siFailed !== null && siFailed > 0 ? (
+                          <span title="Магазин повернув ці SKU як не знайдені (мабуть видалені поза синком)">
+                            ❗ не знайдено: <strong style={{ color: '#c14a4a' }}>{siFailed}</strong>
+                          </span>
+                        ) : null}
                         {siRate !== null && <span>⚡ {Number(siRate).toFixed(1)} / сек</span>}
                         {siEta !== null && siEta > 0 && (
                           <span>⏱ залишилось ≈ {siEta >= 60 ? `${Math.floor(siEta / 60)} хв ${Math.floor(siEta % 60)} с` : `${Math.round(siEta)} с`}</span>

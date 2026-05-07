@@ -79,6 +79,53 @@ function createHoroshopGateway(): HoroshopGateway {
   };
 }
 
+function readEnvPositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.trunc(parsed);
+}
+
+function readEnvBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (typeof value === 'undefined') {
+    return fallback;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
+function readProductsUpdateAuthMode(value: string | undefined): 'basic' | 'bearer' | 'auto' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'basic' || normalized === 'bearer') {
+    return normalized;
+  }
+  return 'auto';
+}
+
+/**
+ * Read a value preferring the new env var, falling back to the legacy one.
+ * Used during the migration window from CSCART_STOCK_UPDATE_* to CSCART_PRODUCTS_UPDATE_*
+ * so existing prod configs keep working without a redeploy.
+ */
+function pickEnv(primary: string | undefined, fallback: string | undefined): string | undefined {
+  if (typeof primary === 'string' && primary.trim().length > 0) {
+    return primary;
+  }
+  return fallback;
+}
+
+function readBulkEndpoint(value: string | undefined): 'products_update' | 'stock_update' {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'stock_update' ? 'stock_update' : 'products_update';
+}
+
 function createConnector(config: AppConfig): StoreConnector<unknown> {
   if (config.base.activeStore === 'horoshop') {
     return new HoroshopConnector({
@@ -98,18 +145,35 @@ function createConnector(config: AppConfig): StoreConnector<unknown> {
     rateLimitRps: config.connectors.cscart.rateLimitRps,
     rateLimitBurst: config.connectors.cscart.rateLimitBurst,
     allowCreate: config.connectors.cscart.allowCreate,
-    importConcurrency: Number(process.env.CSCART_IMPORT_CONCURRENCY || 4)
+    importConcurrency: Number(process.env.CSCART_IMPORT_CONCURRENCY || 4),
+    bulkEndpoint: readBulkEndpoint(process.env.CSCART_BULK_ENDPOINT),
+    productsUpdateEnabled: readEnvBoolean(
+      pickEnv(process.env.CSCART_PRODUCTS_UPDATE_ENABLED, process.env.CSCART_STOCK_UPDATE_ENABLED),
+      true
+    ),
+    productsUpdateBatchSize: readEnvPositiveInt(
+      pickEnv(
+        process.env.CSCART_PRODUCTS_UPDATE_BATCH_SIZE,
+        process.env.CSCART_STOCK_UPDATE_BATCH_SIZE
+      ),
+      1000
+    ),
+    productsUpdateRetryLimit: readEnvPositiveInt(
+      pickEnv(
+        process.env.CSCART_PRODUCTS_UPDATE_RETRY_LIMIT,
+        process.env.CSCART_STOCK_UPDATE_RETRY_LIMIT
+      ),
+      5
+    ),
+    productsUpdateAuthMode: readProductsUpdateAuthMode(
+      pickEnv(
+        process.env.CSCART_PRODUCTS_UPDATE_AUTH_MODE,
+        process.env.CSCART_STOCK_UPDATE_AUTH_MODE
+      )
+    )
   });
 
   return new CsCartConnector(csGateway);
-}
-
-function readEnvPositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return Math.trunc(parsed);
 }
 
 function createImportBatchOptimizer(

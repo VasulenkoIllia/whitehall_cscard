@@ -17,8 +17,14 @@ export interface CsCartDeltaInputRow {
   // Pre-resolved from store_mirror by filterCsCartDelta (undefined = not enriched / mirror was stale)
   productId?: string | null;
   resolvedParentProductId?: string | null;
+  /** Current visibility in store_mirror (undefined = not enriched) */
+  storeVisibility?: boolean | null;
+  /** Current price in store_mirror (undefined = not enriched) */
+  storePrice?: number | null;
   /** Current amount in store_mirror (set by filterCsCartDelta; null = missing in mirror) */
   storeAmount?: number | null;
+  /** Current parent_product_id in store_mirror (undefined = not enriched) */
+  storeParentProductId?: string | null;
 }
 
 export interface CsCartDeltaSummary {
@@ -264,14 +270,30 @@ export class StoreMirrorService {
       const row = rows[index];
       const code = normalizeArticle(row.productCode);
       if (!code) {
-        changedRows.push({ ...row, productId: null, resolvedParentProductId: null, storeAmount: null });
+        changedRows.push({
+          ...row,
+          productId: null,
+          resolvedParentProductId: null,
+          storeVisibility: null,
+          storePrice: null,
+          storeAmount: null,
+          storeParentProductId: null
+        });
         continue;
       }
 
       const current = stateByCode.get(code);
       if (!current) {
         missingInMirror += 1;
-        changedRows.push({ ...row, productId: null, resolvedParentProductId: null, storeAmount: null });
+        changedRows.push({
+          ...row,
+          productId: null,
+          resolvedParentProductId: null,
+          storeVisibility: null,
+          storePrice: null,
+          storeAmount: null,
+          storeParentProductId: null
+        });
         continue;
       }
 
@@ -311,7 +333,10 @@ export class StoreMirrorService {
         ...row,
         productId: current.productId,
         resolvedParentProductId: desiredParentProductId,
-        storeAmount: current.amount
+        storeVisibility: current.visibility,
+        storePrice: current.price,
+        storeAmount: current.amount,
+        storeParentProductId: current.parentProductId
       });
     }
 
@@ -527,6 +552,7 @@ export class StoreMirrorService {
          article,
          visibility,
          price,
+         amount,
          COALESCE(NULLIF(raw->>'parent_product_id', ''), NULLIF(parent_article, '')) AS "parentProductId",
          NULLIF(raw->>'product_id', '') AS "productId"
        FROM store_mirror
@@ -538,6 +564,7 @@ export class StoreMirrorService {
       article: string;
       visibility: boolean;
       price: number | null;
+      amount: number;
       parentProductId: string | null;
       productId: string | null;
     }> = [];
@@ -556,6 +583,7 @@ export class StoreMirrorService {
         article,
         visibility: row.visibility === true,
         price: normalizePrice(row.price),
+        amount: normalizeAmount(row.amount),
         parentProductId: normalizeParentProductId(row.parentProductId),
         productId
       });
@@ -588,7 +616,11 @@ export class StoreMirrorService {
         price: row.price,
         amount: 0,
         productId: row.productId,
-        resolvedParentProductId: row.parentProductId
+        resolvedParentProductId: row.parentProductId,
+        storeVisibility: row.visibility,
+        storePrice: row.price,
+        storeAmount: row.amount,
+        storeParentProductId: row.parentProductId
       });
     }
 

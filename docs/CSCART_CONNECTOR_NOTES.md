@@ -1,16 +1,18 @@
 # CS-Cart connector parity (REST API)
 
-Основні ендпоїнти (CS-Cart REST, basic auth user = email, password = API key) citeturn0search3:
+Основні ендпоїнти (CS-Cart REST) citeturn0search3:
 - GET `/api/products?items_per_page=100&page=1` — дзеркало каталогу (поля: `product_id`, `product_code`, `status`, `price`, `amount`, `updated_timestamp`, `parent_product_id`).
 - PUT `/api/products/{id}` — оновлення існуючого товару (наприклад, ціна/статус).
 - POST `/api/products` — створення нового товару (мінімум: `product_code`, `price`, `status`).
+- POST `/api/products_update` — bulk оновлення `sku/status/amount/price` (batch payload, **поточний шлях**).
+- POST `/api/stock_update` — старіший bulk-endpoint лише для `sku/amount/status`. Використовується тільки якщо ENV `CSCART_BULK_ENDPOINT=stock_update` (canary kill-switch).
 - Статус: `A` (active/visible), `H` (hidden), `D` (disabled).
 - Режим за замовчуванням: **update-only** (PUT по існуючому product_id з mirror). POST створення вмикається лише якщо `CSCART_ALLOW_CREATE=true`.
 
 Пропонований мапінг з нейтрального preview:
 - `article` + `size` → `product_code` (повний артикул: `article-size` коли size не порожній, або тільки `article` коли size=null)
 - `parent_article` → `parent_product_id` (для варіантів; якщо немає — null)
-- `visibility` → `status` (`A` коли true, `H` коли false)
+- `visibility` → `status` (`A` коли true, `D` коли false)
 - `price_final` → `price`
 - `quantity` → `amount` (реальна кількість товару; при visibility=false → amount=0)
 
@@ -19,6 +21,14 @@ Auth / env для CS-Cart:
 - `CSCART_API_USER` — email адміністратора (basic auth user).
 - `CSCART_API_KEY` — API key (basic auth password).
 - `CSCART_STOREFRONT_ID` — опціонально, якщо потрібно спрямовувати на конкретний storefront.
+- `CSCART_BULK_ENDPOINT` (`products_update` (default) | `stock_update`) — який bulk-endpoint використовується. `stock_update` = canary fallback; не передає `price` (він ігнорується старим API).
+- `CSCART_PRODUCTS_UPDATE_ENABLED` (default `true`) — увімкнути bulk-шлях. Якщо `false`, кожен SKU йде через `PUT /api/products/{id}` (повільно, тільки на дебаг). Аліас: `CSCART_STOCK_UPDATE_ENABLED`.
+- `CSCART_PRODUCTS_UPDATE_BATCH_SIZE` (default `1000`, max `5000`) — розмір batch. Аліас: `CSCART_STOCK_UPDATE_BATCH_SIZE`.
+- `CSCART_PRODUCTS_UPDATE_RETRY_LIMIT` (default `5`) — retry на 429/5xx для bulk-запиту. Аліас: `CSCART_STOCK_UPDATE_RETRY_LIMIT`.
+- `CSCART_PRODUCTS_UPDATE_AUTH_MODE` (`auto`|`bearer`|`basic`, **default `basic` для нового endpoint у resolver-і коду**) — auth для bulk-запиту. Аліас: `CSCART_STOCK_UPDATE_AUTH_MODE`.
+
+### Auth note (Bearer)
+CS-Cart офіційно документує тільки **Basic auth** (`email:apiKey` base64-encoded). На цьому магазині додатково приймається `Authorization: Bearer <base64(email:apiKey)>` — той самий токен, тільки інший префікс. Raw API key у Bearer (`Bearer <api_key>`) — повертає 401 і **не** використовується. Поточний код містить старий рядок `Bearer ${apiKey}` (рядок 178) як dead branch — ENV-default `basic` робить його неактивним. Виправляти буде окремим PR коли буде підстава вмикати Bearer-шлях.
 
 Паритет із Horoshop-гейтвеєм:
 - Mirror: пагінація через `items_per_page` + `page`; зберігати `nextCursor = page+1` поки `page*items_per_page < total_items`.
@@ -38,10 +48,22 @@ Auth / env для CS-Cart:
 - GET з `items_per_page=1000` → 663 товарів (увесь каталог). Отже сторінка приймає ≥1000 позицій, обмеження визначається налаштуванням “Elements per page” в адмінці.
 
 ## Оновлення 100–300k товарів
-- Масових імпортів немає: тільки POST/PUT поштучно.
+- Bulk-шлях за замовчуванням: `POST /api/products_update` батчами (default 1000 SKU). Підтримує `status` (`A`/`H`/`D`), `amount`, `price` в одному виклику.
+- Для змін, які bulk endpoint **не приймає** (`parent_product_id` — кидає 400 «Unsupported field»), використовується legacy `PUT /api/products/{id}` поштучно.
 - За замовчуванням створення вимкнене (`CSCART_ALLOW_CREATE=false`), SKU без match у mirror — skip + warning.
 - Рекомендований throttle: `CSCART_RATE_LIMIT_RPS` 10 (burst 20), конфігуровано; експоненційний backoff на 429/5xx.
-- Батч процесингу: логічні групи 50–100 запитів, рахувати успіх/фейл, ETA. При 10 RPS 300k оновлень ≈ 8.3 год; при 15 RPS ≈ 5.5 год — потрібен стейджинг-тест перед підняттям RPS.
+- При помилці bulk batch (мережа, 5xx, 400 з `errors[]`) виконується fallback на поштучний `PUT` для всіх SKU цього batch-а — pipeline run не ламається.
+- По кожному bulk batch фіксується short summary `{batch, endpoint, size, updatedProducts, notFound, time}` у warnings run-а.
+- В кінці run-а пишеться агрегат `bulk run summary: {endpoint, bulkBatches, bulkAccepted, bulkNotFound, bulkServerTimeSec, bulkFallbackBatches}` — швидкий health-check у адмінці.
+
+### Контракт відповіді `/api/products_update`
+- HTTP 200 success: `{"status":200,"updated_products":N,"not_found_count":K,"not_found_skus":["..."],"time":0.05}`.
+- HTTP 200 успіх з нульовим попаданням (legacy shape): `{"updated":0}` — парсер читає обидва поля.
+- HTTP 400 unsupported fields: `{"status":400,"message":"Request contains unsupported fields","errors":[{"sku":"...","field":"weight","message":"Unsupported field"}]}` — **відхиляє весь batch**. Захист на нашому боці: `CsCartProductsUpdatePayloadRow` whitelist у TS-типі (тільки `sku|status|amount|price`).
+- HTTP 400 «No valid SKU» — порожній sku, `null`, або payload-обʼєкт замість array.
+
+### Truncate guard
+Endpoint truncate-ить дробову частину `price` (`1090.50 → 1090`). Наш pipeline видає `CEIL(price_with_markup / 10) * 10` → ціле, кратне 10, тож копійки не зʼявляються. Як safety net у gateway: якщо `Number.isInteger(desiredPrice) === false` → SKU йде через PUT (зберігає копійки точно).
 - `CSCART_ITEMS_PER_PAGE` ставити 1000 для mirror, щоб мінімізувати кількість сторінок.
 - Runtime optimization (implemented): перед імпортом збирається повний індекс каталогу `product_code -> product_id/status/price/amount/parent_product_id`, після чого:
   - не робляться lookup-запити для кожного SKU,
@@ -55,7 +77,7 @@ Auth / env для CS-Cart:
 - Missing товарів (implemented, покращено 2026-04-07): для повного `store_import` (без supplier-фільтра) перед delta-фільтром додаються рядки де:
   - SKU є в `store_mirror`, входить у керований scope (feature `564=Y`) і має `visibility=true`,
   - SKU відсутній у поточному `products_final` preview.
-  - Такі SKU відправляються в CS-Cart зі `status=H` (hidden), без видалення.
+  - Такі SKU відправляються в CS-Cart зі `status=D` (disabled), без видалення.
   - Якщо SKU зʼявляється знову у постачальника, звичайний preview повертає `visibility=true` і товар оновлюється до `status=A`.
 - Для supplier-scoped запусків (`store-import?supplier=...`) auto-hidden missing SKU не виконується, щоб не ховати товари поза поточним partial-run.
 - **Додатковий захист від нерелевантних SKU** (2026-04-07): `skipDeactivationWithoutCreate` тепер робить пропорційну перевірку `matchedMissingInMirrorInput < matchedManagedInput`. Раніше деактивація вимикалась при будь-якій кількості SKU що не в store_mirror (106K+ нерелевантних SKU постачальників завжди це спричиняли). Тепер:
