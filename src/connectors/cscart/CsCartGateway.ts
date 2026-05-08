@@ -912,7 +912,18 @@ export class CsCartGateway {
         // - Truncate guard: products_update truncates fractional kopiyky (1090.50 -> 1090).
         //   Our pipeline emits CEIL(...,10) so prices are always integers, but if a
         //   non-integer slips through we route it to PUT to preserve exact value.
-        const parentDiffers = currentParentProductId !== parentProductId;
+        //
+        // parentDiffers gate (important):
+        //   We only treat parent as "different" when the preview actually carried
+        //   a resolvable parent (parentProductId !== null). If the preview has
+        //   no parent info (variant SKUs flattened to "article-size" without a
+        //   separate parent_article column in products_final), buildLegacyPayload
+        //   would skip parent_product_id in the PUT payload anyway — so the PUT
+        //   would only re-send status/amount/price unchanged for the parent
+        //   relationship. That's a noop for the store and a wasted per-SKU
+        //   round-trip. Symmetric to filterCsCartDelta's `!parentCode` short-circuit.
+        const parentDiffers =
+          parentProductId !== null && currentParentProductId !== parentProductId;
         const priceDiffers =
           currentPrice === null || Math.abs(currentPrice - desiredPrice) > 0.01;
         const fractionalPrice = !Number.isInteger(desiredPrice);
