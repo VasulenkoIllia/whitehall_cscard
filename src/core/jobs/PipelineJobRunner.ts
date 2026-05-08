@@ -537,9 +537,27 @@ export class PipelineJobRunner<MappedRow = unknown> {
         jobId,
         isCanceled: () => this.isJobCanceled(jobId),
         resumeProcessed: resume?.resumeProcessed || 0,
-        onProgress
+        onProgress,
+        onCriticalEvent: this.createCriticalEventLogger(jobId)
       });
     });
+  }
+
+  /**
+   * Forward critical events from the connector (e.g. bulk-flush failures) to
+   * the live logs table so operators see them without waiting for the run to
+   * finish and persist meta.warnings.
+   */
+  private createCriticalEventLogger(
+    jobId: number
+  ): (level: 'info' | 'warning' | 'error', message: string, data?: unknown) => Promise<void> {
+    return async (level, message, data): Promise<void> => {
+      try {
+        await this.logs.log(jobId, level, message, data);
+      } catch (_err) {
+        // never let a logging hiccup break the import loop
+      }
+    };
   }
 
   runCleanup(retentionDays: number): Promise<JobRunnerResult<CleanupSummary>> {
@@ -623,7 +641,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
           return this.pipeline.runStoreImport(jobId, supplier, {
             jobId,
             isCanceled: () => this.isJobCanceled(jobId),
-            onProgress
+            onProgress,
+            onCriticalEvent: this.createCriticalEventLogger(jobId)
           });
         }
       );

@@ -27,6 +27,16 @@ export interface StoreImportContext {
   isCanceled?: () => Promise<boolean>;
   resumeProcessed?: number;
   onProgress?: (progress: StoreImportProgress) => Promise<void> | void;
+  /**
+   * Optional sink for critical events that must reach the operator immediately,
+   * regardless of any in-memory warnings cap. Use for things like bulk-flush
+   * failures where the error message is needed live for diagnosis.
+   */
+  onCriticalEvent?: (
+    level: 'info' | 'warning' | 'error',
+    message: string,
+    data?: unknown
+  ) => Promise<void> | void;
 }
 
 export interface StoreConnector<MappedRow = unknown> {

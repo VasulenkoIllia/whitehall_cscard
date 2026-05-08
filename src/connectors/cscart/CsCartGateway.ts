@@ -187,14 +187,33 @@ export class CsCartGateway {
     return raw;
   }
 
+  /**
+   * Per-row warnings (e.g. "missing in store", "not_found") are capped to keep
+   * meta.warnings JSONB bounded — on a 200K catalogue with 140K missing-in-mirror
+   * rows the array would otherwise hit MB-scale and balloon job.meta size.
+   * Bumped from 200 to 5000 so we can still see plenty of per-SKU detail without
+   * starving the array for critical events. Critical events (bulk-flush failures,
+   * run summary) bypass the cap via appendCriticalWarning.
+   */
+  private static readonly PER_SKU_WARNING_CAP = 5000;
+
   private appendWarning(warnings: string[], message: string): void {
-    if (warnings.length < 200) {
+    if (warnings.length < CsCartGateway.PER_SKU_WARNING_CAP) {
       warnings.push(message);
       return;
     }
-    if (warnings.length === 200) {
-      warnings.push('warnings truncated');
+    if (warnings.length === CsCartGateway.PER_SKU_WARNING_CAP) {
+      warnings.push('per-SKU warnings truncated (cap reached)');
     }
+  }
+
+  /**
+   * Critical warnings — always recorded, never dropped. Use for events that the
+   * operator must see live: bulk-flush failures (with the actual error message),
+   * run-level summaries, schema mismatches.
+   */
+  private appendCriticalWarning(warnings: string[], message: string): void {
+    warnings.push(message);
   }
 
   private normalizeAmount(value: unknown): number {
@@ -648,18 +667,16 @@ export class CsCartGateway {
       await reportProgress(false, false);
     };
 
-    const buildLegacyPayload = (state: ResolvedProductState): Record<string, unknown> => {
-      const payload: Record<string, unknown> = {
-        product_code: state.productCode,
-        status: state.desiredStatus,
-        amount: state.desiredAmount,
-        price: state.desiredPrice
-      };
-      if (state.parentProductId !== null) {
-        payload.parent_product_id = state.parentProductId;
-      }
-      return payload;
-    };
+    // PUT payload for /api/products/{id}. Pipeline does NOT manage variant tree
+    // (parent_product_id) — that's owned by CS-Cart admin manually. exportPreviewDb
+    // never produces a parent code (deriveParentArticle always returns null in
+    // current data flow), so this payload is intentionally minimal.
+    const buildLegacyPayload = (state: ResolvedProductState): Record<string, unknown> => ({
+      product_code: state.productCode,
+      status: state.desiredStatus,
+      amount: state.desiredAmount,
+      price: state.desiredPrice
+    });
 
     const runLegacyPut = async (state: ResolvedProductState): Promise<void> => {
       const payload = buildLegacyPayload(state);
@@ -781,17 +798,35 @@ export class CsCartGateway {
           notFound: notFoundCount,
           time: serverTime
         };
-        this.appendWarning(
+        // Bulk batch summary IS critical — needed to confirm the bulk path is
+        // active. Bypass the per-SKU cap.
+        this.appendCriticalWarning(
           warnings,
           `products_update batch response: ${JSON.stringify(summary)}`
         );
       } catch (err) {
         bulkFallbackBatches += 1;
         const message = err instanceof Error ? err.message : 'products_update failed';
-        this.appendWarning(
+        // Critical: keep the actual error text in meta.warnings even when the
+        // per-SKU cap is full of "missing in store" messages from earlier.
+        this.appendCriticalWarning(
           warnings,
           `products_update batch ${productsUpdateBatchSeq} failed, fallback=PUT: ${message}`
         );
+        // Critical: also surface to the live log table so the operator sees the
+        // failure during the run, not only after meta.warnings is persisted.
+        if (context?.onCriticalEvent) {
+          try {
+            await context.onCriticalEvent('error', 'products_update bulk-flush failed', {
+              batchSeq: productsUpdateBatchSeq,
+              batchSize: batchRows.length,
+              endpoint: this.bulkEndpoint,
+              error: message
+            });
+          } catch (_logErr) {
+            // never let logging itself break the import loop
+          }
+        }
         for (let index = 0; index < batchRows.length; index += 1) {
           // Without this check, a 1000-row fallback storm could not be cancelled mid-flight —
           // worst case 1000 × 60s timeout = 16h of synchronous PUTs. checkCanceled throws
@@ -982,7 +1017,9 @@ export class CsCartGateway {
         bulkServerTimeSec: Number(bulkServerTimeSec.toFixed(3)),
         bulkFallbackBatches
       };
-      this.appendWarning(warnings, `bulk run summary: ${JSON.stringify(runSummary)}`);
+      // Critical — single-line health-check that we want to read first in
+      // post-mortem, regardless of any per-SKU warnings flood earlier.
+      this.appendCriticalWarning(warnings, `bulk run summary: ${JSON.stringify(runSummary)}`);
     }
 
     return { imported, failed, skipped, warnings };
