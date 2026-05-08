@@ -357,14 +357,44 @@ export class CsCartGateway {
       : this.retryLimit;
     await this.acquireToken();
     const url = new URL(path, this.baseUrl).toString();
-    const resp: Response = await fetch(url, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init.headers || {}),
-        Authorization: this.buildAuthorizationHeader(authMode)
+
+    // Hard timeout on the network call. Without it, a stalled CS-Cart connection
+    // (TCP open but no response) blocks the whole import loop indefinitely —
+    // we observed this in prod with bulk products_update batches.
+    // Treat timeout the same as a 5xx — eligible for retry/backoff.
+    const REQUEST_TIMEOUT_MS = 60000;
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        ...init,
+        signal: controller.signal as unknown as RequestInit['signal'],
+        headers: {
+          'Content-Type': 'application/json',
+          ...(init.headers || {}),
+          Authorization: this.buildAuthorizationHeader(authMode)
+        }
+      });
+    } catch (err) {
+      const aborted =
+        (err as { name?: string } | null)?.name === 'AbortError' ||
+        (err as { type?: string } | null)?.type === 'aborted';
+      if (aborted) {
+        const retry = (init.retry || 0) + 1;
+        if (retry <= retryLimit) {
+          await sleep(15000 * retry);
+          return this.request(path, { ...init, retry });
+        }
+        throw new Error(
+          `CS-Cart request timed out after ${REQUEST_TIMEOUT_MS}ms (path=${path}, retries=${retry - 1})`
+        );
       }
-    });
+      throw err;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
 
     if (resp.status === 429 || resp.status >= 500) {
       const retry = (init.retry || 0) + 1;
