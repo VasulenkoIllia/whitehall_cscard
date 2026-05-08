@@ -4,6 +4,13 @@ const minIntervalMs = Number(process.env.GOOGLE_SHEETS_MIN_INTERVAL_MS || 1200);
 const quotaBackoffMs = Number(process.env.GOOGLE_SHEETS_QUOTA_BACKOFF_MS || 60000);
 const maxRetriesRaw = Number(process.env.GOOGLE_SHEETS_MAX_RETRIES ?? 0);
 
+// Hard timeout on every Google Sheets HTTP call. Without this, a stalled gaxios
+// connection blocks the import loop indefinitely — same failure class we just
+// fixed for CS-Cart. 60 s is well above any healthy chunk request and below the
+// outer pipeline-level timeout, so transient stalls escalate to retryable errors
+// instead of silent stuck imports.
+google.options({ timeout: 60_000 });
+
 // Leaky-bucket rate limiter — concurrent-safe in JS single-threaded event loop.
 // Each caller atomically reserves the next available slot (no two callers share the same slot).
 let nextRequestAt = 0;
@@ -24,6 +31,17 @@ function isQuotaError(err: any): boolean {
   );
 }
 
+function isTransientNetworkError(err: any): boolean {
+  // gaxios timeout / aborted / common transient network failures.
+  // Without this check a 60s timeout (set via google.options) would raise once
+  // and abort the whole import — even though a retry would normally succeed.
+  const code = err?.code;
+  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNABORTED') return true;
+  if (err?.name === 'AbortError') return true;
+  const message = String(err?.message || '');
+  return /timeout|timed out|socket hang up|ECONN(RESET|ABORTED|REFUSED)/i.test(message);
+}
+
 async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
   let attempt = 0;
   const maxRetries = Number.isFinite(maxRetriesRaw) ? maxRetriesRaw : 0;
@@ -42,13 +60,15 @@ async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
       }
       return await fn();
     } catch (err) {
-      if (!isQuotaError(err) || attempt >= maxAttempts) {
+      const retryable = isQuotaError(err) || isTransientNetworkError(err);
+      if (!retryable || attempt >= maxAttempts) {
         throw err;
       }
       attempt += 1;
       // On quota error: back off AND push the global slot forward so other workers
-      // also slow down, not just this one.
-      const backoffMs = quotaBackoffMs * attempt;
+      // also slow down, not just this one. For transient network errors we use a
+      // shorter backoff (5 s × attempt) since they're typically not quota-related.
+      const backoffMs = isQuotaError(err) ? quotaBackoffMs * attempt : 5000 * attempt;
       nextRequestAt = Math.max(nextRequestAt, Date.now() + backoffMs);
       await sleep(backoffMs);
     }

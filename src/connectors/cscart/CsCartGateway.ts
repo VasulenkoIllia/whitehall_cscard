@@ -755,6 +755,10 @@ export class CsCartGateway {
           `products_update batch ${productsUpdateBatchSeq} failed, fallback=PUT: ${message}`
         );
         for (let index = 0; index < batchRows.length; index += 1) {
+          // Without this check, a 1000-row fallback storm could not be cancelled mid-flight —
+          // worst case 1000 × 60s timeout = 16h of synchronous PUTs. checkCanceled throws
+          // JOB_CANCELED which is handled by the outer try/catch (cleanup + rethrow).
+          await checkCanceled();
           await runLegacyPut(batchRows[index]);
         }
       } finally {
