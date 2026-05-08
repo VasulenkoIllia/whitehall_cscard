@@ -180,11 +180,17 @@ export class StoreMirrorService {
 
   async filterCsCartDelta(
     rows: CsCartDeltaInputRow[],
-    maxMirrorAgeMinutes: number
+    maxMirrorAgeMinutes: number,
+    options?: { allowCreate?: boolean }
   ): Promise<{ rows: CsCartDeltaInputRow[]; summary: CsCartDeltaSummary }> {
     const safeMaxAge = Number.isFinite(maxMirrorAgeMinutes)
       ? Math.max(1, Math.trunc(maxMirrorAgeMinutes))
       : 120;
+    // When allowCreate=false the gateway will skip every SKU it cannot find in
+    // the mirror. Pre-filtering them here avoids dragging 100K+ unused rows
+    // through the gateway loop just to skip them at the very end. Net result
+    // for the store is identical (those SKUs were never going to be touched).
+    const allowCreate = options?.allowCreate === true;
     const total = rows.length;
     const freshness = await this.getCsCartMirrorFreshness();
     const ageMinutes = freshness.ageMinutes;
@@ -285,6 +291,13 @@ export class StoreMirrorService {
       const current = stateByCode.get(code);
       if (!current) {
         missingInMirror += 1;
+        // When allowCreate=false the gateway can't do anything with these rows
+        // (it will just skip them). Don't push — saves the gateway loop from
+        // iterating through tens of thousands of rows it would skip anyway.
+        // Counter still increments so the operator sees the real number.
+        if (!allowCreate) {
+          continue;
+        }
         changedRows.push({
           ...row,
           productId: null,

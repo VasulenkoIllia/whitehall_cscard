@@ -259,7 +259,15 @@ function createImportBatchOptimizer(
       };
     }
 
-    const delta = await storeMirrorService.filterCsCartDelta(rowsForDelta, maxMirrorAgeMinutes);
+    // Pass allowCreate so the delta filter can short-circuit missing-in-mirror
+    // rows when the gateway would just skip them anyway (allowCreate=false).
+    // Net effect on the store is identical; it just avoids dragging tens of
+    // thousands of rows through the gateway loop for no work.
+    const delta = await storeMirrorService.filterCsCartDelta(
+      rowsForDelta,
+      maxMirrorAgeMinutes,
+      { allowCreate: allowCreateInStore }
+    );
     return {
       ...batch,
       rows: delta.rows as unknown[],
