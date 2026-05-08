@@ -319,12 +319,20 @@ export class StoreMirrorService {
       const priceSame = Math.abs(current.price - desiredPrice) <= 0.01;
       const visibilitySame = current.visibility === desiredVisibility;
       const amountSame = current.amount === desiredAmount;
-      // If parentCode is empty we have no desired parent — skip the comparison entirely.
-      // We do not manage parent-child relationships; sending parent_product_id: 0
-      // for CS-Cart variant products breaks the PUT request.
+      // parentSame returns true when:
+      //   - parent cannot be resolved in mirror (parentComparable=false) — we won't
+      //     send parent_product_id in the PUT payload anyway, so it's a noop for parent.
+      //   - row has no parent (top-level product).
+      //   - both current and desired parents match.
       const parentSame = !parentComparable || !parentCode || current.parentProductId === desiredParentProductId;
 
-      if (visibilitySame && priceSame && amountSame && parentComparable && parentSame) {
+      // Skip when nothing observable would change in the store.
+      // NOTE: parentComparable is deliberately NOT in the skip predicate — when parent is
+      // unresolvable, the gateway also does not modify parent (buildLegacyPayload omits
+      // parent_product_id when null). Forcing such rows through the gateway just produces
+      // a no-op PUT (or a no-op bulk slot), wasting an HTTP round-trip per variant.
+      // unresolvedParent counter still tracks the diagnostic signal for operators.
+      if (visibilitySame && priceSame && amountSame && parentSame) {
         skippedUnchanged += 1;
         continue;
       }
