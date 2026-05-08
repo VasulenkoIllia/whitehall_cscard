@@ -64,6 +64,23 @@ CS-Cart офіційно документує тільки **Basic auth** (`emai
 
 ### Truncate guard
 Endpoint truncate-ить дробову частину `price` (`1090.50 → 1090`). Наш pipeline видає `CEIL(price_with_markup / 10) * 10` → ціле, кратне 10, тож копійки не зʼявляються. Як safety net у gateway: якщо `Number.isInteger(desiredPrice) === false` → SKU йде через PUT (зберігає копійки точно).
+
+### Реальні замірювання на проді (2026-05-08)
+Прогон через робочий код на whitehall.com.ua, 10 000 активних SKU зчитані через `GET /api/products?items_per_page=1000` (11 сторінок, 19.4s) і відправлені у gateway через `importProducts()` із синтетичним storePrice-diff (для змушення bulk-шляху без реальної зміни даних):
+
+- 10 000 SKU = 10 batch × 1000 SKU.
+- Клієнтський wall time: **4.44 сек** (rate-limited 10 RPS + ~0.3 ms/batch на CS-Cart).
+- Сумарний серверний час: **0.345 сек** по всіх batch-ах. Кожен batch CS-Cart обробляв ~31-41 ms.
+- Throughput: **~2250 SKU/сек** end-to-end.
+- `imported=10000, failed=0, skipped=0`.
+- Drift на 5 випадково вибраних SKU (status/amount/price/list_price/parent_product_id) — `0` (магазин не зачеплений, бо в payload пішли точно поточні значення).
+
+Окремо ghost-test на 100 невідомих SKU:
+- `updated_products=0, not_found_count=100, not_found_skus=[всі 100]`.
+- `imported=0, failed=100`, кожен SKU зафіксований у warning із конкретним `product_code`.
+- 0.29 сек end-to-end.
+
+Для контексту: на 100 000 SKU при 10 RPS і 1000-batch — повний bulk-цикл ~10 сек серверного + ~10 сек client-side rate-limit = `~20 сек`. Раніше при PUT поштучно для 50K price-змін — `~83 хв`.
 - `CSCART_ITEMS_PER_PAGE` ставити 1000 для mirror, щоб мінімізувати кількість сторінок.
 - Runtime optimization (implemented): перед імпортом збирається повний індекс каталогу `product_code -> product_id/status/price/amount/parent_product_id`, після чого:
   - не робляться lookup-запити для кожного SKU,
