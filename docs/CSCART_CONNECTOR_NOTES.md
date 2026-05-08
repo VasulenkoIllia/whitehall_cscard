@@ -26,6 +26,24 @@ Auth / env для CS-Cart:
 - `CSCART_PRODUCTS_UPDATE_BATCH_SIZE` (default `1000`, max `5000`) — розмір batch. Аліас: `CSCART_STOCK_UPDATE_BATCH_SIZE`.
 - `CSCART_PRODUCTS_UPDATE_RETRY_LIMIT` (default `5`) — retry на 429/5xx для bulk-запиту. Аліас: `CSCART_STOCK_UPDATE_RETRY_LIMIT`.
 - `CSCART_PRODUCTS_UPDATE_AUTH_MODE` (`auto`|`bearer`|`basic`, **default `basic` для нового endpoint у resolver-і коду**) — auth для bulk-запиту. Аліас: `CSCART_STOCK_UPDATE_AUTH_MODE`.
+- `CSCART_DELTA_MAX_MIRROR_AGE_MINUTES` (default `120`, **рекомендую `480` на проді**) — порог віку mirror'у для активації delta-filter. Якщо mirror старіший — delta вимикається і всі rows ідуть як changed (повільно). 480 хв (8 год) дає запас між cron-ticks, не змушуючи pipeline робити форсований mirror_sync перед кожним store_import.
+
+### Production .env checklist (мінімальний набір)
+```dotenv
+CSCART_BASE_URL=https://your.shop
+CSCART_API_USER=admin@your.shop
+CSCART_API_KEY=<32-char-key>
+CSCART_RATE_LIMIT_RPS=10
+CSCART_RATE_LIMIT_BURST=20
+CSCART_ITEMS_PER_PAGE=1000
+CSCART_ALLOW_CREATE=false
+CSCART_BULK_ENDPOINT=products_update
+CSCART_DELTA_MAX_MIRROR_AGE_MINUTES=480
+CSCART_API_UPDATE_FEATURE_ENABLED=true
+CSCART_API_UPDATE_FEATURE_ID=564
+CSCART_API_UPDATE_FEATURE_VALUE=Y
+CSCART_DISABLE_MISSING_ON_FULL_IMPORT=true
+```
 
 ### Auth note (Bearer)
 CS-Cart офіційно документує тільки **Basic auth** (`email:apiKey` base64-encoded). На цьому магазині додатково приймається `Authorization: Bearer <base64(email:apiKey)>` — той самий токен, тільки інший префікс. Raw API key у Bearer (`Bearer <api_key>`) — повертає 401 і **не** використовується. Поточний код містить старий рядок `Bearer ${apiKey}` (рядок 178) як dead branch — ENV-default `basic` робить його неактивним. Виправляти буде окремим PR коли буде підстава вмикати Bearer-шлях.
@@ -81,6 +99,48 @@ Endpoint truncate-ить дробову частину `price` (`1090.50 → 109
 - 0.29 сек end-to-end.
 
 Для контексту: на 100 000 SKU при 10 RPS і 1000-batch — повний bulk-цикл ~10 сек серверного + ~10 сек client-side rate-limit = `~20 сек`. Раніше при PUT поштучно для 50K price-змін — `~83 хв`.
+
+### E2E-валідація на test-середовищі (2026-05-08)
+Повний цикл: imitовано реальну ситуацію коли частина SKU у магазині розійшлась з preview.
+
+**Setup**: через `products_update` напряму приховано 2000 active SKU (`status A → H`) у test-store.
+
+**Run #84** (`store_mirror_sync`): підхопив 2000 нових `H` (mirror visible 26 822 → 24 822, hidden 31 158 → 33 158).
+
+**Run #85** (`update_pipeline → store_import`): з 2000 наших hidden SKU — 1355 мали `feature_564='Y'` (керовані pipeline'ом) → визначені як diff (preview каже `visibility=true`, mirror каже `visibility=false`) → bulk-reactivated. 645 не managed SKU pipeline свідомо НЕ торкнувся.
+
+Метрики run #85:
+- `delta.changed=1355, delta.skippedUnchanged=24822` — лише real changes пройшли в gateway.
+- `imported=1355, failed=0, skipped=0`.
+- 2 bulk-batches (1000 + 355), `bulkServerTimeSec=0.056`, `bulkFallbackBatches=0`.
+- Тривалість всього `store_import` step: ~10-15 сек.
+
+Висновки: feature-scope filter, delta-filter, bulk-flush, mirror-pipeline coordination — все працює end-to-end на реальних даних, з нульовим drift'ом і нульовим fallback'ом.
+
+### Архітектурні вдосконалення цього циклу
+Окрім самої міграції на bulk endpoint, додано низку захисних механізмів:
+
+**Resilience:**
+- `pg.Pool` має explicit `connectionTimeoutMillis=30s, statement_timeout=30min, idle_in_transaction_session_timeout=5min` — раніше defaults дозволяли безмежне зависання.
+- `googleapis` `gaxios timeout=60s` + retry на ECONNRESET/ETIMEDOUT/AbortError — раніше зависалі імпорт без таймауту.
+- `node-fetch` (CS-Cart) має 60s `AbortController` — раніше без таймауту, спостерігалось зависання pipeline на проді.
+- PUT-fallback storm у gateway отримав `await checkCanceled()` між row-PUT-ами — оператор може скасувати застряглий fallback за ≤60s замість ≤16h.
+
+**Performance:**
+- Time-based gating для `checkCanceled` і `reportProgress` (1s) замість count-based (25/250 rows) — на 200K-row run економить ~16s SQL ping-ping.
+- `JobScheduler.tick` стартує tasks через `void runTask()` — повільний `update_pipeline` більше не starve'ить sibling tasks (`mirror_sync`, `cleanup`).
+- `filterCsCartDelta` пропускає missing-in-mirror коли `allowCreate=false` — у gateway не потрапляють 100K+ rows які він би все одно скіпнув (прискорення скип-фази в ~3-5x на нашому prod-каталозі).
+- Migration 032: GIN+partial index на `store_mirror.raw->'product_features'` — `filterCsCartRowsByFeature` тепер Index Only Scan (12ms на 57K rows замість Seq Scan).
+
+**Observability:**
+- `appendCriticalWarning` поряд з `appendWarning` — bulk-flush summaries і fallback warnings не truncate'яться cap'ом (5000) навіть коли pipeline шумно skip'ає 100K missing-in-mirror SKU.
+- `onCriticalEvent` callback у `StoreImportContext` пише errors в `logs` table в real-time, не чекаючи завершення run-у. Bulk-flush-failure error message доступний оператору одразу.
+- `logs` sanitizer (`log.ts`) маскує credential-keys (`authorization`, `api_key`, `password`, `session_token`, `cookie` тощо) — захист від accidental leak'у у meta payload.
+
+**Коректність:**
+- `parentDiffers` в delta-filter і gateway тепер враховує що у нашого pipeline `parentProductCode` завжди `null` (parent керується вручну в CS-Cart admin'і). Раніше це тригерило marно-PUT для всіх variant SKU. Нинішня логіка: skip коли preview не передає parent.
+- `parent_product_id` прибрано з PUT payload (dead branch — `state.parentProductId` always null).
+- Startup race: `await application.startupCleanup` тепер ВЕРХ HTTP listen — перші запити після redeploy більше не отримують 409 від stale running jobs.
 - `CSCART_ITEMS_PER_PAGE` ставити 1000 для mirror, щоб мінімізувати кількість сторінок.
 - Runtime optimization (implemented): перед імпортом збирається повний індекс каталогу `product_code -> product_id/status/price/amount/parent_product_id`, після чого:
   - не робляться lookup-запити для кожного SKU,
