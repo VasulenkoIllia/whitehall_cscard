@@ -6,7 +6,7 @@
 - POST `/api/products` — створення нового товару (мінімум: `product_code`, `price`, `status`).
 - POST `/api/products_update` — bulk оновлення `sku/status/amount/price` (batch payload, **поточний шлях**).
 - POST `/api/stock_update` — старіший bulk-endpoint лише для `sku/amount/status`. Використовується тільки якщо ENV `CSCART_BULK_ENDPOINT=stock_update` (canary kill-switch).
-- Статус: `A` (active/visible), `H` (hidden), `D` (disabled).
+- Статус: `A` (active/visible), `D` (disabled — нова бізнес-конвенція для прихованих, **єдиний**, що ставить pipeline). `H` (hidden) — legacy, після міграції 2026-05-08 у магазині відсутній (див. секцію «H → D міграція» нижче).
 - Режим за замовчуванням: **update-only** (PUT по існуючому product_id з mirror). POST створення вмикається лише якщо `CSCART_ALLOW_CREATE=true`.
 
 Пропонований мапінг з нейтрального preview:
@@ -218,3 +218,43 @@ Endpoint truncate-ить дробову частину `price` (`1090.50 → 109
   - `POST /admin/api/jobs/import-source` (`sourceId`)
   - `POST /admin/api/jobs/import-supplier` (`supplierId`)
 - Ці джоби використовують той самий імпортний код (`ImporterDb`) і ті самі бізнес-правила, що `import_all`.
+
+## H → D міграція (2026-05-08, one-time)
+До 2026-05-08 у проді 91 993 SKU мали `status=H` (legacy hidden). Бізнес-конвенція переходила на формат `A + D` тільки. Pipeline кладе `D` для нових прихованих, але **не міг** перебити існуючі `H` через `normalizeStatus`, який трактує `H` і `D` як однакові («не active»).
+
+Зробили one-time міграцію через окремий скрипт `src/scripts/migrateHiddenToDisabled.ts` (npm: `migrate:h-to-d`):
+- Сканує весь каталог через `GET /api/products?items_per_page=1000`.
+- Збирає SKU зі `status='H'` у snapshot (`/tmp/h_to_d_<ts>.json`).
+- Bulk-update через `POST /api/products_update` payload `[{sku, status:'D'}]` батчами по 1000.
+- DRY_RUN режим (через ENV `DRY_RUN=true`) — лише сканує, без писань.
+
+Результат на проді (commit `923c7af`, run 2026-05-08 14:50 UTC):
+- Scan: 239 091 products → 91 993 H, 147 074 A, 24 D (10 хв scan-фаза).
+- Bulk update: **91 993 SKU за 1.93 сек серверного часу CS-Cart** (92 batches × ~20 ms), wall time 23 сек.
+- 0 not_found, 0 fallback.
+- Після `mirror_sync` верифікація: A=147 049, D=92 011, **H=0**.
+- Snapshot для аудиту: `/tmp/h_to_d_1778242362027.json` всередині container.
+
+Скрипт залишається в кодовій базі як **idempotent** — повторний запуск підхопить лише ті SKU що знов опинилися у `H` (наприклад, через ручне втручання в CS-Cart admin'і). Звичайний pipeline далі підтримує `A`/`D` без додаткової роботи.
+
+## Підсумкові prod-метрики циклу міграції (2026-05-08)
+Усе наступне підтверджено реальними prod-runs на whitehall.com.ua:
+
+| Сценарій | Run | Метрика |
+|---|---|---|
+| Перший cron-tick з новим кодом | `update_pipeline #494` | 27 хв (включно з `import_all` 9 хв + `finalize` 10 сек + перший store_import 5m35s з 38K real changes) |
+| Звичайний дрібний run | `store_import #502` | 162 SKU за 0.116 сек server time, 43 сек wall (1 batch, fallback=0) |
+| H → D міграція | `migrateHiddenToDisabled` | 91 993 SKU за 1.93 сек server time, 23 сек wall (92 batches, fallback=0) |
+
+| Аспект | Раніше | Тепер |
+|---|---|---|
+| Bulk endpoint для status/amount/price | відсутній (тільки PUT поштучно) | `POST /api/products_update` |
+| Тривалість 38K real changes | ~83 хв (PUT × 38K при 10 RPS) | ~5-6 хв (38 batches) |
+| Тривалість дрібних run'ів | (per-SKU PUT pace) | sub-second server time |
+| Status convention | `A` + `H` + `D` mix | `A` + `D` тільки |
+| Захист від зависання fetch | відсутній | `AbortController` 60 сек + retry |
+| Захист від pool exhaustion | defaults | explicit timeouts (30 хв statement, 5 хв idle-in-tx) |
+| Live diagnostics для bulk-fail | прихована за warnings cap=200 | `logService.log('error')` через `onCriticalEvent` real-time |
+| Missing-in-mirror у gateway | проходять весь loop і скіпаються | відсікаються в `filterCsCartDelta` коли `allowCreate=false` |
+| Migration 032: indexes | відсутні | partial GIN на `store_mirror.raw->'product_features'` + functional partial для `feature_564='Y'` |
+| Canary kill-switch | відсутній | `CSCART_BULK_ENDPOINT=stock_update` повертає до старого endpoint без redeploy |
