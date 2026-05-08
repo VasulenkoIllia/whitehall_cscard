@@ -223,6 +223,10 @@ export class PipelineJobRunner<MappedRow = unknown> {
     let lastBatchFailed = 0;
     let lastBatchSkipped = 0;
     let batchSequence = 0;
+    // Persist meta carries the most recent batch snapshot. Without this, persists
+    // that happen between batch checkpoints write `lastBatch: null`, which makes
+    // monitoring queries flap between value and null mid-run for no reason.
+    let lastPersistedBatch: Record<string, unknown> | null = null;
     const metaPersistIntervalMs = 5000;
     const logStepRows = 5000;
 
@@ -294,6 +298,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
         };
 
         await this.logs.log(jobId, 'info', 'store_import batch metrics', batchSummary);
+        lastPersistedBatch = batchSummary;
         lastLoggedProcessed = processed;
         lastBatchAt = now;
         lastBatchProcessed = processed;
@@ -318,7 +323,9 @@ export class PipelineJobRunner<MappedRow = unknown> {
             totalImported: imported,
             totalFailed: failed,
             totalSkipped: skipped,
-            lastBatch: batchSummary
+            // Retain last computed batch snapshot across persist intervals — null only
+            // when no batch has been logged yet at all (start of run).
+            lastBatch: batchSummary ?? lastPersistedBatch
           }
         });
         lastMetaPersistAt = now;

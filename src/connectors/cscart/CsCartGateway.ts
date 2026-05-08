@@ -251,7 +251,21 @@ export class CsCartGateway {
     return this.normalizeProductCode(asObj.sku || asObj.product_code || asObj.code);
   }
 
-  private async fetchProductIndexByCode(): Promise<
+  /**
+   * Build a complete in-memory index of the CS-Cart catalogue keyed by product_code.
+   * Only used as a fallback when store_mirror is empty/stale (i.e. rows arrived
+   * without `productId` enrichment from filterCsCartDelta). On a fresh-mirror
+   * pipeline this is skipped entirely.
+   *
+   * Long-running operation (~one HTTP per page × hundreds of pages on a large
+   * catalogue). Accepts an optional StoreImportContext so we can:
+   *   1. honour cancel between pages (no longer a 3+ minute uninterruptible block);
+   *   2. emit periodic progress to operator logs every 10 pages.
+   */
+  private async fetchProductIndexByCode(
+    context?: StoreImportContext,
+    progressLog?: (message: string) => void
+  ): Promise<
     Map<
       string,
       {
@@ -274,8 +288,16 @@ export class CsCartGateway {
       }
     >();
 
+    const startedAt = Date.now();
     let page = 1;
+    let totalSeen = 0;
     while (true) {
+      // Honour cancel between pages — caller may have cancelled while we were paging.
+      if (context?.isCanceled && (await context.isCanceled())) {
+        const cancelError = new Error('Job canceled');
+        (cancelError as { code?: string }).code = 'JOB_CANCELED';
+        throw cancelError;
+      }
       const data = await this.request(
         `/api/products?items_per_page=${this.itemsPerPage}&page=${page}`
       );
@@ -294,9 +316,16 @@ export class CsCartGateway {
           parentProductId: this.normalizeParentProductId(product.parent_product_id)
         });
       }
+      totalSeen += products.length;
 
       const totalItems = Number(data.params?.total_items || products.length);
       const totalPages = Math.max(1, Math.ceil(totalItems / this.itemsPerPage));
+      if (progressLog && page % 10 === 0) {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+        progressLog(
+          `fetchProductIndexByCode: page=${page}/${totalPages} indexed=${byCode.size}/${totalItems} elapsed=${elapsedSec}s`
+        );
+      }
       if (products.length === 0 || page >= totalPages) {
         break;
       }
@@ -516,10 +545,13 @@ export class CsCartGateway {
     // (i.e. mirror was stale/empty and productId was not pre-resolved).
     // In the normal update_pipeline flow (fresh mirror), all rows have productId set
     // and this expensive API fetch is skipped entirely.
+    const indexProgressLog = (msg: string) => this.appendWarning(warnings, msg);
     const needsFallback = rows.some(
       (r) => this.normalizeProductCode(r.productCode) && r.productId === undefined
     );
-    const indexByCode = needsFallback ? await this.fetchProductIndexByCode() : null;
+    const indexByCode = needsFallback
+      ? await this.fetchProductIndexByCode(context, indexProgressLog)
+      : null;
 
     let cursor = 0;
     const totalRows = rows.length;
@@ -534,9 +566,15 @@ export class CsCartGateway {
     let resumeRemaining = effectiveResumeProcessed;
     let runProcessed = 0;
     let canceled = false;
-    let cancelCheckCounter = 0;
-    const progressReportEvery = 250;
-    let nextProgressMark = progressReportEvery;
+    // Time-based gating: cancel/progress checks fire at most every N ms, regardless of
+    // how fast we churn through rows. Replaces the old count-based gating
+    // (`cancelCheckCounter % 25` and `nextProgressMark = processed + 250`) which made
+    // a 200K skipped-rows run pay 8K isCanceled SQL pings just to walk the loop.
+    // Cancel reactivity stays well under operator-perceptible (≤1s).
+    const CANCEL_CHECK_INTERVAL_MS = 1000;
+    const PROGRESS_REPORT_INTERVAL_MS = 1000;
+    let lastCancelCheckAt = 0;
+    let lastProgressReportAt = 0;
     const pendingProductsUpdate: ResolvedProductState[] = [];
     let productsUpdateBatchSeq = 0;
     // Counters for the operational summary that lands in run logs (see PipelineJobRunner).
@@ -565,10 +603,11 @@ export class CsCartGateway {
       if (canceled || !context?.isCanceled) {
         return;
       }
-      cancelCheckCounter += 1;
-      if (cancelCheckCounter % 25 !== 0) {
+      const now = Date.now();
+      if (now - lastCancelCheckAt < CANCEL_CHECK_INTERVAL_MS) {
         return;
       }
+      lastCancelCheckAt = now;
       const isCanceled = await context.isCanceled();
       if (!isCanceled) {
         return;
@@ -583,13 +622,12 @@ export class CsCartGateway {
       if (!context?.onProgress) {
         return;
       }
-      const processed = effectiveResumeProcessed + runProcessed;
-      if (!force && processed < nextProgressMark) {
+      const now = Date.now();
+      if (!force && now - lastProgressReportAt < PROGRESS_REPORT_INTERVAL_MS) {
         return;
       }
-      if (!force) {
-        nextProgressMark = processed + progressReportEvery;
-      }
+      lastProgressReportAt = now;
+      const processed = effectiveResumeProcessed + runProcessed;
       const progress: StoreImportProgress = {
         total: totalValidRows,
         processed,

@@ -347,8 +347,17 @@ export class JobScheduler {
         if (typeof nextRunAt !== 'number' || now < nextRunAt) {
           continue;
         }
-        // eslint-disable-next-line no-await-in-loop
-        await this.runTask(task);
+        if (this.runningTasks.has(task.name)) {
+          continue;
+        }
+        // Reserve the slot: bump nextRunByTask BEFORE firing so subsequent ticks
+        // don't see the same task as still-due while we're waiting for runTask.
+        // runTask will overwrite this with the real next-run-at on completion.
+        // Fire-and-forget so a slow task (e.g. long update_pipeline) cannot starve
+        // siblings (mirror_sync / cleanup). Concurrency is still bounded by
+        // BLOCKING_JOB_TYPES at the runner level + runningTasks at the scheduler level.
+        this.nextRunByTask.set(task.name, this.resolveNextRunAt(task, now));
+        void this.runTask(task);
       }
     } finally {
       this.tickInFlight = false;
