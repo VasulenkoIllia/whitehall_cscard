@@ -374,7 +374,7 @@ variation_group_code (рідкісно).
 - `Артикул в магазині` (`store_article` через `sm_base.article = base.article`) — давав фантомні `-` для товарів де парент-product_code має суфікс розміру (наприклад `FD9919-001-36` як парент). Замість нього використовувати `Колекція в магазині` або `SKU магазину`.
 - `Ціна в магазині`, `Видимість в магазині`, `Постачальник в магазині`, `Коментар` — дублювали Mirror-вкладку.
 
-**Додано**: колонка `Варіація-група` (`store_variation_group_code` ← `sm_sku.variation_group_code`). Показує CS-Cart variation_group_code того ж рядка, що і `SKU магазину`. Якщо SKU не в магазині → `-`. Якщо SKU в магазині але не в variation-group → `-`.
+**Додано**: колонка `Варіація-група` (`store_variation_group_code`). Показує CS-Cart variation_group_code **будь-якої** варіації цієї моделі в магазині (per-collection lookup, не per-SKU). Реалізовано через `LEFT JOIN LATERAL` що шукає в `store_mirror` рядок з `collection_code = base.article` AND `variation_group_code IS NOT NULL`, повертає його `variation_group_code`. Якщо в магазині нема жодної варіації цієї моделі з ненульовим `variation_group_code` → `-`. Симетрично з `Колекція в магазині` — обидві відповідають на питання "що ця модель має в магазині", не "що цей конкретний SKU має".
 
 **SQL**: `listComparePreview` спрощено — прибрано `LEFT JOIN store_mirror sm_base`, прибрано з SELECT всі store_*-поля, що були видалені з UI/CSV. Зменшує bandwidth і простір плану.
 

@@ -1686,7 +1686,7 @@ export class CatalogAdminService {
           OR base.supplier_sku_prefix ILIKE $${index}
           OR base.sku_article ILIKE $${index}
           OR COALESCE(sm_col.code, '') ILIKE $${index}
-          OR COALESCE(sm_sku.variation_group_code, '') ILIKE $${index})`
+          OR COALESCE(sm_vgc.code, '') ILIKE $${index})`
       );
     }
     if (missingOnly) {
@@ -1735,7 +1735,7 @@ export class CatalogAdminService {
          base.supplier_has_sku_prefix,
          base.sku_article,
          sm_sku.article AS store_sku,
-         sm_sku.variation_group_code AS store_variation_group_code,
+         sm_vgc.code AS store_variation_group_code,
          sm_col.code AS store_collection_code,
          COUNT(*) OVER() AS total
        FROM base
@@ -1749,6 +1749,14 @@ export class CatalogAdminService {
            AND sm.collection_code = base.article
          LIMIT 1
        ) sm_col ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT sm.variation_group_code AS code
+         FROM store_mirror sm
+         WHERE sm.store = $${values.length}
+           AND sm.collection_code = base.article
+           AND sm.variation_group_code IS NOT NULL
+         LIMIT 1
+       ) sm_vgc ON TRUE
        ${whereClause}
        ORDER BY base.id ASC
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
