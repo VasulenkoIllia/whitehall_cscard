@@ -77,6 +77,7 @@ interface StoreMirrorRow {
   amount: number;
   raw: unknown;
   seenAt: string;
+  collectionCode: string | null;
 }
 
 const UPSERT_CHUNK_SIZE = 500;
@@ -130,6 +131,11 @@ function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): Store
     rawObj && typeof rawObj === 'object' && !Array.isArray(rawObj)
       ? normalizeAmount(rawObj.amount)
       : 0;
+  const collectionRaw = row.collectionCode;
+  const collectionCode =
+    typeof collectionRaw === 'string' && collectionRaw.trim().length > 0
+      ? collectionRaw.trim()
+      : null;
   return {
     store,
     article,
@@ -139,7 +145,8 @@ function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): Store
     price: normalizePrice(row.price),
     amount,
     raw: row.raw ?? null,
-    seenAt
+    seenAt,
+    collectionCode
   };
 }
 
@@ -673,7 +680,7 @@ export class StoreMirrorService {
 
     const values: Array<string | number | boolean | null> = [];
     const placeholders = dedupedRows.map((row, index) => {
-      const base = index * 9;
+      const base = index * 10;
       values.push(
         row.store,
         row.article,
@@ -683,14 +690,15 @@ export class StoreMirrorService {
         row.price,
         row.amount,
         JSON.stringify(row.raw),
-        row.seenAt
+        row.seenAt,
+        row.collectionCode ?? null
       );
-      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`;
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`;
     });
 
     await this.pool.query(
       `INSERT INTO store_mirror
-         (store, article, supplier, parent_article, visibility, price, amount, raw, seen_at)
+         (store, article, supplier, parent_article, visibility, price, amount, raw, seen_at, collection_code)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (store, article) DO UPDATE
          SET supplier = EXCLUDED.supplier,
@@ -700,7 +708,8 @@ export class StoreMirrorService {
              amount = EXCLUDED.amount,
              raw = EXCLUDED.raw,
              synced_at = NOW(),
-             seen_at = EXCLUDED.seen_at`,
+             seen_at = EXCLUDED.seen_at,
+             collection_code = EXCLUDED.collection_code`,
       values
     );
   }

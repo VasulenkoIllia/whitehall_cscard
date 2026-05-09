@@ -459,6 +459,7 @@ export default function App() {
     search: '',
     supplierId: '',
     missingOnly: true,
+    missingCollectionOnly: false,
     mergedSort: 'article_asc',
     finalSort: 'article_asc',
     storePreviewMode: 'delta'
@@ -1638,6 +1639,7 @@ export default function App() {
       query.set('limit', dataFilters.limit || '50');
       query.set('offset', dataFilters.offset || '0');
       query.set('missingOnly', dataFilters.missingOnly ? 'true' : 'false');
+      query.set('missingCollectionOnly', dataFilters.missingCollectionOnly ? 'true' : 'false');
       if (dataFilters.search.trim()) {
         query.set('search', dataFilters.search.trim());
       }
@@ -1968,6 +1970,7 @@ export default function App() {
     dataFilters.limit,
     dataFilters.offset,
     dataFilters.missingOnly,
+    dataFilters.missingCollectionOnly,
     dataFilters.mergedSort,
     dataFilters.finalSort,
     dataFilters.storePreviewMode

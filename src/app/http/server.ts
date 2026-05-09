@@ -951,6 +951,11 @@ export function createHttpServer(appContext: AppContext) {
         typeof req.query.missingOnly === 'string'
           ? req.query.missingOnly === '1' || req.query.missingOnly.toLowerCase() === 'true'
           : false;
+      const missingCollectionOnly =
+        typeof req.query.missingCollectionOnly === 'string'
+          ? req.query.missingCollectionOnly === '1' ||
+            req.query.missingCollectionOnly.toLowerCase() === 'true'
+          : false;
       const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
       const result = await catalogAdmin.listComparePreview({
         limit,
@@ -958,6 +963,7 @@ export function createHttpServer(appContext: AppContext) {
         supplierId,
         search,
         missingOnly,
+        missingCollectionOnly,
         store
       });
       return res.json(result);
@@ -1105,6 +1111,11 @@ export function createHttpServer(appContext: AppContext) {
         typeof req.query.missingOnly === 'string'
           ? req.query.missingOnly === '1' || req.query.missingOnly.toLowerCase() === 'true'
           : false;
+      const missingCollectionOnly =
+        typeof req.query.missingCollectionOnly === 'string'
+          ? req.query.missingCollectionOnly === '1' ||
+            req.query.missingCollectionOnly.toLowerCase() === 'true'
+          : false;
       const store = typeof req.query.store === 'string' ? req.query.store : 'cscart';
       let offset = 0;
 
@@ -1124,7 +1135,8 @@ export function createHttpServer(appContext: AppContext) {
         'store_sku',
         'store_visibility',
         'store_price',
-        'store_supplier'
+        'store_supplier',
+        'store_collection_code'
       ]);
 
       while (true) {
@@ -1135,6 +1147,7 @@ export function createHttpServer(appContext: AppContext) {
           supplierId,
           search,
           missingOnly,
+          missingCollectionOnly,
           store
         });
 
@@ -1155,7 +1168,8 @@ export function createHttpServer(appContext: AppContext) {
             row.store_sku,
             row.store_visibility,
             row.store_price,
-            row.store_supplier
+            row.store_supplier,
+            row.store_collection_code
           ]);
         }
 

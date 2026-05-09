@@ -106,6 +106,7 @@ type ComparePreviewOptions = {
   search: string | null;
   supplierId: number | null;
   missingOnly: boolean;
+  missingCollectionOnly: boolean;
   store: string;
 };
 
@@ -1661,6 +1662,7 @@ export class CatalogAdminService {
         ? Math.trunc(options.supplierId)
         : null;
     const missingOnly = options.missingOnly === true;
+    const missingCollectionOnly = options.missingCollectionOnly === true;
     const store = String(options.store || 'cscart').trim().toLowerCase() || 'cscart';
 
     const baseWhereParts: string[] = [];
@@ -1682,11 +1684,15 @@ export class CatalogAdminService {
           OR base.comment ILIKE $${index}
           OR base.supplier_name ILIKE $${index}
           OR base.supplier_sku_prefix ILIKE $${index}
-          OR base.sku_article ILIKE $${index})`
+          OR base.sku_article ILIKE $${index}
+          OR COALESCE(sm_col.code, '') ILIKE $${index})`
       );
     }
     if (missingOnly) {
       whereParts.push('sm_sku.article IS NULL');
+    }
+    if (missingCollectionOnly) {
+      whereParts.push('sm_col.code IS NULL');
     }
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     values.push(store);
@@ -1733,6 +1739,7 @@ export class CatalogAdminService {
          sm_sku.visibility AS store_visibility,
          sm_sku.price AS store_price,
          sm_sku.supplier AS store_supplier,
+         sm_col.code AS store_collection_code,
          COUNT(*) OVER() AS total
        FROM base
        LEFT JOIN store_mirror sm_base
@@ -1741,6 +1748,13 @@ export class CatalogAdminService {
        LEFT JOIN store_mirror sm_sku
          ON sm_sku.store = $${values.length}
         AND sm_sku.article = base.sku_article
+       LEFT JOIN LATERAL (
+         SELECT sm.collection_code AS code
+         FROM store_mirror sm
+         WHERE sm.store = $${values.length}
+           AND sm.collection_code = base.article
+         LIMIT 1
+       ) sm_col ON TRUE
        ${whereClause}
        ORDER BY base.id ASC
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,

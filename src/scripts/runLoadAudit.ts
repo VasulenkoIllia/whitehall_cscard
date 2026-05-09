@@ -429,6 +429,7 @@ async function runScenario(
         search: null,
         supplierId: null,
         missingOnly: false,
+        missingCollectionOnly: false,
         store: 'cscart'
       })
     );
@@ -442,6 +443,7 @@ async function runScenario(
         search: null,
         supplierId: null,
         missingOnly: true,
+        missingCollectionOnly: false,
         store: 'cscart'
       })
     );

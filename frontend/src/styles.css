@@ -497,6 +497,14 @@ pre {
 .data-table td,
 .data-table th {
   white-space: nowrap;
+  padding: 6px 5px;
+}
+
+.data-table td.wrap,
+.data-table th.wrap {
+  white-space: normal;
+  word-break: break-word;
+  max-width: 240px;
 }
 
 .data-table tbody tr:nth-child(2n) {

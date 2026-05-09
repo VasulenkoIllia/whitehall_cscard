@@ -170,7 +170,8 @@ function createConnector(config: AppConfig): StoreConnector<unknown> {
         process.env.CSCART_PRODUCTS_UPDATE_AUTH_MODE,
         process.env.CSCART_STOCK_UPDATE_AUTH_MODE
       )
-    )
+    ),
+    collectionFeatureId: String(readEnvPositiveInt(process.env.CSCART_COLLECTION_FEATURE_ID, 558))
   });
 
   return new CsCartConnector(csGateway);

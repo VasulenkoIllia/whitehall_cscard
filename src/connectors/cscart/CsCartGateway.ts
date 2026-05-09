@@ -29,6 +29,12 @@ export interface CsCartGatewayOptions {
   productsUpdateBatchSize?: number;
   productsUpdateRetryLimit?: number;
   productsUpdateAuthMode?: 'basic' | 'bearer' | 'auto';
+  /**
+   * CS-Cart product feature id holding the "Колекція + Модель" value
+   * that we denormalize into store_mirror.collection_code. Default 558
+   * (production whitehall.com.ua). Override via CSCART_COLLECTION_FEATURE_ID.
+   */
+  collectionFeatureId?: string;
 }
 
 interface CsCartProduct {
@@ -39,6 +45,7 @@ interface CsCartProduct {
   amount: string;
   parent_product_id?: string;
   updated_timestamp?: string;
+  product_features?: Record<string, { value?: string } | undefined>;
 }
 
 type CsCartAuthMode = 'basic' | 'bearer';
@@ -126,6 +133,8 @@ export class CsCartGateway {
 
   private readonly productsUpdateAuthMode: 'basic' | 'bearer' | 'auto';
 
+  private readonly collectionFeatureId: string;
+
   private resolvedProductsUpdateAuthMode: CsCartAuthMode | null = null;
 
   constructor(private readonly options: CsCartGatewayOptions) {
@@ -157,6 +166,7 @@ export class CsCartGateway {
     this.productsUpdateAuthMode = this.normalizeProductsUpdateAuthMode(
       options.productsUpdateAuthMode
     );
+    this.collectionFeatureId = String(options.collectionFeatureId || '558').trim() || '558';
   }
 
   private normalizeProductCode(value: unknown): string {
@@ -534,14 +544,22 @@ export class CsCartGateway {
       `/api/products?items_per_page=${this.itemsPerPage}&page=${page}`
     );
     const products: CsCartProduct[] = Array.isArray(data.products) ? data.products : [];
-    const items: MirrorRow[] = products.map((p) => ({
-      article: p.product_code || '',
-      supplier: null,
-      parentArticle: p.parent_product_id && p.parent_product_id !== '0' ? p.parent_product_id : null,
-      visibility: (p.status || '').toUpperCase() === 'A',
-      price: Number(p.price || 0) || null,
-      raw: p
-    }));
+    const items: MirrorRow[] = products.map((p) => {
+      const collectionRaw = p.product_features?.[this.collectionFeatureId]?.value;
+      const collectionCode =
+        typeof collectionRaw === 'string' && collectionRaw.trim().length > 0
+          ? collectionRaw.trim()
+          : null;
+      return {
+        article: p.product_code || '',
+        supplier: null,
+        parentArticle: p.parent_product_id && p.parent_product_id !== '0' ? p.parent_product_id : null,
+        visibility: (p.status || '').toUpperCase() === 'A',
+        price: Number(p.price || 0) || null,
+        collectionCode,
+        raw: p
+      };
+    });
     const totalItems = Number(data.params?.total_items || products.length);
     const totalPages = Math.ceil(totalItems / this.itemsPerPage);
     const nextCursor = page < totalPages ? String(page + 1) : null;

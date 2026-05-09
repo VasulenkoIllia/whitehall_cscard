@@ -907,6 +907,7 @@ async function runIteration(
         search: null,
         supplierId: null,
         missingOnly: false,
+        missingCollectionOnly: false,
         store: 'cscart'
       })
     );
@@ -920,6 +921,7 @@ async function runIteration(
         search: null,
         supplierId: null,
         missingOnly: true,
+        missingCollectionOnly: false,
         store: 'cscart'
       })
     );

@@ -82,22 +82,20 @@ const VIEW_CONFIG = {
     columns: [
       { key: 'article', label: 'SKU (ефективний)' },
       { key: 'size', label: 'Розмір' },
-      { key: 'supplier_name', label: 'Постачальник' },
+      { key: 'supplier_name', label: 'Постачальник', wrap: true },
       { key: 'supplier_sku_prefix', label: 'SKU префікс' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
-      { key: 'sku_article', label: 'SKU з розміром' },
-      { key: 'store_article', label: 'Артикул в магазині' },
-      { key: 'store_sku', label: 'SKU магазину' },
-      { key: 'store_price', label: 'Ціна в магазині' },
-      { key: 'store_visibility', label: 'Видимість в магазині' },
-      { key: 'store_supplier', label: 'Постачальник в магазині' },
-      { key: 'comment', label: 'Коментар' },
-      { key: 'extra', label: 'Назва' }
+      { key: 'sku_article', label: 'SKU з розміром', wrap: true },
+      { key: 'store_article', label: 'Артикул в магазині', wrap: true },
+      { key: 'store_sku', label: 'SKU магазину', wrap: true },
+      { key: 'store_collection_code', label: 'Колекція в магазині', wrap: true },
+      { key: 'extra', label: 'Назва', wrap: true }
     ],
     supportsSupplierFilter: true,
     supportsMissingOnly: true,
+    supportsMissingCollectionOnly: true,
     supportsMergedSort: false,
     supportsFinalSort: false
   },
@@ -305,7 +303,11 @@ export function DataTab({
             <input
               value={dataFilters.search}
               onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value, offset: '0' }))}
-              placeholder="артикул / SKU"
+              placeholder={
+                activeDataView === 'compare'
+                  ? 'артикул / SKU / колекція'
+                  : 'артикул / SKU'
+              }
             />
           </div>
           {currentConfig.supportsSupplierFilter ? (
@@ -377,10 +379,23 @@ export function DataTab({
                   <input
                     type="checkbox"
                     checked={dataFilters.missingOnly}
-                    onChange={(event) => setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked }))}
+                    onChange={(event) => setDataFilters((prev) => ({ ...prev, missingOnly: event.target.checked, offset: '0' }))}
                     style={{ width: 'auto', margin: 0 }}
                   />
                   Лише missing
+                </label>
+              </div>
+            ) : null}
+            {currentConfig.supportsMissingCollectionOnly ? (
+              <div style={{ paddingBottom: 4 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(dataFilters.missingCollectionOnly)}
+                    onChange={(event) => setDataFilters((prev) => ({ ...prev, missingCollectionOnly: event.target.checked, offset: '0' }))}
+                    style={{ width: 'auto', margin: 0 }}
+                  />
+                  Лише без колекції
                 </label>
               </div>
             ) : null}
@@ -416,6 +431,7 @@ export function DataTab({
               if (dataFilters.search) params.set('search', dataFilters.search);
               if (currentConfig.supportsSupplierFilter && dataFilters.supplierId) params.set('supplierId', dataFilters.supplierId);
               if (currentConfig.supportsMissingOnly && dataFilters.missingOnly) params.set('missingOnly', '1');
+              if (currentConfig.supportsMissingCollectionOnly && dataFilters.missingCollectionOnly) params.set('missingCollectionOnly', '1');
               if (currentConfig.supportsMergedSort && dataFilters.mergedSort) params.set('sort', dataFilters.mergedSort);
               if (currentConfig.supportsFinalSort && dataFilters.finalSort) params.set('sort', dataFilters.finalSort);
               // job IDs are positive integers (>0), so truthiness check is safe
@@ -479,7 +495,11 @@ export function DataTab({
               <thead>
                 <tr>
                   {currentColumns.map((column) => (
-                    <th key={column.key} style={{ position: 'sticky', top: 0, background: '#f4f8ff', zIndex: 1 }}>
+                    <th
+                      key={column.key}
+                      className={column.wrap ? 'wrap' : undefined}
+                      style={{ position: 'sticky', top: 0, background: '#f4f8ff', zIndex: 1 }}
+                    >
                       {column.label}
                     </th>
                   ))}
@@ -551,7 +571,12 @@ export function DataTab({
                           return <td key={`${rowIndex}_${column.key}`}>{value || '-'}</td>;
                         }
                         return (
-                          <td key={`${rowIndex}_${column.key}`}>{String(row[column.key] ?? '-')}</td>
+                          <td
+                            key={`${rowIndex}_${column.key}`}
+                            className={column.wrap ? 'wrap' : undefined}
+                          >
+                            {String(row[column.key] ?? '-')}
+                          </td>
                         );
                       })}
                     </tr>
