@@ -258,3 +258,76 @@ Endpoint truncate-ить дробову частину `price` (`1090.50 → 109
 | Missing-in-mirror у gateway | проходять весь loop і скіпаються | відсікаються в `filterCsCartDelta` коли `allowCreate=false` |
 | Migration 032: indexes | відсутні | partial GIN на `store_mirror.raw->'product_features'` + functional partial для `feature_564='Y'` |
 | Canary kill-switch | відсутній | `CSCART_BULK_ENDPOINT=stock_update` повертає до старого endpoint без redeploy |
+
+## Колекція в магазині (feature 558, 2026-05-09)
+
+В CS-Cart кожен товар має ручну характеристику **"Колекція + Модель"** (`feature_id=558`),
+де адмін магазину виставляє базовий код моделі (наприклад `FD9919-001` для всіх розмірних
+варіацій кросівок Nike Zoom Vomero 5). Це **не product_code батьківського товару**
+(той часто має суфікс конкретного розміру), а окремий стабільний бізнес-код колекції.
+
+### Покриття на проді (виміри 2026-05-09, 239 035 рядків `store_mirror`)
+- `has_558_value`: 238 072 (99.6%) — активний асортимент.
+- `empty_or_missing`: 963 (0.4%) — усі зі `status='D'` (deleted).
+- Унікальних колекцій: 93 176 (≈2.5 SKU/колекція).
+- Збіг наших `products_final.article` з колекціями магазину: 67 759 з 106 748 (63%) — для них фото/опис уже є в CS-Cart, треба лише додати варіацію.
+
+### Денормалізація у `store_mirror.collection_code` (migration 033)
+- `ALTER TABLE store_mirror ADD COLUMN collection_code TEXT`.
+- Backfill з `raw->'product_features'->'558'->>'value'` (хардкод 558 у міграції — runtime читає ENV).
+- Partial B-tree: `store_mirror_store_collection_idx ON (store, collection_code) WHERE collection_code IS NOT NULL`.
+- Розмір: ~5 MB колонка + ~10 MB індекс на 239k рядків.
+- Бекфіл-UPDATE: ~30-60 сек, створює мертві версії рядків (MVCC).
+- ⚠️ **Після міграції виконати** `VACUUM (ANALYZE) store_mirror` — поза транзакцією, бо runMigrations обгортає кожен файл `BEGIN/COMMIT`.
+
+### Runtime запис (CsCartGateway + StoreMirrorService)
+- `MirrorRow.collectionCode: string | null` — нове опціональне поле в [`src/core/domain/store.ts`](../src/core/domain/store.ts).
+- `CsCartGateway.fetchProductsPage` витягує `p.product_features?.[CSCART_COLLECTION_FEATURE_ID]?.value` під час mirror sync.
+- `StoreMirrorService.upsertBatch` пише `collection_code` як 10-й параметр (раніше було 9). ON CONFLICT оновлює його разом із рештою.
+- HoroshopConnector не зачеплено: поле опціональне, gateway не передає → null.
+
+### Compare-tab (новий стовпець + фільтр + пошук)
+- `listComparePreview` ([`CatalogAdminService.ts:1654`](../src/core/admin/CatalogAdminService.ts)) додає:
+  ```sql
+  LEFT JOIN LATERAL (
+    SELECT sm.collection_code AS code
+    FROM store_mirror sm
+    WHERE sm.store = $store AND sm.collection_code = base.article
+    LIMIT 1
+  ) sm_col ON TRUE
+  ```
+- Новий SELECT-поле `store_collection_code`. Значення = колекція в магазині (= `base.article` коли матч), NULL інакше.
+- Опційний фільтр `missingCollectionOnly=true` → додає `WHERE sm_col.code IS NULL`.
+- Пошук розширено: `OR COALESCE(sm_col.code, '') ILIKE` (експліцитно, навіть якщо часто redundant з `base.article ILIKE`).
+- Плейсхолдер пошуку у Compare на фронті: `артикул / SKU / колекція`.
+- CSV-експорт `compare-export` додав останнє поле `store_collection_code`. Існуючі позиції 0..14 не зсунулись — backwards-compatible для зовнішніх споживачів.
+
+### UI (frontend/src/tabs/DataTab.jsx)
+Прибрано 4 колонки з Compare-вкладки (дублювали інформацію з Mirror-вкладки):
+- `store_price` (Ціна в магазині), `store_visibility` (Видимість), `store_supplier` (Постачальник в магазині), `comment` (Коментар).
+
+Додано:
+- Колонку **«Колекція в магазині»** (`store_collection_code`).
+- Чекбокс **«Лише без колекції»** поряд з «Лише missing». Обидва незалежні, можна комбінувати.
+- CSS-клас `.wrap` для довгих текстових клітинок (`white-space: normal; word-break: break-word; max-width: 240px`) + tighter padding `6px 5px` для `.data-table` — прибирає горизонтальний скрол на стандартних екранах.
+
+### Сегментація missing-кандидатів
+Комбінації двох чекбоксів дають 4 практичні стани:
+
+| Лише missing | Лише без колекції | Що оператор бачить | Дія |
+|---|---|---|---|
+| ☐ | ☐ | Усі рядки (~194 518 на проді) | Загальний перегляд |
+| ☑ | ☐ | Варіація відсутня в магазині (~44 329) | Як працював фільтр і раніше |
+| ☐ | ☑ | Колекція ще не створена в магазині | Треба робити нову картку |
+| ☑ | ☑ | Перетин: ні варіації, ні колекції | "Створити з нуля" — кандидати на повне створення |
+
+### ENV
+```dotenv
+CSCART_COLLECTION_FEATURE_ID=558    # default; прод whitehall.com.ua
+```
+Якщо в іншому магазині feature_id інший — підставити через ENV. Бекфіл-міграція хардкодить 558 (вимога runMigrations.ts: одна транзакція, без параметрів). Якщо потрібен інший id — окрема one-time UPDATE.
+
+### Обмеження
+- Якщо адмін CS-Cart не виставив feature 558 для конкретного товару — `collection_code = NULL` → у Compare колонка покаже `-` навіть якщо товар фізично є в магазині. Це не баг, а **сигнал про неконсистентність даних магазину** (data quality check).
+- LATERAL JOIN дає O(log n) lookup завдяки partial index. На 5000-row Compare запиту додає ~30-50 ms.
+- Backfill — one-time. Подальші зміни підхоплюються runtime upsert через mirror_sync (≤ cron interval лаг).

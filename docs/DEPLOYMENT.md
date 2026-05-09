@@ -58,6 +58,34 @@ git pull origin main
 docker compose up -d --build app
 ```
 
+### Перевірка після деплою (рекомендована)
+
+```bash
+# Які міграції щойно застосовано (нові — рядок "Applied migration ...")
+docker logs whitehall-cscard-app --tail 100 | grep -iE "Applied migration|migration.*error"
+
+# Контейнер живий і відповідає
+docker compose ps
+```
+
+### Якщо міграція робила великий UPDATE / backfill
+
+PostgreSQL не дозволяє `VACUUM` всередині транзакції, а `runMigrations.ts` обгортає
+кожен файл у `BEGIN/COMMIT`. Коли міграція робить масовий `UPDATE` (наприклад,
+бекфіл нової колонки на 100k+ рядків), створюються мертві версії MVCC →
+тимчасове ~+1.2 GB на таблиці. Autovacuum прибере це через години — або вручну:
+
+```bash
+docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
+  "VACUUM (ANALYZE) <table_name>;"
+```
+
+`ANALYZE` одразу оновлює статистику для нових індексів — без неї перші
+запити можуть піти не оптимальним планом.
+
+Міграції що вимагають VACUUM після застосування (актуальний список):
+- `033_add_collection_code_to_store_mirror.sql` → `VACUUM (ANALYZE) store_mirror`.
+
 ---
 
 ## Оновлення користувачів

@@ -1,6 +1,6 @@
 # Поточний функціонал (CS-Cart scope)
 
-**Останнє оновлення:** 2026-04-20 (виправлення skipDeactivationWithoutCreate + фікс націнки "За замовчуванням")
+**Останнє оновлення:** 2026-05-09 (Compare-вкладка: колонка «Колекція в магазині» з feature 558 + фільтр «Лише без колекції» + UI-чистка)
 
 ## Поточний фокус
 - Активний сценарій міграції: тільки `CS-Cart`.
@@ -17,6 +17,7 @@
   - Модалка мапінгу: кнопка **"Показати прев'ю"** завжди перезавантажує прев'ю з Google Sheets (враховує поточний `Рядок заголовку`). Поле `Рядок заголовку` вказує який рядок таблиці використовується як назви колонок — після зміни треба натиснути "Показати прев'ю" щоб дропдаун оновився.
 - `Націнки` — markup rule sets: list/create/update/default + conditions editor.
 - `Дані` — merged/final/compare preview + `В магазині` (store mirror) + `До відправки` (store preview) + server filters/sort/paging + підтаб **Розміри**.
+  - **Compare-вкладка**: колонка **«Колекція в магазині»** (`store_collection_code`, feature 558 з CS-Cart) поряд з «Артикул в магазині» / «SKU магазину». Дозволяє відрізнити "треба додати варіацію до існуючої колекції" від "треба створювати картку з нуля". Чекбокс **«Лише без колекції»** працює незалежно від «Лише missing» — комбінація обох дає кандидатів на створення нових товарів. Пошук охоплює і колекцію (placeholder: `артикул / SKU / колекція`). Прибрано 4 колонки що дублювали Mirror-вкладку (`Ціна в магазині`, `Видимість`, `Постачальник в магазині`, `Коментар`). Деталі реалізації в [`CSCART_CONNECTOR_NOTES.md`](./CSCART_CONNECTOR_NOTES.md#колекція-в-магазині-feature-558-2026-05-09).
 - `Крон` — runtime-налаштування scheduler (`update_pipeline`, `store_mirror_sync`, `cleanup`).
 - `Моніторинг` — jobs/logs + 5 останніх error + modal-деталі + filter by level/jobId.
 - Авторефреш на вкладці `Дані` **видалено** — пагінація стабільна, дані не стрибають.
@@ -105,6 +106,8 @@
 | 029 | `029_add_size_mappings.sql` | Таблиця `size_mappings` + CI unique index + CHECK constraint |
 | 030 | `030_allow_empty_size_to.sql` | Знімає CHECK constraint — дозволяє `size_to = ''` |
 | 031 | `031_add_amount_to_store_mirror.sql` | Додає колонку `amount INTEGER NOT NULL DEFAULT 0` до `store_mirror` (для синхронізації реальної кількості) |
+| 032 | `032_store_mirror_feature_indexes.sql` | Partial GIN на `raw->'product_features'` + functional partial для feature_564='Y' (~5-10 сек на 200k+) |
+| 033 | `033_add_collection_code_to_store_mirror.sql` | Додає `collection_code TEXT` + partial B-tree індекс `(store, collection_code)` + бекфіл з feature 558. UPDATE ~30-60 сек на 239k. **Після міграції виконати `VACUUM (ANALYZE) store_mirror`** (поза транзакцією). |
 
 ### Config snapshot (перенос даних між середовищами)
 - `npm run export:config` → `output/prod_config_snapshot.json` (постачальники, джерела, маппінги колонок, націнки, розміри).
