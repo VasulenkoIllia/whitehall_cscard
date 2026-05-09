@@ -85,6 +85,28 @@ docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c
 
 Міграції що вимагають VACUUM після застосування (актуальний список):
 - `033_add_collection_code_to_store_mirror.sql` → `VACUUM (ANALYZE) store_mirror`.
+- `034_add_variation_group_code_to_store_mirror.sql` → `VACUUM (ANALYZE) store_mirror`.
+
+### Pause mirror_sync перед деплоєм міграцій з UPDATE
+
+Бекфіл-UPDATE на `store_mirror` (~30-60 сек на 239k рядків) тримає
+RowExclusiveLock на таблиці. Якщо в цей момент `mirror_sync` cron
+запускає upsert — обидва упрутся в lock і `runMigrations` може зависнути.
+Це вже траплялось при міграції 033 (потребувало ручного `pg_terminate_backend`).
+
+**Перед `docker compose up -d --build app` для деплою з міграцією-бекфілом:**
+
+```bash
+docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
+  "UPDATE cron_settings SET enabled=false WHERE name='store_mirror_sync';"
+```
+
+Після успішного деплою + VACUUM:
+
+```bash
+docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
+  "UPDATE cron_settings SET enabled=true WHERE name='store_mirror_sync';"
+```
 
 ---
 

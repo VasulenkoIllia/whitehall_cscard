@@ -46,6 +46,12 @@ interface CsCartProduct {
   parent_product_id?: string;
   updated_timestamp?: string;
   product_features?: Record<string, { value?: string } | undefined>;
+  /**
+   * CS-Cart-native code for variation grouping (admin field "Група варіацій").
+   * Set automatically when product is part of a variation group; null otherwise.
+   * Format is set by admin (e.g. "013_012_1504"), independent of product_code.
+   */
+  variation_group_code?: string | null;
 }
 
 type CsCartAuthMode = 'basic' | 'bearer';
@@ -550,6 +556,11 @@ export class CsCartGateway {
         typeof collectionRaw === 'string' && collectionRaw.trim().length > 0
           ? collectionRaw.trim()
           : null;
+      const variationGroupRaw = p.variation_group_code;
+      const variationGroupCode =
+        typeof variationGroupRaw === 'string' && variationGroupRaw.trim().length > 0
+          ? variationGroupRaw.trim()
+          : null;
       return {
         article: p.product_code || '',
         supplier: null,
@@ -557,6 +568,7 @@ export class CsCartGateway {
         visibility: (p.status || '').toUpperCase() === 'A',
         price: Number(p.price || 0) || null,
         collectionCode,
+        variationGroupCode,
         raw: p
       };
     });

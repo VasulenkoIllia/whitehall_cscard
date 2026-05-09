@@ -1123,20 +1123,16 @@ export function createHttpServer(appContext: AppContext) {
       writeCsvRow(res, [
         'article',
         'size',
+        'supplier',
+        'supplier_sku_prefix',
         'quantity',
         'price_base',
         'price_final',
-        'extra',
-        'comment',
-        'supplier',
-        'supplier_sku_prefix',
         'sku_article',
-        'store_article',
         'store_sku',
-        'store_visibility',
-        'store_price',
-        'store_supplier',
-        'store_collection_code'
+        'store_variation_group_code',
+        'store_collection_code',
+        'extra'
       ]);
 
       while (true) {
@@ -1156,20 +1152,16 @@ export function createHttpServer(appContext: AppContext) {
           writeCsvRow(res, [
             row.article,
             row.size,
+            row.supplier_name,
+            row.supplier_sku_prefix,
             row.quantity,
             row.price_base,
             row.price_final,
-            row.extra,
-            row.comment,
-            row.supplier_name,
-            row.supplier_sku_prefix,
             row.sku_article,
-            row.store_article,
             row.store_sku,
-            row.store_visibility,
-            row.store_price,
-            row.store_supplier,
-            row.store_collection_code
+            row.store_variation_group_code,
+            row.store_collection_code,
+            row.extra
           ]);
         }
 

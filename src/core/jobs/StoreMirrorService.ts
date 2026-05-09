@@ -78,6 +78,7 @@ interface StoreMirrorRow {
   raw: unknown;
   seenAt: string;
   collectionCode: string | null;
+  variationGroupCode: string | null;
 }
 
 const UPSERT_CHUNK_SIZE = 500;
@@ -136,6 +137,11 @@ function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): Store
     typeof collectionRaw === 'string' && collectionRaw.trim().length > 0
       ? collectionRaw.trim()
       : null;
+  const variationGroupRaw = row.variationGroupCode;
+  const variationGroupCode =
+    typeof variationGroupRaw === 'string' && variationGroupRaw.trim().length > 0
+      ? variationGroupRaw.trim()
+      : null;
   return {
     store,
     article,
@@ -146,7 +152,8 @@ function toPersistRow(store: ActiveStore, row: MirrorRow, seenAt: string): Store
     amount,
     raw: row.raw ?? null,
     seenAt,
-    collectionCode
+    collectionCode,
+    variationGroupCode
   };
 }
 
@@ -680,7 +687,7 @@ export class StoreMirrorService {
 
     const values: Array<string | number | boolean | null> = [];
     const placeholders = dedupedRows.map((row, index) => {
-      const base = index * 10;
+      const base = index * 11;
       values.push(
         row.store,
         row.article,
@@ -691,14 +698,15 @@ export class StoreMirrorService {
         row.amount,
         JSON.stringify(row.raw),
         row.seenAt,
-        row.collectionCode ?? null
+        row.collectionCode ?? null,
+        row.variationGroupCode ?? null
       );
-      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`;
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`;
     });
 
     await this.pool.query(
       `INSERT INTO store_mirror
-         (store, article, supplier, parent_article, visibility, price, amount, raw, seen_at, collection_code)
+         (store, article, supplier, parent_article, visibility, price, amount, raw, seen_at, collection_code, variation_group_code)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (store, article) DO UPDATE
          SET supplier = EXCLUDED.supplier,
@@ -709,7 +717,8 @@ export class StoreMirrorService {
              raw = EXCLUDED.raw,
              synced_at = NOW(),
              seen_at = EXCLUDED.seen_at,
-             collection_code = EXCLUDED.collection_code`,
+             collection_code = EXCLUDED.collection_code,
+             variation_group_code = EXCLUDED.variation_group_code`,
       values
     );
   }

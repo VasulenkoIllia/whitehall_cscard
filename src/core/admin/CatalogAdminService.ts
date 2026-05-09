@@ -1685,7 +1685,8 @@ export class CatalogAdminService {
           OR base.supplier_name ILIKE $${index}
           OR base.supplier_sku_prefix ILIKE $${index}
           OR base.sku_article ILIKE $${index}
-          OR COALESCE(sm_col.code, '') ILIKE $${index})`
+          OR COALESCE(sm_col.code, '') ILIKE $${index}
+          OR COALESCE(sm_sku.variation_group_code, '') ILIKE $${index})`
       );
     }
     if (missingOnly) {
@@ -1729,22 +1730,15 @@ export class CatalogAdminService {
          base.price_base,
          base.price_final,
          base.extra,
-         base.comment,
          base.supplier_name,
          NULLIF(base.supplier_sku_prefix, '') AS supplier_sku_prefix,
          base.supplier_has_sku_prefix,
          base.sku_article,
-         sm_base.article AS store_article,
          sm_sku.article AS store_sku,
-         sm_sku.visibility AS store_visibility,
-         sm_sku.price AS store_price,
-         sm_sku.supplier AS store_supplier,
+         sm_sku.variation_group_code AS store_variation_group_code,
          sm_col.code AS store_collection_code,
          COUNT(*) OVER() AS total
        FROM base
-       LEFT JOIN store_mirror sm_base
-         ON sm_base.store = $${values.length}
-        AND sm_base.article = base.article
        LEFT JOIN store_mirror sm_sku
          ON sm_sku.store = $${values.length}
         AND sm_sku.article = base.sku_article

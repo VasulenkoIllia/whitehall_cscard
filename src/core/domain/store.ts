@@ -22,6 +22,12 @@ export interface MirrorRow {
    * NULL when the feature is missing or empty in the source product.
    */
   collectionCode?: string | null;
+  /**
+   * Denormalized CS-Cart top-level field `variation_group_code` (admin field
+   * "Група варіацій"). Set when product belongs to a CS-Cart variation group.
+   * NULL for single-SKU products that are not part of a variation group.
+   */
+  variationGroupCode?: string | null;
   raw?: unknown;
 }
 

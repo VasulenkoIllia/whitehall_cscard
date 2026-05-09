@@ -88,8 +88,8 @@ const VIEW_CONFIG = {
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
       { key: 'sku_article', label: 'SKU з розміром', wrap: true },
-      { key: 'store_article', label: 'Артикул в магазині', wrap: true },
       { key: 'store_sku', label: 'SKU магазину', wrap: true },
+      { key: 'store_variation_group_code', label: 'Варіація-група', wrap: true },
       { key: 'store_collection_code', label: 'Колекція в магазині', wrap: true },
       { key: 'extra', label: 'Назва', wrap: true }
     ],

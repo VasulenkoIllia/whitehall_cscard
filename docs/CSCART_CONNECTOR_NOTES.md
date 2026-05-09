@@ -331,3 +331,53 @@ CSCART_COLLECTION_FEATURE_ID=558    # default; прод whitehall.com.ua
 - Якщо адмін CS-Cart не виставив feature 558 для конкретного товару — `collection_code = NULL` → у Compare колонка покаже `-` навіть якщо товар фізично є в магазині. Це не баг, а **сигнал про неконсистентність даних магазину** (data quality check).
 - LATERAL JOIN дає O(log n) lookup завдяки partial index. На 5000-row Compare запиту додає ~30-50 ms.
 - Backfill — one-time. Подальші зміни підхоплюються runtime upsert через mirror_sync (≤ cron interval лаг).
+
+## Варіація-група (variation_group_code, 2026-05-09)
+
+CS-Cart має built-in систему варіацій: товари однієї моделі з різними розмірами/кольорами
+групуються у "variation group". Адмін задає **`variation_group_code`** (поле "Група варіацій"
+у CS-Cart admin → Варіації) — це CS-Cart-нативний код групи, не пов'язаний з нашими SKU.
+
+### Що це і як відрізняється від collection_code (feature 558)
+- `collection_code` (feature 558) — **бізнес-код моделі**, заповнюється admin'ом руками,
+  часто збігається з нашим `products_final.article` (формат однаковий).
+- `variation_group_code` — **технічний код групи варіацій**, генерується CS-Cart variation-system.
+  Може мати інший формат (наприклад `013_012_1504` з підкресленнями замість `013.012.1504` з крапками).
+
+Один товар може мати **обидва** поля одночасно (як `FD9919-001-36` де обидва = `FD9919-001`),
+тільки feature 558 (як `saint-laurent-condom-black` без variation group), або тільки
+variation_group_code (рідкісно).
+
+### Покриття на проді (виміри 2026-05-09, 239 028 рядків `store_mirror`)
+- `with_vgc`: 216 559 (90.6%) — товари у variation-group.
+- `without_vgc`: 22 469 (9.4%) — single-SKU без варіацій.
+- Унікальних variation_group_code: 76 407.
+
+### Денормалізація у `store_mirror.variation_group_code` (migration 034)
+- `ALTER TABLE store_mirror ADD COLUMN variation_group_code TEXT`.
+- Backfill з `raw->>'variation_group_code'` (top-level field, не feature).
+- Partial B-tree: `store_mirror_store_variation_group_idx ON (store, variation_group_code) WHERE variation_group_code IS NOT NULL`.
+- Розмір: ~5 MB колонка + ~10 MB індекс на 239k рядків.
+- Бекфіл-UPDATE: ~30-60 сек, MVCC bloat.
+- ⚠️ Після міграції виконати `VACUUM (ANALYZE) store_mirror`.
+- ⚠️ Pause mirror_sync на час деплою — інакше backfill UPDATE може заблокувати/блокуватися concurrent upserts.
+
+### Runtime запис
+- `MirrorRow.variationGroupCode: string | null` ([`src/core/domain/store.ts`](../src/core/domain/store.ts)).
+- `CsCartGateway.fetchProductsPage` витягує `p.variation_group_code` під час mirror sync.
+- `StoreMirrorService.upsertBatch` пише `variation_group_code` як 11-й параметр (раніше було 10).
+
+### Compare-tab UI/SQL зміни (2026-05-09)
+Окрім додавання `variation_group_code`, цей цикл синхронізував Compare-вкладку зі своїм CSV-експортом і прибрав застарілі колонки:
+
+**Прибрано з Compare** (UI + CSV):
+- `Артикул в магазині` (`store_article` через `sm_base.article = base.article`) — давав фантомні `-` для товарів де парент-product_code має суфікс розміру (наприклад `FD9919-001-36` як парент). Замість нього використовувати `Колекція в магазині` або `SKU магазину`.
+- `Ціна в магазині`, `Видимість в магазині`, `Постачальник в магазині`, `Коментар` — дублювали Mirror-вкладку.
+
+**Додано**: колонка `Варіація-група` (`store_variation_group_code` ← `sm_sku.variation_group_code`). Показує CS-Cart variation_group_code того ж рядка, що і `SKU магазину`. Якщо SKU не в магазині → `-`. Якщо SKU в магазині але не в variation-group → `-`.
+
+**SQL**: `listComparePreview` спрощено — прибрано `LEFT JOIN store_mirror sm_base`, прибрано з SELECT всі store_*-поля, що були видалені з UI/CSV. Зменшує bandwidth і простір плану.
+
+**Search**: пошук тепер перевіряє `OR COALESCE(sm_sku.variation_group_code, '') ILIKE` поряд з article/SKU/collection.
+
+**CSV**: рівно 12 полів = UI columns. Старі скрипти, що індексують CSV по позиції, **зламаються** (наприклад, `row[10]` тепер `store_sku`, не `store_article`). Backwards-incompat, але запит явний від оператора.
