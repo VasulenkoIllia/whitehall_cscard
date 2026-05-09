@@ -98,15 +98,17 @@ RowExclusiveLock на таблиці. Якщо в цей момент `mirror_sy
 
 ```bash
 docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
-  "UPDATE cron_settings SET enabled=false WHERE name='store_mirror_sync';"
+  "UPDATE cron_settings SET is_enabled=false WHERE name='store_mirror_sync' RETURNING name, is_enabled;"
 ```
 
 Після успішного деплою + VACUUM:
 
 ```bash
 docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
-  "UPDATE cron_settings SET enabled=true WHERE name='store_mirror_sync';"
+  "UPDATE cron_settings SET is_enabled=true WHERE name='store_mirror_sync' RETURNING name, is_enabled;"
 ```
+
+> **Примітка:** колонка називається саме `is_enabled` (BOOLEAN), а не `enabled`. Перевірити можна командою `\d cron_settings` всередині psql.
 
 ---
 
