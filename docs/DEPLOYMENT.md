@@ -68,6 +68,17 @@ docker logs whitehall-cscard-app --tail 100 | grep -iE "Applied migration|migrat
 docker compose ps
 ```
 
+> **Caveat по логах**: `tail 100` може не зловити `Applied migration NNN` якщо app вже встиг
+> налогувати багато після старту (mirror_sync, scheduler, request handlers тощо).
+> Якщо grep пустий — це ще не означає, що міграція не пройшла. **Завжди підтверджуй
+> результат через стан БД**: чи з'явилась нова колонка / запис у `migration_history`.
+> Приклад для міграції 034:
+> ```bash
+> docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
+>   "SELECT column_name FROM information_schema.columns WHERE table_name='store_mirror' AND column_name='variation_group_code';"
+> # 1 рядок означає, що колонка є → міграція пройшла.
+> ```
+
 ### Якщо міграція робила великий UPDATE / backfill
 
 PostgreSQL не дозволяє `VACUUM` всередині транзакції, а `runMigrations.ts` обгортає

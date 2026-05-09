@@ -305,7 +305,7 @@ export function DataTab({
               onChange={(event) => setDataFilters((prev) => ({ ...prev, search: event.target.value, offset: '0' }))}
               placeholder={
                 activeDataView === 'compare'
-                  ? 'артикул / SKU / колекція'
+                  ? 'артикул / SKU / колекція / група'
                   : 'артикул / SKU'
               }
             />
