@@ -1,6 +1,58 @@
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { columnLetter } from '../lib/mapping';
 import { Section } from '../components/ui';
+import { AiMappingWizard } from '../components/AiMappingWizard';
+
+// Винесена логіка одного рядка мапінгу — використовується і для базових, і для master-полів.
+function renderMappingRow({ key, entry, label, updateMappingField, mappingColumnOptions }) {
+  return (
+    <div className="mapping-row" key={key}>
+      <div className="mapping-key">{label}</div>
+      <select
+        value={entry.mode}
+        onChange={(e) => {
+          const mode = e.target.value;
+          if (mode === 'static') {
+            updateMappingField(key, { mode: 'static', value: entry.value === null ? '' : String(entry.value) });
+          } else {
+            updateMappingField(key, {
+              mode: 'column',
+              value: Number.isFinite(Number(entry.value)) && Number(entry.value) > 0 ? Number(entry.value) : null
+            });
+          }
+        }}
+      >
+        <option value="column">Колонка</option>
+        <option value="static">Статичне</option>
+      </select>
+      {entry.mode === 'column' ? (
+        <select
+          value={entry.value === null ? '' : String(entry.value)}
+          onChange={(e) => updateMappingField(key, { value: e.target.value ? Number(e.target.value) : null })}
+        >
+          <option value="">— не обрано —</option>
+          {mappingColumnOptions.map((opt) => (
+            <option key={`${key}_${opt.value}`} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      ) : (
+        <input
+          value={String(entry.value ?? '')}
+          onChange={(e) => updateMappingField(key, { value: e.target.value })}
+        />
+      )}
+      <label className="mapping-allow-empty">
+        <input
+          type="checkbox"
+          checked={entry.allowEmpty === true}
+          onChange={(e) => updateMappingField(key, { allowEmpty: e.target.checked })}
+          style={{ width: 'auto' }}
+        />
+        пусте
+      </label>
+    </div>
+  );
+}
 
 function formatDateTime(value) {
   if (!value) return '-';
@@ -40,6 +92,8 @@ export function MappingTab({
   sourceSheetsStatus,
   sourcePreview,
   mappingKeys,
+  baseMappingKeys = [],
+  masterFieldDefs = [],
   mappingFields,
   updateMappingField,
   mappingColumnOptions,
@@ -53,8 +107,22 @@ export function MappingTab({
   mappingStatus,
   resetMappingDraft,
   supplierLocked = false,
-  supplierLockedName = ''
+  supplierLockedName = '',
+  // AI wizard props
+  apiFetch = null,
+  setMappingFields = null
 }) {
+  // Сплітимо ключі на дві групи: базові 6 (для синхронізації) та master-fields (для каталогу).
+  const baseKeysSet = useMemo(() => new Set(baseMappingKeys), [baseMappingKeys]);
+  const baseKeys = useMemo(() => mappingKeys.filter((k) => baseKeysSet.has(k)), [mappingKeys, baseKeysSet]);
+  const masterKeys = useMemo(() => mappingKeys.filter((k) => !baseKeysSet.has(k)), [mappingKeys, baseKeysSet]);
+  const masterFieldByKey = useMemo(() => {
+    const map = new Map();
+    for (const f of masterFieldDefs) map.set(f.key, f);
+    return map;
+  }, [masterFieldDefs]);
+  // Локальний стан розгортання секції master-fields (за замовч. згорнута — щоб не лякати).
+  const [isMasterSectionOpen, setMasterSectionOpen] = useState(false);
   const [isMappingEditorOpen, setMappingEditorOpen] = useState(false);
   const [isSourceEditorOpen, setSourceEditorOpen] = useState(false);
   const [isPreviewVisible, setPreviewVisible] = useState(false);
@@ -254,6 +322,29 @@ export function MappingTab({
         <div className={`status-line ${isErrorStatus(sourcesStatus) ? 'error' : ''}`}>{sourcesStatus}</div>
       ) : null}
 
+      {/* AI Mapping Wizard — pre-mapping через Claude */}
+      {apiFetch && setMappingFields && selectedSupplierId ? (
+        <AiMappingWizard
+          selectedSupplierId={selectedSupplierId}
+          selectedSourceId={selectedSourceId}
+          sources={sources}
+          apiFetch={apiFetch}
+          extendedMappingKeys={mappingKeys}
+          baseMappingKeys={baseMappingKeys}
+          onApplyMapping={({ mapping, headerRow, sheetName }) => {
+            // Підставляємо в mappingFields + headerRow + sheet name.
+            setMappingFields((prev) => {
+              const next = { ...prev };
+              for (const [k, v] of Object.entries(mapping)) next[k] = v;
+              return next;
+            });
+            if (Number.isFinite(headerRow) && headerRow > 0) setMappingHeaderRow(String(headerRow));
+            if (sheetName) setSelectedSheetName(sheetName);
+            setMappingEditorOpen(true);
+          }}
+        />
+      ) : null}
+
       {/* Mappings — shown when source is selected */}
       <div className="mapping-section-head">
         <h4 className="block-title">
@@ -399,57 +490,50 @@ export function MappingTab({
             ) : null}
 
             <div className="mapping-builder">
-              {mappingKeys.map((key) => {
-                const entry = mappingFields[key];
-                return (
-                  <div className="mapping-row" key={key}>
-                    <div className="mapping-key">{mappingKeyLabel(key)}</div>
-                    <select
-                      value={entry.mode}
-                      onChange={(e) => {
-                        const mode = e.target.value;
-                        if (mode === 'static') {
-                          updateMappingField(key, { mode: 'static', value: entry.value === null ? '' : String(entry.value) });
-                        } else {
-                          updateMappingField(key, {
-                            mode: 'column',
-                            value: Number.isFinite(Number(entry.value)) && Number(entry.value) > 0 ? Number(entry.value) : null
-                          });
-                        }
-                      }}
-                    >
-                      <option value="column">Колонка</option>
-                      <option value="static">Статичне</option>
-                    </select>
-                    {entry.mode === 'column' ? (
-                      <select
-                        value={entry.value === null ? '' : String(entry.value)}
-                        onChange={(e) => updateMappingField(key, { value: e.target.value ? Number(e.target.value) : null })}
-                      >
-                        <option value="">— не обрано —</option>
-                        {mappingColumnOptions.map((opt) => (
-                          <option key={`${key}_${opt.value}`} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        value={String(entry.value ?? '')}
-                        onChange={(e) => updateMappingField(key, { value: e.target.value })}
-                      />
-                    )}
-                    <label className="mapping-allow-empty">
-                      <input
-                        type="checkbox"
-                        checked={entry.allowEmpty === true}
-                        onChange={(e) => updateMappingField(key, { allowEmpty: e.target.checked })}
-                        style={{ width: 'auto' }}
-                      />
-                      пусте
-                    </label>
-                  </div>
-                );
+              <div className="muted" style={{ fontSize: 11, marginBottom: 4, gridColumn: '1 / -1' }}>
+                Базові поля (потрібні для синхронізації з магазином):
+              </div>
+              {baseKeys.map((key) => {
+                const entry = mappingFields[key] || { mode: 'column', value: null, allowEmpty: false };
+                return renderMappingRow({
+                  key, entry, label: mappingKeyLabel(key),
+                  updateMappingField, mappingColumnOptions
+                });
               })}
             </div>
+
+            {masterKeys.length > 0 ? (
+              <div style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setMasterSectionOpen((v) => !v)}
+                  style={{ marginBottom: 8 }}
+                >
+                  {isMasterSectionOpen ? '▼' : '▶'} Поля картки товару (master-каталог, {masterKeys.length})
+                </button>
+                {isMasterSectionOpen ? (
+                  <>
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                      Опціональні поля для збагачення карток товару. Якщо постачальницький Excel
+                      має колонку з брендом / кольором / категорією / тощо — замапте її тут. Якщо
+                      колонки немає — лишайте "не обрано", це не блокує синхронізацію.
+                    </div>
+                    <div className="mapping-builder">
+                      {masterKeys.map((key) => {
+                        const entry = mappingFields[key] || { mode: 'column', value: null, allowEmpty: true };
+                        const def = masterFieldByKey.get(key);
+                        const label = def?.labelUk || key;
+                        return renderMappingRow({
+                          key, entry, label,
+                          updateMappingField, mappingColumnOptions
+                        });
+                      })}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="actions mapping-actions-main">
               <button className="btn primary" disabled={isReadOnly} onClick={saveMapping}>

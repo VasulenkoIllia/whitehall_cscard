@@ -75,7 +75,7 @@ async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-function parseSheetId(url: string | undefined | null): string | null {
+export function parseSheetId(url: string | undefined | null): string | null {
   if (!url) {
     return null;
   }

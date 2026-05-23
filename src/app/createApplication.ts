@@ -32,6 +32,10 @@ import { JobScheduler } from '../core/jobs/JobScheduler';
 import { SchedulerSettingsService } from '../core/jobs/SchedulerSettingsService';
 import type { StoreImportBatch } from '../core/domain/store';
 import { CatalogAdminService } from '../core/admin/CatalogAdminService';
+import { CatalogAssembler } from '../core/catalog/CatalogAssembler';
+import { CatalogService } from '../core/catalog/CatalogService';
+import { createAnthropicClient } from '../core/ai/AnthropicClient';
+import { AiMappingService } from '../core/ai/AiMappingService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -298,9 +302,10 @@ export interface Application {
   scheduler: JobScheduler;
   schedulerSettingsService: SchedulerSettingsService;
   catalogAdminService: CatalogAdminService;
+  catalogService: CatalogService;
+  aiMappingService: AiMappingService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
-  migrationTargets: string[];
   auth: AuthService;
   /** Resolves when orphaned-job cleanup has completed. Await before starting the scheduler. */
   startupCleanup: Promise<void>;
@@ -361,12 +366,17 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   });
   const jobService = new JobService(pool);
   const cleanupService = new CleanupService(pool);
+  const catalogAssembler = new CatalogAssembler(pool, logService);
+  const catalogService = new CatalogService(pool);
+  const anthropicClient = createAnthropicClient(env);
+  const aiMappingService = new AiMappingService(pool, anthropicClient, env);
   const jobRunner = new PipelineJobRunner(
     pipeline,
     jobService,
     logService,
     cleanupService,
-    storeMirrorService
+    storeMirrorService,
+    catalogAssembler
   );
   const scheduler = new JobScheduler({
     enabled: config.scheduler.enabled,
@@ -396,6 +406,19 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         cron: null,
         runOnStartup: config.scheduler.cleanup.runOnStartup,
         action: () => jobRunner.runCleanup(config.base.cleanupRetentionDays)
+      },
+      {
+        // catalog_assemble — офлайн збірка каталогу з даних постачальників
+        // (catalog_masters / catalog_variants / catalog_offers). Незалежно від store_mirror.
+        // За замовчуванням ВИМКНЕНА: оператор тригерить вручну через
+        // POST /admin/api/jobs/catalog-assemble. Інтервал-дефолт — 7 днів як рідкісну
+        // важку job, що повністю rebuild-ить catalog_offers + variants.
+        name: 'catalog_assemble',
+        enabled: false,
+        intervalMs: 7 * 24 * 60 * 60 * 1000,
+        cron: null,
+        runOnStartup: false,
+        action: () => jobRunner.runCatalogAssemble()
       }
     ]
   });
@@ -422,6 +445,8 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     scheduler,
     schedulerSettingsService,
     catalogAdminService,
+    catalogService,
+    aiMappingService,
     cleanupService,
     storeMirrorService,
     auth,
@@ -442,12 +467,6 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         // best-effort — pool may already be draining
       }
       await pool.end();
-    },
-    migrationTargets: [
-      `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,
-      `${LEGACY_ROOT}/src/services/finalizeService.js -> src/core/pipeline`,
-      `${LEGACY_ROOT}/src/services/exportService.js -> src/core/pipeline + connector mapping`,
-      `${LEGACY_ROOT}/src/services/horoshopService.js -> src/connectors/horoshop`
-    ]
+    }
   };
 }

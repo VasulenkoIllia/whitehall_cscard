@@ -79,8 +79,7 @@ async function main(): Promise<void> {
             scheduler: {
               enabled: application.config.scheduler.enabled,
               tickSeconds: application.config.scheduler.tickSeconds
-            },
-            migrationTargets: application.migrationTargets
+            }
           },
           null,
           2

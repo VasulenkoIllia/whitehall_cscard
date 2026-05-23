@@ -11,6 +11,11 @@ import { JobService, type JobRecord } from './JobService';
 import type { CleanupService, CleanupSummary } from './CleanupService';
 import type { StoreMirrorService, StoreMirrorSyncSummary } from './StoreMirrorService';
 import type { StoreImportProgress } from '../connectors/StoreConnector';
+import type {
+  CatalogAssembler,
+  CatalogAssemblyRunSummary,
+  CatalogAssembleOptions
+} from '../catalog/CatalogAssembler';
 
 const BLOCKING_JOB_TYPES = [
   'update_pipeline',
@@ -20,7 +25,8 @@ const BLOCKING_JOB_TYPES = [
   'finalize',
   'store_import',
   'cleanup',
-  'store_mirror_sync'
+  'store_mirror_sync',
+  'catalog_assemble'
 ];
 
 interface JobRunnerResult<T> {
@@ -74,7 +80,8 @@ function summarizeStepResult(
     | 'finalize'
     | 'store_import'
     | 'cleanup'
-    | 'store_mirror_sync',
+    | 'store_mirror_sync'
+    | 'catalog_assemble',
   value: unknown
 ): unknown {
   if (type === 'store_import') {
@@ -98,7 +105,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
     private readonly jobs: JobService,
     private readonly logs: LogService,
     private readonly cleanupService: CleanupService,
-    private readonly storeMirrorService: StoreMirrorService
+    private readonly storeMirrorService: StoreMirrorService,
+    private readonly catalogAssembler: CatalogAssembler
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -341,7 +349,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
       | 'finalize'
       | 'store_import'
       | 'cleanup'
-      | 'store_mirror_sync',
+      | 'store_mirror_sync'
+      | 'catalog_assemble',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<JobRunnerResult<T>> {
@@ -568,6 +577,17 @@ export class PipelineJobRunner<MappedRow = unknown> {
       'cleanup',
       { retentionDays: safeRetention },
       async (_jobId) => this.cleanupService.run(safeRetention)
+    );
+  }
+
+  runCatalogAssemble(
+    opts: CatalogAssembleOptions = {}
+  ): Promise<JobRunnerResult<CatalogAssemblyRunSummary>> {
+    const meta: Record<string, unknown> = {};
+    if (opts.supplierId) meta.supplierId = opts.supplierId;
+    if (opts.force) meta.force = true;
+    return this.runStandaloneStep('catalog_assemble', meta, async (jobId) =>
+      this.catalogAssembler.run(jobId, opts)
     );
   }
 

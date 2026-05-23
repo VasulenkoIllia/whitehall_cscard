@@ -367,6 +367,13 @@ async function testResumeMismatchGuards(pool: Pool): Promise<void> {
       createSyncMarker: () => new Date().toISOString(),
       upsertSnapshotChunk: async () => 0,
       pruneSnapshot: async () => 0
+    } as any,
+    // catalog_assemble не задіяний у цих guard-тестах — підставляємо stub, який
+    // кине помилку, якщо тест випадково спробує його викликати.
+    {
+      run: async () => {
+        throw new Error('CatalogAssembler.run should not be called in guard tests');
+      }
     } as any
   );
 

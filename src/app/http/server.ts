@@ -7,6 +7,8 @@ import type { NextFunction, Request, Response } from 'express';
 import { createAuthMiddleware } from './authMiddleware';
 import { renderLoginPage } from './loginPage';
 import { getSheetPreview, listSheetNames } from '../../core/pipeline/googleSheetsService';
+import { registerCatalogRoutes } from './routes/catalogRoutes';
+import { registerAiMappingRoutes } from './routes/aiMappingRoutes';
 
 export function createHttpServer(appContext: AppContext) {
   const app = express();
@@ -16,6 +18,7 @@ export function createHttpServer(appContext: AppContext) {
   const jobs = appContext.jobService;
   const jobRunner = appContext.jobRunner;
   const catalogAdmin = appContext.catalogAdminService;
+  const catalogService = appContext.catalogService;
   const schedulerSettings = appContext.schedulerSettingsService;
   const logs = appContext.logService;
   const bundledAdminPath = path.join(__dirname, '..', '..', 'public', 'admin');
@@ -1536,6 +1539,21 @@ export function createHttpServer(appContext: AppContext) {
       return res.redirect(302, nextPath);
     }
     return res.set('Content-Type', 'text/html; charset=utf-8').send(renderLoginPage(nextPath));
+  });
+
+  // Catalog (офлайн каталог, незалежний від CS-Cart) — Phase 1 MVP routes.
+  // Старі /admin/api/master-* routes deprecated (нічого не пишуть, frontend їх не викликає).
+  registerCatalogRoutes(app, {
+    catalogService,
+    jobRunner,
+    authMw
+  });
+
+  // AI mapping wizard — pre-mapping постачальників через Claude.
+  registerAiMappingRoutes(app, {
+    aiMappingService: appContext.aiMappingService,
+    authMw,
+    env: process.env as Record<string, string | undefined>
   });
 
   // Protected static admin UI

@@ -883,13 +883,28 @@ export class CatalogAdminService {
         : null;
     const resolvedComment = commentFromBody !== null ? commentFromBody : commentFromMeta;
 
+    // UPSERT — 1 рядок на (supplier_id, source_id). Якщо існує — оновлюємо.
+    // Якщо source_id IS NULL — partial index обробляє це окремо.
+    // Гарантовано UNIQUE завдяки міграції 050.
+    const normalizedSourceId =
+      resolvedSourceId !== null ? Math.trunc(resolvedSourceId) : null;
+    const conflictTarget =
+      normalizedSourceId !== null
+        ? '(supplier_id, source_id) WHERE source_id IS NOT NULL'
+        : '(supplier_id) WHERE source_id IS NULL';
     const result = await this.pool.query(
       `INSERT INTO column_mappings (supplier_id, source_id, mapping, header_row, mapping_meta, comment)
        VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT ${conflictTarget} DO UPDATE SET
+         mapping      = EXCLUDED.mapping,
+         header_row   = EXCLUDED.header_row,
+         mapping_meta = EXCLUDED.mapping_meta,
+         comment      = EXCLUDED.comment,
+         created_at   = NOW()
        RETURNING *`,
       [
         normalizedSupplierId,
-        resolvedSourceId !== null ? Math.trunc(resolvedSourceId) : null,
+        normalizedSourceId,
         payload.mapping,
         headerRow,
         payload.mapping_meta || null,
