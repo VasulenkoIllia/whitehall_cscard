@@ -140,16 +140,43 @@ export function AiMappingWizard({
     return out;
   };
 
+  // Збираємо AI hints щоб передати до mapping editor — він покаже warning
+  // якщо user змінить static-поле на column (типова пастка: ігнор static_suspect).
+  const buildAiHints = () => {
+    const hints = {};
+    for (const [k, v] of Object.entries(editsLocal || {})) {
+      if (!v || !v.type) continue;
+      hints[k] = {
+        type: v.type,
+        confidence: v.confidence,
+        reasoning: v.reasoning || '',
+        suggestedValue: v.type === 'static' ? v.value : null,
+        suggestedColIndex: v.type === 'column' ? v.col_index : null
+      };
+    }
+    return hints;
+  };
+
   const applyToParent = () => {
     if (!suggestion) return;
     const mappingFields = toMappingFields(editsLocal);
+    const aiHints = buildAiHints();
+
+    // Mark suggestion as approved (audit trail).
+    if (suggestion.suggestionId) {
+      apiFetch(`/ai-mapping/suggestions/${suggestion.suggestionId}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'approved', appliedMapping: editsLocal })
+      }).catch(() => { /* non-blocking */ });
+    }
+
     onApplyMapping({
       mapping: mappingFields,
       headerRow: suggestion?.result?.header_row || 1,
       sheetName: chosenTab,
-      suggestionId: suggestion?.suggestionId
+      suggestionId: suggestion?.suggestionId,
+      aiHints
     });
-    // Reset wizard.
     reset();
   };
 
@@ -270,6 +297,7 @@ function ReviewPanel({ suggestion, chosenTab, editsLocal, setEditsLocal, baseKey
   const r = suggestion.result || {};
   const warnings = r.warnings || [];
   const unmapped = r.unmapped_cols || [];
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const confBadge = (c) => {
     const pct = Math.round((c || 0) * 100);
@@ -342,7 +370,18 @@ function ReviewPanel({ suggestion, chosenTab, editsLocal, setEditsLocal, baseKey
       </details>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button onClick={onApply} style={{ background: '#1a8c1a', color: 'white', padding: '6px 14px', borderRadius: 4 }}>
+        <button
+          onClick={() => {
+            // Якщо є static decisions — показуємо confirmation step.
+            const staticFields = Object.entries(editsLocal).filter(([, v]) => v?.type === 'static');
+            if (staticFields.length > 0) {
+              setConfirmOpen(true);
+            } else {
+              onApply();
+            }
+          }}
+          style={{ background: '#1a8c1a', color: 'white', padding: '6px 14px', borderRadius: 4 }}
+        >
           ✓ Apply mapping (підставити у форму)
         </button>
         <button onClick={onReject} style={{ background: '#a00', color: 'white', padding: '6px 14px', borderRadius: 4 }}>
@@ -351,6 +390,67 @@ function ReviewPanel({ suggestion, chosenTab, editsLocal, setEditsLocal, baseKey
         <span style={{ fontSize: 11, color: '#888', alignSelf: 'center' }}>
           Tokens in/out: {suggestion.inputTokens}/{suggestion.outputTokens} · {suggestion.durationMs}ms
         </span>
+      </div>
+
+      {confirmOpen && (
+        <ConfirmStaticModal
+          editsLocal={editsLocal}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => { setConfirmOpen(false); onApply(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Показуємо модал зі ВСІМА static-рішеннями + reasoning перед фінальним Apply.
+// Це захищає від типової пастки: користувач відкриває mapping editor, бачить static
+// "1" для quantity, не розуміє чому і змінює на column 14 → import пропускає всі рядки.
+function ConfirmStaticModal({ editsLocal, onCancel, onConfirm }) {
+  const staticDecisions = Object.entries(editsLocal).filter(([, v]) => v?.type === 'static');
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+    }}>
+      <div style={{
+        background: 'white', maxWidth: 700, width: '90%', maxHeight: '80vh',
+        overflow: 'auto', borderRadius: 8, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+      }}>
+        <h3 style={{ margin: '0 0 8px', color: '#d28a00' }}>
+          ⚠ Підтвердіть static-рішення AI ({staticDecisions.length})
+        </h3>
+        <p style={{ fontSize: 13, color: '#555', marginTop: 0 }}>
+          AI пропонує для цих полів <b>статичні значення</b> (а не колонку зі sheet).
+          Зазвичай це означає що відповідна колонка містить псевдо-значення (наприклад
+          "Количество=0" — це насправді статус, а не реальна кількість).
+          <br/><br/>
+          <b>НЕ міняй ці поля на "Колонка" у mapping editor</b> без розуміння reasoning — інакше
+          імпорт пропустить усі рядки.
+        </p>
+
+        <div style={{ background: '#fff8e1', padding: 12, borderRadius: 4, marginBottom: 12 }}>
+          {staticDecisions.map(([k, v]) => (
+            <div key={k} style={{ marginBottom: 10, paddingBottom: 8, borderBottom: '1px solid #e0d090' }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                <code style={{ background: '#fef0c0', padding: '1px 6px', borderRadius: 3 }}>{k}</code>
+                {' = '}
+                <code style={{ background: '#fef0c0', padding: '1px 6px', borderRadius: 3 }}>static "{v.value}"</code>
+              </div>
+              <div style={{ fontSize: 12, color: '#666' }}>{v.reasoning}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{ padding: '8px 14px' }}>Назад (передумав)</button>
+          <button
+            onClick={onConfirm}
+            style={{ background: '#1a8c1a', color: 'white', padding: '8px 14px', borderRadius: 4 }}
+          >
+            Зрозуміло, застосувати mapping
+          </button>
+        </div>
       </div>
     </div>
   );

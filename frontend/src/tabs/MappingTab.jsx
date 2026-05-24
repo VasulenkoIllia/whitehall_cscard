@@ -4,10 +4,24 @@ import { Section } from '../components/ui';
 import { AiMappingWizard } from '../components/AiMappingWizard';
 
 // Винесена логіка одного рядка мапінгу — використовується і для базових, і для master-полів.
-function renderMappingRow({ key, entry, label, updateMappingField, mappingColumnOptions }) {
+// aiHint (опційно): { type: 'static'|'column', reasoning, suggestedValue, suggestedColIndex }
+// Якщо AI пропонував static, але user поміняв на column → показуємо warning банер.
+function renderMappingRow({ key, entry, label, updateMappingField, mappingColumnOptions, aiHint }) {
+  const conflict =
+    aiHint &&
+    aiHint.type === 'static' &&
+    entry.mode === 'column';
+
   return (
     <div className="mapping-row" key={key}>
-      <div className="mapping-key">{label}</div>
+      <div className="mapping-key">
+        {label}
+        {aiHint && aiHint.type === 'static' && entry.mode === 'static' ? (
+          <span title={aiHint.reasoning} style={{ marginLeft: 4, fontSize: 10, color: '#1a8c1a' }}>
+            🤖 static
+          </span>
+        ) : null}
+      </div>
       <select
         value={entry.mode}
         onChange={(e) => {
@@ -50,6 +64,41 @@ function renderMappingRow({ key, entry, label, updateMappingField, mappingColumn
         />
         пусте
       </label>
+      {conflict ? (
+        <div
+          style={{
+            gridColumn: '1 / -1',
+            background: '#fff3cd',
+            border: '1px solid #ffc107',
+            padding: '6px 10px',
+            borderRadius: 4,
+            fontSize: 12,
+            color: '#664d03',
+            marginTop: 4
+          }}
+        >
+          ⚠ <b>AI рекомендував static "{aiHint.suggestedValue}"</b> для цього поля. Ти змінив на колонку — імпорт може пропустити всі рядки.
+          <div style={{ fontSize: 11, color: '#856404', marginTop: 2 }}>Причина AI: {aiHint.reasoning}</div>
+          <button
+            type="button"
+            onClick={() =>
+              updateMappingField(key, { mode: 'static', value: aiHint.suggestedValue, allowEmpty: false })
+            }
+            style={{
+              marginTop: 4,
+              padding: '2px 8px',
+              fontSize: 11,
+              background: '#1a8c1a',
+              color: 'white',
+              border: 'none',
+              borderRadius: 3,
+              cursor: 'pointer'
+            }}
+          >
+            Повернути static "{aiHint.suggestedValue}"
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -110,7 +159,9 @@ export function MappingTab({
   supplierLockedName = '',
   // AI wizard props
   apiFetch = null,
-  setMappingFields = null
+  setMappingFields = null,
+  aiHints = null,
+  setAiHints = null
 }) {
   // Сплітимо ключі на дві групи: базові 6 (для синхронізації) та master-fields (для каталогу).
   const baseKeysSet = useMemo(() => new Set(baseMappingKeys), [baseMappingKeys]);
@@ -331,8 +382,8 @@ export function MappingTab({
           apiFetch={apiFetch}
           extendedMappingKeys={mappingKeys}
           baseMappingKeys={baseMappingKeys}
-          onApplyMapping={({ mapping, headerRow, sheetName }) => {
-            // Підставляємо в mappingFields + headerRow + sheet name.
+          onApplyMapping={({ mapping, headerRow, sheetName, aiHints: hints }) => {
+            // Підставляємо в mappingFields + headerRow + sheet name + AI hints.
             setMappingFields((prev) => {
               const next = { ...prev };
               for (const [k, v] of Object.entries(mapping)) next[k] = v;
@@ -340,6 +391,7 @@ export function MappingTab({
             });
             if (Number.isFinite(headerRow) && headerRow > 0) setMappingHeaderRow(String(headerRow));
             if (sheetName) setSelectedSheetName(sheetName);
+            if (setAiHints && hints) setAiHints(hints);
             setMappingEditorOpen(true);
           }}
         />
@@ -497,7 +549,8 @@ export function MappingTab({
                 const entry = mappingFields[key] || { mode: 'column', value: null, allowEmpty: false };
                 return renderMappingRow({
                   key, entry, label: mappingKeyLabel(key),
-                  updateMappingField, mappingColumnOptions
+                  updateMappingField, mappingColumnOptions,
+                  aiHint: aiHints?.[key] || null
                 });
               })}
             </div>
@@ -526,7 +579,8 @@ export function MappingTab({
                         const label = def?.labelUk || key;
                         return renderMappingRow({
                           key, entry, label,
-                          updateMappingField, mappingColumnOptions
+                          updateMappingField, mappingColumnOptions,
+                          aiHint: aiHints?.[key] || null
                         });
                       })}
                     </div>

@@ -438,6 +438,10 @@ export default function App() {
     [masterFieldDefs]
   );
   const [mappingFields, setMappingFields] = useState(() => createEmptyMappingFields(MAPPING_KEYS));
+  // AI hints from MappingWizard: {fieldKey: {type, reasoning, suggestedValue, ...}}
+  // Зберігаються до наступного Apply — допомагає mapping editor показати warning
+  // якщо user змінив AI's static suggestion на column.
+  const [aiHints, setAiHints] = useState(null);
   const [mappingRecords, setMappingRecords] = useState([]);
   const [mappingRecordsStatus, setMappingRecordsStatus] = useState('');
 
@@ -2217,6 +2221,8 @@ export default function App() {
               supplierLockedName={selectedSupplierName}
               apiFetch={apiFetch}
               setMappingFields={setMappingFields}
+              aiHints={aiHints}
+              setAiHints={setAiHints}
             />
           )}
           pricingPanel={(
