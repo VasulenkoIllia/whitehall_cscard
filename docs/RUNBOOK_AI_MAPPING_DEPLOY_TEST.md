@@ -109,6 +109,9 @@ curl -s -b /tmp/test_cookies.txt \
 **⚠️ ЦЕ ВИДАЛИТЬ ВСЕ:** suppliers, sources, mappings, products_raw, products_final, store_mirror, catalog_*, jobs, logs.
 **НЕ видаляє:** users, scheduler_settings, markup_rule_sets, master_fields, color_mappings, size_mappings, category_mappings.
 
+> **🚨 ВАЖЛИВО про `products_raw`:** це partitioned table (міграція 021). У ній є БАГАТО child partitions: `products_raw_YYYYMMDD` (по одній на дату), плюс DEFAULT — `products_raw_p`. **TRUNCATE `products_raw_p` НЕ зачищає day-partitions** — лишається orphan-дата старих імпортів.
+> Завжди роби **`TRUNCATE products_raw CASCADE`** (з БАТЬКА) — це автоматично truncate всі child partitions.
+
 ```bash
 docker exec -i whitehall-cscard-test-db psql -U whitehall_store -d whitehall_store <<'SQL'
 BEGIN;
@@ -125,7 +128,8 @@ TRUNCATE catalog_assembly_runs CASCADE;
 
 -- 3. Pipeline tables.
 TRUNCATE products_final CASCADE;
-TRUNCATE products_raw_p CASCADE;        -- partitioned root
+TRUNCATE products_raw CASCADE;          -- parent table — truncate ALL child partitions
+                                        -- (НЕ products_raw_p — це лише DEFAULT partition)
 TRUNCATE store_mirror CASCADE;
 TRUNCATE compare_preview CASCADE;       -- якщо існує
 
@@ -147,7 +151,7 @@ TRUNCATE jobs CASCADE;
 SELECT 'suppliers' AS t, COUNT(*) FROM suppliers
 UNION ALL SELECT 'sources', COUNT(*) FROM sources
 UNION ALL SELECT 'column_mappings', COUNT(*) FROM column_mappings
-UNION ALL SELECT 'products_raw_p', COUNT(*) FROM products_raw_p
+UNION ALL SELECT 'products_raw (all partitions)', COUNT(*) FROM products_raw
 UNION ALL SELECT 'products_final', COUNT(*) FROM products_final
 UNION ALL SELECT 'store_mirror', COUNT(*) FROM store_mirror
 UNION ALL SELECT 'catalog_masters', COUNT(*) FROM catalog_masters
