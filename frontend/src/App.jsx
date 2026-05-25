@@ -16,19 +16,12 @@ import { PricingTab } from './tabs/PricingTab';
 import { DataTab } from './tabs/DataTab';
 import { CronSettingsTab } from './tabs/CronSettingsTab';
 import { JobsTab } from './tabs/JobsTab';
-import { MasterCatalogTab } from './tabs/MasterCatalogTab';
-
-// Фіч-флаг: ховаємо новий таб, якщо ENABLE_MASTER_CATALOG=false у білді.
-// Дефолт — показано (true), бо саме цей таб і є Phase 1 MVP.
-const ENABLE_MASTER_CATALOG =
-  String(import.meta.env?.VITE_ENABLE_MASTER_CATALOG ?? 'true').toLowerCase() !== 'false';
 
 const TABS = [
   { id: 'overview', label: 'Панель' },
   { id: 'manual', label: 'Ручне керування' },
   { id: 'suppliers', label: 'Постачальники' },
   { id: 'data', label: 'Дані' },
-  ...(ENABLE_MASTER_CATALOG ? [{ id: 'masters', label: 'Майстер-каталог' }] : []),
   { id: 'cron', label: 'Розклад' },
   { id: 'jobs', label: 'Моніторинг' }
 ];
@@ -430,18 +423,7 @@ export default function App() {
   const [mappingHeaderRow, setMappingHeaderRow] = useState('1');
   const [mappingErrors, setMappingErrors] = useState({});
   const [mappingStatus, setMappingStatus] = useState('');
-  // Master-fields для розширеного мапінгу: завантажуються 1× з /catalog/fields.
-  // extendedMappingKeys = базові 6 + master_field keys (з seed або кастомні).
-  const [masterFieldDefs, setMasterFieldDefs] = useState([]);
-  const extendedMappingKeys = useMemo(
-    () => [...MAPPING_KEYS, ...masterFieldDefs.map((f) => f.key)],
-    [masterFieldDefs]
-  );
-  const [mappingFields, setMappingFields] = useState(() => createEmptyMappingFields(MAPPING_KEYS));
-  // AI hints from MappingWizard: {fieldKey: {type, reasoning, suggestedValue, ...}}
-  // Зберігаються до наступного Apply — допомагає mapping editor показати warning
-  // якщо user змінив AI's static suggestion на column.
-  const [aiHints, setAiHints] = useState(null);
+  const [mappingFields, setMappingFields] = useState(() => createEmptyMappingFields());
   const [mappingRecords, setMappingRecords] = useState([]);
   const [mappingRecordsStatus, setMappingRecordsStatus] = useState('');
 
@@ -709,7 +691,7 @@ export default function App() {
       setMappingText('{}');
       setMappingComment('');
       setMappingHeaderRow('1');
-      setMappingFields(createEmptyMappingFields(extendedMappingKeys));
+      setMappingFields(createEmptyMappingFields());
       return;
     }
     const applyLoadedMapping = (mappingRow, statusLabel = 'Мапінг завантажено') => {
@@ -717,7 +699,7 @@ export default function App() {
       setMappingText(toJsonString(mapping));
       setMappingComment(String(mappingRow?.comment || ''));
       setMappingHeaderRow(String(Number(mappingRow?.header_row || 1)));
-      setMappingFields(parseMappingToFields(mapping, extendedMappingKeys));
+      setMappingFields(parseMappingToFields(mapping));
       setMappingErrors({});
       setMappingStatus(statusLabel);
     };
@@ -761,7 +743,7 @@ export default function App() {
     setMappingText(toJsonString(mapping));
     setMappingComment(String(record?.comment || ''));
     setMappingHeaderRow(String(Number(record?.header_row || 1)));
-    setMappingFields(parseMappingToFields(mapping, extendedMappingKeys));
+    setMappingFields(parseMappingToFields(mapping));
     setMappingErrors({});
     const mappingId = Number(record?.id || 0);
     setMappingStatus(
@@ -1278,7 +1260,7 @@ export default function App() {
       return;
     }
 
-    const parsedMapping = buildMappingFromFields(mappingFields, extendedMappingKeys);
+    const parsedMapping = buildMappingFromFields(mappingFields);
     setMappingText(toJsonString(parsedMapping));
 
     setMappingStatus('Збереження мапінгу...');
@@ -1353,7 +1335,7 @@ export default function App() {
     setMappingText('{}');
     setMappingComment('');
     setMappingHeaderRow('1');
-    setMappingFields(createEmptyMappingFields(extendedMappingKeys));
+    setMappingFields(createEmptyMappingFields());
     setMappingErrors({});
     setMappingStatus('Новий мапінг: заповніть поля і збережіть');
   };
@@ -1901,31 +1883,6 @@ export default function App() {
     }
   }, [tab]);
 
-  // Завантажуємо master_fields один раз при логіні — для розширеного мапінгу у MappingTab
-  // і для будь-яких інших місць, що потребують канонічних полів картки.
-  useEffect(() => {
-    if (!authReady || !meRole) {
-      return;
-    }
-    apiFetch('/catalog/fields')
-      .then((data) => {
-        setMasterFieldDefs(Array.isArray(data?.rows) ? data.rows : []);
-      })
-      .catch(() => setMasterFieldDefs([]));
-  }, [authReady, meRole]);
-
-  // Коли master_fields завантажились — додаємо їх ключі в mappingFields state (зі збереженням наявних значень).
-  useEffect(() => {
-    if (masterFieldDefs.length === 0) return;
-    setMappingFields((prev) => {
-      const next = createEmptyMappingFields(extendedMappingKeys);
-      for (const key of Object.keys(prev || {})) {
-        if (next[key]) next[key] = prev[key];
-      }
-      return next;
-    });
-  }, [masterFieldDefs, extendedMappingKeys]);
-
   useEffect(() => {
     if (!authReady || !meRole) {
       return undefined;
@@ -2202,9 +2159,7 @@ export default function App() {
               loadSourcePreview={loadSourcePreview}
               sourceSheetsStatus={sourceSheetsStatus}
               sourcePreview={sourcePreview}
-              mappingKeys={extendedMappingKeys}
-              baseMappingKeys={MAPPING_KEYS}
-              masterFieldDefs={masterFieldDefs}
+              mappingKeys={MAPPING_KEYS}
               mappingFields={mappingFields}
               updateMappingField={updateMappingField}
               mappingColumnOptions={mappingColumnOptions}
@@ -2219,10 +2174,6 @@ export default function App() {
               resetMappingDraft={resetMappingDraft}
               supplierLocked
               supplierLockedName={selectedSupplierName}
-              apiFetch={apiFetch}
-              setMappingFields={setMappingFields}
-              aiHints={aiHints}
-              setAiHints={setAiHints}
             />
           )}
           pricingPanel={(
@@ -2277,14 +2228,6 @@ export default function App() {
           updateSizeMapping={updateSizeMapping}
           deleteSizeMapping={deleteSizeMapping}
           bulkImportSizeMappings={bulkImportSizeMappings}
-        />
-      ) : null}
-
-      {tab === 'masters' && ENABLE_MASTER_CATALOG ? (
-        <MasterCatalogTab
-          isReadOnly={isReadOnly}
-          suppliers={suppliers}
-          pushToast={pushToast}
         />
       ) : null}
 

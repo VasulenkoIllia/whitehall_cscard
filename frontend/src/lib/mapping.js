@@ -1,9 +1,4 @@
-// Базові 6 ключів — обов'язкові для синхронізації з магазином.
-// Master-field ключі (brand, color_uk, тощо) додаються динамічно з API.
-export const MAPPING_KEYS_BASE = ['article', 'size', 'quantity', 'price', 'extra', 'comment'];
-const MAPPING_KEYS = MAPPING_KEYS_BASE;
-// Ключі, які дозволено зберігати порожніми (опціональні у базі):
-const BASE_OPTIONAL_EMPTY = new Set(['size', 'comment']);
+const MAPPING_KEYS = ['article', 'size', 'quantity', 'price', 'extra', 'comment'];
 
 export function columnLetter(index) {
   let result = '';
@@ -47,15 +42,15 @@ export function normalizeMappingEntry(entry) {
   return { mode: 'column', value: null, allowEmpty: false };
 }
 
-export function createEmptyMappingFields(keys = MAPPING_KEYS) {
-  const result = {};
-  for (let index = 0; index < keys.length; index += 1) {
-    const key = keys[index];
-    // Master-field ключі (поза базовими 6) — усі опціональні (allowEmpty=true).
-    const allowEmpty = key === 'comment' || !MAPPING_KEYS_BASE.includes(key);
-    result[key] = { mode: 'column', value: null, allowEmpty };
-  }
-  return result;
+export function createEmptyMappingFields() {
+  return {
+    article: { mode: 'column', value: null, allowEmpty: false },
+    size: { mode: 'column', value: null, allowEmpty: false },
+    quantity: { mode: 'column', value: null, allowEmpty: false },
+    price: { mode: 'column', value: null, allowEmpty: false },
+    extra: { mode: 'column', value: null, allowEmpty: false },
+    comment: { mode: 'column', value: null, allowEmpty: true }
+  };
 }
 
 function isMappingFieldSet(entry, options = {}) {
@@ -72,28 +67,24 @@ function isMappingFieldSet(entry, options = {}) {
   return Number.isFinite(Number(entry.value)) && Number(entry.value) > 0;
 }
 
-export function parseMappingToFields(mapping, keys = MAPPING_KEYS) {
-  const result = createEmptyMappingFields(keys);
+export function parseMappingToFields(mapping) {
+  const result = createEmptyMappingFields();
   if (!mapping || typeof mapping !== 'object') {
     return result;
   }
-  for (let index = 0; index < keys.length; index += 1) {
-    const key = keys[index];
-    if (mapping[key] !== undefined) {
-      result[key] = normalizeMappingEntry(mapping[key]);
-    }
+  for (let index = 0; index < MAPPING_KEYS.length; index += 1) {
+    const key = MAPPING_KEYS[index];
+    result[key] = normalizeMappingEntry(mapping[key]);
   }
   return result;
 }
 
-export function buildMappingFromFields(fields, keys = MAPPING_KEYS) {
+export function buildMappingFromFields(fields) {
   const payload = {};
-  for (let index = 0; index < keys.length; index += 1) {
-    const key = keys[index];
+  for (let index = 0; index < MAPPING_KEYS.length; index += 1) {
+    const key = MAPPING_KEYS[index];
     const entry = fields?.[key];
-    // Master-field ключі (поза базовими 6) — завжди опціональні; не зберігаємо незаповнені.
-    const isBase = MAPPING_KEYS_BASE.includes(key);
-    const allowEmpty = isBase ? BASE_OPTIONAL_EMPTY.has(key) : true;
+    const allowEmpty = key === 'size' || key === 'comment';
     if (!isMappingFieldSet(entry, { allowEmpty })) {
       continue;
     }
