@@ -627,7 +627,8 @@ export function createHttpServer(appContext: AppContext) {
   app.get('/admin/api/size-mappings/unmapped', authMw.requireRole('viewer'), async (req: Request, res: Response) => {
     try {
       const limit = req.query.limit ? Number(req.query.limit) : 200;
-      const result = await catalogAdmin.listUnmappedSizes(limit);
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const result = await catalogAdmin.listUnmappedSizes(limit, undefined, search);
       return res.json(result);
     } catch (err) {
       return res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'size_mappings_unmapped_error') });

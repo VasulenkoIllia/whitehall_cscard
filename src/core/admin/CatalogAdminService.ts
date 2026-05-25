@@ -2070,12 +2070,19 @@ export class CatalogAdminService {
     return { imported, skipped: sizeFromArr.length - imported };
   }
 
-  async listUnmappedSizes(limit = 200, maxLimit = 2000): Promise<{
+  async listUnmappedSizes(limit = 200, maxLimit = 2000, search?: string): Promise<{
     total: number;
     fetchedCount: number;
     rows: { raw_size: string; will_become: string; product_count: number; supplier_count: number }[];
   }> {
     const safeLimit = Math.min(Math.max(1, Math.trunc(Number(limit) || 200)), maxLimit);
+    const searchTrimmed = typeof search === 'string' ? search.trim() : '';
+    const values: unknown[] = [safeLimit];
+    let searchClause = '';
+    if (searchTrimmed) {
+      values.push(`%${searchTrimmed}%`);
+      searchClause = `AND LOWER(pr.size) LIKE LOWER($${values.length})`;
+    }
     const result = await this.pool.query(
       `WITH unmapped AS (
          SELECT
@@ -2089,13 +2096,14 @@ export class CatalogAdminService {
          WHERE szm.id IS NULL
            AND pr.size IS NOT NULL
            AND TRIM(pr.size) <> ''
+           ${searchClause}
          GROUP BY pr.size
        )
        SELECT *, COUNT(*) OVER()::int AS total_count
        FROM unmapped
        ORDER BY product_count DESC
        LIMIT $1`,
-      [safeLimit]
+      values
     );
     const realTotal = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
     return {

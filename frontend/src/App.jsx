@@ -785,10 +785,13 @@ export default function App() {
     }
   };
 
-  const refreshUnmappedSizes = async () => {
+  const refreshUnmappedSizes = async (search = '') => {
     setUnmappedSizes((prev) => ({ ...prev, status: 'Завантаження...' }));
     try {
-      const data = await apiFetch('/size-mappings/unmapped?limit=2000');
+      const params = new URLSearchParams({ limit: '2000' });
+      const trimmed = String(search || '').trim();
+      if (trimmed) params.set('search', trimmed);
+      const data = await apiFetch(`/size-mappings/unmapped?${params.toString()}`);
       setUnmappedSizes({
         rows: Array.isArray(data?.rows) ? data.rows : [],
         total: data?.total || 0,

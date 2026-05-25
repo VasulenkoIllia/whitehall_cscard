@@ -96,6 +96,22 @@ export function SizeMappingsTab({
   useEffect(() => { setMappingPage(1); }, [mappingCategory, search]);
   useEffect(() => { setUnmappedPage(1); }, [unmappedCategory, unmappedSearch]);
 
+  // Debounced server-side reload when the unmapped search query changes.
+  // The first 2000 rows are loaded once on mount; refining further (especially
+  // sizes in the long tail beyond top-2000) requires a backend round-trip.
+  const isFirstUnmappedSearchRef = useRef(true);
+  useEffect(() => {
+    if (isFirstUnmappedSearchRef.current) {
+      isFirstUnmappedSearchRef.current = false;
+      return;
+    }
+    const handle = setTimeout(() => {
+      void refreshUnmappedSizes(unmappedSearch);
+    }, 300);
+    return () => clearTimeout(handle);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unmappedSearch]);
+
   const isError = (s) => /(error|помилка)/i.test(String(s || ''));
 
   // ── Filtering ─────────────────────────────────────────────────────────────
@@ -274,13 +290,18 @@ export function SizeMappingsTab({
                 </button>
               ))}
             </div>
-            <button className="btn" onClick={refreshUnmappedSizes}>Оновити</button>
+            <button className="btn" onClick={() => refreshUnmappedSizes(unmappedSearch)}>Оновити</button>
             <a className="btn" href="/admin/api/size-mappings/unmapped-export" download>⬇ Скачати CSV</a>
           </div>
 
-          {unmappedTruncated && !unmappedSizes?.status && (
+          {unmappedTruncated && !unmappedSizes?.status && !unmappedSearchLower && (
             <div className="size-truncated-note">
               Завантажено топ {unmappedRows.length} розмірів з {unmappedRealTotal} незнайомих (за к-стю товарів). Для пошуку інших — введіть запит вище.
+            </div>
+          )}
+          {unmappedSearchLower && !unmappedSizes?.status && (
+            <div className="size-truncated-note">
+              Пошук на сервері: знайдено {unmappedRealTotal} незмапованих розмірів за запитом «{unmappedSearch.trim()}»{unmappedTruncated ? ` (показано перших ${unmappedRows.length})` : ''}.
             </div>
           )}
 
