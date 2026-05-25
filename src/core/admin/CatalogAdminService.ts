@@ -1918,9 +1918,12 @@ export class CatalogAdminService {
     const whereParts: string[] = [];
 
     if (options.search) {
-      values.push(`%${String(options.search).trim()}%`);
+      // position(...) > 0 is used instead of LIKE so backslashes in user input
+      // (e.g. searching for "46 2\3") match literally — Postgres LIKE would
+      // otherwise interpret '\' as its default escape character.
+      values.push(String(options.search).trim());
       whereParts.push(
-        `(LOWER(sm.size_from) LIKE LOWER($${values.length}) OR LOWER(sm.size_to) LIKE LOWER($${values.length}))`
+        `(position(LOWER($${values.length}) in LOWER(sm.size_from)) > 0 OR position(LOWER($${values.length}) in LOWER(sm.size_to)) > 0)`
       );
     }
 
@@ -2080,19 +2083,21 @@ export class CatalogAdminService {
     const values: unknown[] = [safeLimit];
     let searchClause = '';
     if (searchTrimmed) {
-      values.push(`%${searchTrimmed}%`);
-      searchClause = `AND LOWER(pr.size) LIKE LOWER($${values.length})`;
+      // position(...) > 0 instead of LIKE so '\' (e.g. "46 2\3") is matched
+      // literally — LIKE would treat it as an escape character.
+      values.push(searchTrimmed);
+      searchClause = `AND position(LOWER($${values.length}) in LOWER(pr.size)) > 0`;
     }
     const result = await this.pool.query(
       `WITH unmapped AS (
          SELECT
-           pr.size                              AS raw_size,
-           UPPER(TRIM(pr.size))                 AS will_become,
-           COUNT(*)::int                        AS product_count,
-           COUNT(DISTINCT pr.supplier_id)::int  AS supplier_count
+           pr.size                                                   AS raw_size,
+           UPPER(TRIM(REPLACE(pr.size, chr(92), '/')))               AS will_become,
+           COUNT(*)::int                                             AS product_count,
+           COUNT(DISTINCT pr.supplier_id)::int                       AS supplier_count
          FROM products_raw pr
          LEFT JOIN size_mappings szm
-           ON LOWER(TRIM(pr.size)) = LOWER(TRIM(szm.size_from))
+           ON LOWER(TRIM(REPLACE(pr.size, chr(92), '/'))) = LOWER(TRIM(szm.size_from))
          WHERE szm.id IS NULL
            AND pr.size IS NOT NULL
            AND TRIM(pr.size) <> ''

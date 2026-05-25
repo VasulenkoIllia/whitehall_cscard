@@ -12,7 +12,10 @@ const stageFromPrecomputedSql = `
       -- NULL sizes remain NULL; unmapped sizes are auto-uppercased.
       -- NULLIF: if mapping produces '' (intentional empty mapping), treat as NULL so
       -- DISTINCT ON deduplicates it with other NULL-size rows for the same article.
-      NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(pr.size)))), '') AS size,
+      -- REPLACE: suppliers use both forward- and back-slash for fractional sizes
+      -- (e.g. "46 2/3" vs "46 2" + backslash + "3"); canonicalise to '/' so a
+      -- single mapping row covers both spellings.
+      NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(REPLACE(pr.size, chr(92), '/'))))), '') AS size,
       pr.quantity,
       pr.price AS price_base,
       CEIL(pr.price_with_markup / 10) * 10 AS price_final,
@@ -24,7 +27,7 @@ const stageFromPrecomputedSql = `
     JOIN suppliers s ON s.id = pr.supplier_id
     LEFT JOIN size_mappings szm
       ON szm.is_active = TRUE
-      AND LOWER(TRIM(pr.size)) = LOWER(TRIM(szm.size_from))
+      AND LOWER(TRIM(REPLACE(pr.size, chr(92), '/'))) = LOWER(TRIM(szm.size_from))
     WHERE s.is_active = TRUE
       AND pr.job_id = $1
   ),
@@ -69,7 +72,8 @@ const stageWithFinalizePricingSql = `
       -- NULL sizes remain NULL; unmapped sizes are auto-uppercased.
       -- NULLIF: if mapping produces '' (intentional empty mapping), treat as NULL so
       -- DISTINCT ON deduplicates it with other NULL-size rows for the same article.
-      NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(pr.size)))), '') AS size,
+      -- REPLACE: canonicalise backslash → '/' so both spellings share one mapping.
+      NULLIF(TRIM(COALESCE(szm.size_to, UPPER(TRIM(REPLACE(pr.size, chr(92), '/'))))), '') AS size,
       pr.quantity,
       pr.price AS price_base,
       pr.extra,
@@ -87,7 +91,7 @@ const stageWithFinalizePricingSql = `
     JOIN suppliers s ON s.id = pr.supplier_id
     LEFT JOIN size_mappings szm
       ON szm.is_active = TRUE
-      AND LOWER(TRIM(pr.size)) = LOWER(TRIM(szm.size_from))
+      AND LOWER(TRIM(REPLACE(pr.size, chr(92), '/'))) = LOWER(TRIM(szm.size_from))
     LEFT JOIN markup_rule_sets active_rs
       ON active_rs.id = s.markup_rule_set_id
      AND active_rs.is_active = TRUE
