@@ -1546,6 +1546,7 @@ export function createHttpServer(appContext: AppContext) {
     masterCatalogService: appContext.masterCatalogService,
     enrichmentService: appContext.enrichmentService,
     aiUsageService: appContext.aiUsageService,
+    anthropicBatchService: appContext.anthropicBatchService,
     jobRunner,
     authMw
   });

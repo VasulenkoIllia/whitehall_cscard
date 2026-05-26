@@ -53,6 +53,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   const [usageSummary, setUsageSummary] = useState(null);
   // Prompt preview modal:
   const [promptPreview, setPromptPreview] = useState(null);
+  const [asyncBatches, setAsyncBatches] = useState([]);
+  const [asyncSubmitting, setAsyncSubmitting] = useState(false);
 
   const loadList = useCallback(async () => {
     setStatus('Завантаження...');
@@ -86,6 +88,66 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   }, [apiFetch]);
 
   useEffect(() => { void loadUsage(); }, [loadUsage]);
+
+  const loadAsyncBatches = useCallback(async () => {
+    try {
+      const data = await apiFetch('/master-catalog/batches?limit=10');
+      setAsyncBatches(Array.isArray(data?.rows) ? data.rows : []);
+    } catch {
+      // ignore
+    }
+  }, [apiFetch]);
+
+  useEffect(() => { void loadAsyncBatches(); }, [loadAsyncBatches]);
+
+  const submitAsyncBatch = async () => {
+    if (isReadOnly || asyncSubmitting) return;
+    const candidates = Array.from(selectedIds).filter((id) => {
+      const row = rows.find((r) => Number(r.id) === id);
+      return row && row.feed_matched_at;
+    });
+    if (candidates.length === 0) {
+      alert('Оберіть SKU з feed для async batch.');
+      return;
+    }
+    if (!window.confirm(
+      `Submit ${candidates.length} SKU у Anthropic Batch API (async)?\n` +
+      `Це повертає batch_id одразу, але результат буде через 1-24 години.\n` +
+      `Ціна -50% від звичайних викликів.`
+    )) return;
+    setAsyncSubmitting(true);
+    try {
+      const result = await apiFetch('/master-catalog/batch-submit', {
+        method: 'POST',
+        body: JSON.stringify({ masterIds: candidates, model: aiModel })
+      });
+      alert(`Submitted! batch_id=${result.batchId}, external=${result.externalId}, items=${result.itemsCount}`);
+      await loadAsyncBatches();
+    } catch (err) {
+      alert('Помилка: ' + (err?.message || 'unknown'));
+    } finally {
+      setAsyncSubmitting(false);
+    }
+  };
+
+  const pollAsyncBatch = async (batchId, overwrite = false) => {
+    try {
+      const updated = await apiFetch(`/master-catalog/batches/${batchId}/poll`, {
+        method: 'POST',
+        body: JSON.stringify({ overwrite })
+      });
+      await loadAsyncBatches();
+      await loadUsage();
+      await loadList();
+      if (updated.status === 'ended') {
+        alert(`Batch завершено! Записано: ${updated.succeeded_count}, помилок: ${updated.errored_count}, $: ${updated.cost_usd || 0}`);
+      } else {
+        alert(`Status: ${updated.status}, processed: ${updated.processed_count}/${updated.items_count}`);
+      }
+    } catch (err) {
+      alert('Помилка: ' + (err?.message || 'unknown'));
+    }
+  };
 
   const triggerSync = async () => {
     if (isReadOnly || syncRunning) return;
@@ -371,6 +433,15 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           >
             🔁 Enrich ({selectedIds.size}) — переписати
           </button>
+          <button
+            className="btn btn-sm"
+            disabled={isReadOnly || asyncSubmitting || selectedIds.size === 0}
+            onClick={submitAsyncBatch}
+            title="Anthropic Batch API: async обробка, -50% ціна, 1-24 год"
+            style={{ background: '#8e44ad', color: 'white' }}
+          >
+            🌙 Submit async batch
+          </button>
         </div>
 
         {batchSummary ? (
@@ -392,6 +463,67 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
               </>
             )}
           </div>
+        ) : null}
+
+        {/* Async batches list */}
+        {asyncBatches.length > 0 ? (
+          <details style={{ marginTop: 8, fontSize: 12 }}>
+            <summary style={{ cursor: 'pointer', color: '#8e44ad' }}>
+              <strong>🌙 Anthropic Async Batches ({asyncBatches.length})</strong> — click to poll status / fetch results
+            </summary>
+            <table style={{ width: '100%', fontSize: 11, marginTop: 8 }}>
+              <thead><tr style={{ background: '#f5f5f5' }}>
+                <th style={{ textAlign: 'left', padding: 3 }}>ID</th>
+                <th>External ID</th>
+                <th>Status</th>
+                <th>Items</th>
+                <th>Progress</th>
+                <th>Cost $</th>
+                <th>Submitted</th>
+                <th>Ended</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {asyncBatches.map((b) => (
+                  <tr key={b.id} style={{ borderBottom: '1px solid #eee' }}>
+                    <td style={{ padding: 3 }}>{b.id}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 10 }}>{b.external_id}</td>
+                    <td>
+                      <span style={{
+                        background: b.status === 'ended' ? '#d4edda' :
+                                    b.status === 'errored' ? '#f8d7da' : '#fff3cd',
+                        padding: '1px 6px', borderRadius: 8, fontSize: 10
+                      }}>{b.status}</span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{b.items_count}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {b.succeeded_count}/{b.items_count}
+                      {b.errored_count > 0 ? <span style={{ color: '#a00' }}> ({b.errored_count} err)</span> : null}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {b.cost_usd ? `$${Number(b.cost_usd).toFixed(4)}` : '—'}
+                    </td>
+                    <td style={{ fontSize: 10 }}>
+                      {b.submitted_at ? new Date(b.submitted_at).toLocaleString('uk-UA') : '—'}
+                    </td>
+                    <td style={{ fontSize: 10 }}>
+                      {b.ended_at ? new Date(b.ended_at).toLocaleString('uk-UA') : '—'}
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => pollAsyncBatch(b.id, false)}
+                        title="Poll status + auto-write results якщо ended"
+                      >
+                        {b.results_fetched_at ? '✓ Done' :
+                         b.status === 'ended' ? '⬇ Fetch' : '🔄 Poll'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
         ) : null}
       </div>
 

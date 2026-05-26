@@ -37,6 +37,8 @@ import { FeedService } from '../core/feeds/FeedService';
 import { createAnthropicClient } from '../core/ai/AnthropicClient';
 import { EnrichmentService } from '../core/ai/EnrichmentService';
 import { AiUsageService } from '../core/ai/AiUsageService';
+import { createAnthropicBatchClient } from '../core/ai/AnthropicBatchClient';
+import { AnthropicBatchService } from '../core/ai/AnthropicBatchService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -307,6 +309,7 @@ export interface Application {
   feedService: FeedService;
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
+  anthropicBatchService: AnthropicBatchService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
@@ -375,6 +378,14 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const anthropic = createAnthropicClient(env);
   const aiUsageService = new AiUsageService(pool);
   const enrichmentService = new EnrichmentService(pool, anthropic, logService, env, aiUsageService);
+  const anthropicBatchClient = createAnthropicBatchClient(env);
+  const anthropicBatchService = new AnthropicBatchService(
+    pool,
+    anthropicBatchClient,
+    aiUsageService,
+    logService,
+    env
+  );
   const jobRunner = new PipelineJobRunner(
     pipeline,
     jobService,
@@ -442,6 +453,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     feedService,
     enrichmentService,
     aiUsageService,
+    anthropicBatchService,
     cleanupService,
     storeMirrorService,
     auth,

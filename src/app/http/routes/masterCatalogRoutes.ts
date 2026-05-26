@@ -2,6 +2,7 @@ import type { Application, Request, Response } from 'express';
 import type { MasterCatalogService } from '../../../core/master_catalog/MasterCatalogService';
 import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
 import type { AiUsageService } from '../../../core/ai/AiUsageService';
+import type { AnthropicBatchService } from '../../../core/ai/AnthropicBatchService';
 import type { PipelineJobRunner } from '../../../core/jobs/PipelineJobRunner';
 import type { createAuthMiddleware } from '../authMiddleware';
 
@@ -11,6 +12,7 @@ interface MasterCatalogRouteDeps {
   masterCatalogService: MasterCatalogService;
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
+  anthropicBatchService: AnthropicBatchService;
   jobRunner: PipelineJobRunner<unknown>;
   authMw: AuthMiddleware;
 }
@@ -41,7 +43,76 @@ function parseBoolOrNull(value: unknown): boolean | null {
 }
 
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
-  const { masterCatalogService, enrichmentService, aiUsageService, jobRunner, authMw } = deps;
+  const { masterCatalogService, enrichmentService, aiUsageService, anthropicBatchService, jobRunner, authMw } = deps;
+
+  // ─── Anthropic Batch API (async масштабна обробка) ─────────────────────────
+
+  // POST /admin/api/master-catalog/batch-submit — submit масив SKU у Anthropic.
+  app.post(
+    '/admin/api/master-catalog/batch-submit',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const masterIds = Array.isArray(req.body?.masterIds)
+          ? (req.body.masterIds as unknown[])
+              .map((x) => Number(x))
+              .filter((x) => Number.isFinite(x) && x > 0)
+          : [];
+        if (masterIds.length === 0) {
+          res.status(400).json({ error: 'masterIds порожній' });
+          return;
+        }
+        const model = typeof req.body?.model === 'string' && req.body.model.trim()
+          ? req.body.model.trim() : undefined;
+        const result = await anthropicBatchService.submit(masterIds, { model });
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'batch_submit_error')
+        });
+      }
+    }
+  );
+
+  // GET /admin/api/master-catalog/batches — список batches.
+  app.get(
+    '/admin/api/master-catalog/batches',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const limit = parsePositiveInt(req.query.limit) || 20;
+        const rows = await anthropicBatchService.list(limit);
+        res.json({ rows });
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'batch_list_error')
+        });
+      }
+    }
+  );
+
+  // POST /admin/api/master-catalog/batches/:id/poll — poll status + auto-sync якщо ended.
+  app.post(
+    '/admin/api/master-catalog/batches/:id/poll',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'id обовʼязковий' });
+          return;
+        }
+        const overwrite = req.body?.overwrite === true || req.body?.overwrite === 'true';
+        // syncFromAnthropic поллить status, і якщо ended — скачає results + запише.
+        const rec = await anthropicBatchService.syncFromAnthropic(id, { overwriteExisting: overwrite });
+        res.json(rec);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'batch_poll_error')
+        });
+      }
+    }
+  );
 
   // AI usage summary (для UI dashboard).
   app.get(
