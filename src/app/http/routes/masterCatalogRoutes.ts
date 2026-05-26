@@ -1,5 +1,6 @@
 import type { Application, Request, Response } from 'express';
 import type { MasterCatalogService } from '../../../core/master_catalog/MasterCatalogService';
+import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
 import type { PipelineJobRunner } from '../../../core/jobs/PipelineJobRunner';
 import type { createAuthMiddleware } from '../authMiddleware';
 
@@ -7,6 +8,7 @@ type AuthMiddleware = ReturnType<typeof createAuthMiddleware>;
 
 interface MasterCatalogRouteDeps {
   masterCatalogService: MasterCatalogService;
+  enrichmentService: EnrichmentService;
   jobRunner: PipelineJobRunner<unknown>;
   authMw: AuthMiddleware;
 }
@@ -37,7 +39,48 @@ function parseBoolOrNull(value: unknown): boolean | null {
 }
 
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
-  const { masterCatalogService, jobRunner, authMw } = deps;
+  const { masterCatalogService, enrichmentService, jobRunner, authMw } = deps;
+
+  // AI status — чи доступне.
+  app.get(
+    '/admin/api/master-catalog/ai/status',
+    authMw.requireRole('viewer'),
+    (_req: Request, res: Response) => {
+      res.json({
+        enabled: enrichmentService.isEnabled(),
+        model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5'
+      });
+    }
+  );
+
+  // POST /admin/api/master-catalog/:id/enrich — AI enrich one master.
+  app.post(
+    '/admin/api/master-catalog/:id/enrich',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'id обовʼязковий' });
+          return;
+        }
+        const overwrite = req.body?.overwrite === true || req.body?.overwrite === 'true';
+        const threshold =
+          typeof req.body?.confidenceThreshold === 'number'
+            ? req.body.confidenceThreshold
+            : undefined;
+        const result = await enrichmentService.enrichMaster(id, {
+          overwriteExisting: overwrite,
+          confidenceThreshold: threshold
+        });
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'enrich_error')
+        });
+      }
+    }
+  );
 
   // POST /admin/api/jobs/master-catalog-sync — запустити sync.
   app.post(

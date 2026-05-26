@@ -1544,6 +1544,7 @@ export function createHttpServer(appContext: AppContext) {
   // Master catalog (Phase 1: SKU sync + list + drill-in)
   registerMasterCatalogRoutes(app, {
     masterCatalogService: appContext.masterCatalogService,
+    enrichmentService: appContext.enrichmentService,
     jobRunner,
     authMw
   });

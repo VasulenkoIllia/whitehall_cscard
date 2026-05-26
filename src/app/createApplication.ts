@@ -34,6 +34,8 @@ import type { StoreImportBatch } from '../core/domain/store';
 import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 import { MasterCatalogService } from '../core/master_catalog/MasterCatalogService';
 import { FeedService } from '../core/feeds/FeedService';
+import { createAnthropicClient } from '../core/ai/AnthropicClient';
+import { EnrichmentService } from '../core/ai/EnrichmentService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -302,6 +304,7 @@ export interface Application {
   catalogAdminService: CatalogAdminService;
   masterCatalogService: MasterCatalogService;
   feedService: FeedService;
+  enrichmentService: EnrichmentService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
@@ -367,6 +370,8 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const cleanupService = new CleanupService(pool);
   const masterCatalogService = new MasterCatalogService(pool, logService);
   const feedService = new FeedService(pool, logService);
+  const anthropic = createAnthropicClient(env);
+  const enrichmentService = new EnrichmentService(pool, anthropic, logService, env);
   const jobRunner = new PipelineJobRunner(
     pipeline,
     jobService,
@@ -432,6 +437,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     catalogAdminService,
     masterCatalogService,
     feedService,
+    enrichmentService,
     cleanupService,
     storeMirrorService,
     auth,

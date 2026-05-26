@@ -240,15 +240,48 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
 function DrillIn({ master, apiFetch, onClose }) {
   const [full, setFull] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [aiStatus, setAiStatus] = useState(null);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichResult, setEnrichResult] = useState(null);
+  const [enrichError, setEnrichError] = useState('');
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch(`/master-catalog/${master.id}`);
+      setFull(data);
+    } catch {
+      setFull(master);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch, master]);
+
+  useEffect(() => { void reload(); }, [reload]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    apiFetch(`/master-catalog/${master.id}`)
-      .then((data) => { if (!cancelled) { setFull(data); setLoading(false); } })
-      .catch(() => { if (!cancelled) { setFull(master); setLoading(false); } });
-    return () => { cancelled = true; };
-  }, [master.id]);
+    apiFetch('/master-catalog/ai/status')
+      .then((r) => setAiStatus(r))
+      .catch(() => setAiStatus({ enabled: false }));
+  }, [apiFetch]);
+
+  const runEnrich = async (overwrite = false) => {
+    setEnriching(true);
+    setEnrichError('');
+    setEnrichResult(null);
+    try {
+      const result = await apiFetch(`/master-catalog/${master.id}/enrich`, {
+        method: 'POST',
+        body: JSON.stringify({ overwrite })
+      });
+      setEnrichResult(result);
+      await reload();
+    } catch (err) {
+      setEnrichError(err?.message || 'enrich_error');
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   const filledCount = useMemo(() => {
     if (!full) return 0;
@@ -284,6 +317,57 @@ function DrillIn({ master, apiFetch, onClose }) {
               {full?.ai_enriched_at ? <Tag tone="ok">AI: {new Date(full.ai_enriched_at).toLocaleString('uk-UA')}</Tag> : <Tag tone="warn">AI: не опрацьовано</Tag>}
             </div>
 
+            {/* AI Enrich block */}
+            <div style={{ marginBottom: 16, padding: 10, background: '#f0f7ff', borderRadius: 6, border: '1px solid #4a90e2' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <strong>🤖 AI Enrichment</strong>
+                {!aiStatus?.enabled ? (
+                  <span style={{ color: '#a00', fontSize: 12 }}>(недоступний — додай ANTHROPIC_API_KEY)</span>
+                ) : (
+                  <>
+                    <button
+                      className="btn btn-sm primary"
+                      disabled={enriching || !full?.feed_params}
+                      onClick={() => runEnrich(false)}
+                      title={!full?.feed_params ? 'Спершу імпортуй feed' : 'Заповнити порожні поля через AI'}
+                    >
+                      {enriching ? '⏳ Запит до AI...' : '✨ Заповнити через AI'}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={enriching || !full?.feed_params}
+                      onClick={() => runEnrich(true)}
+                      title="Перезаписати ВСІ поля (навіть якщо вже заповнені)"
+                    >
+                      🔁 Переписати всі
+                    </button>
+                    <span style={{ fontSize: 11, color: '#666' }}>
+                      Модель: {aiStatus?.model || '—'}
+                    </span>
+                  </>
+                )}
+              </div>
+              {enrichError ? (
+                <div style={{ marginTop: 6, background: '#fee', padding: 6, color: '#a00', fontSize: 12, borderRadius: 4 }}>
+                  {enrichError}
+                </div>
+              ) : null}
+              {enrichResult ? (
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  <Tag tone="ok">Заповнено: {enrichResult.fieldsWritten}</Tag>
+                  <Tag tone="warn">Пропущено: {enrichResult.fieldsSkipped}</Tag>
+                  <span style={{ marginLeft: 8, color: '#666' }}>
+                    Tokens in/out: {enrichResult.inputTokens}/{enrichResult.outputTokens} · {enrichResult.durationMs}ms
+                  </span>
+                  {enrichResult.warnings?.length > 0 ? (
+                    <ul style={{ margin: '4px 0 0 16px', color: '#664d03' }}>
+                      {enrichResult.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
             <h4>Картка товару (23 поля)</h4>
             <table style={{ width: '100%', fontSize: 13 }}>
               <tbody>
@@ -311,8 +395,7 @@ function DrillIn({ master, apiFetch, onClose }) {
               </details>
             ) : (
               <div style={{ marginTop: 16, padding: 12, background: '#fff3cd', borderRadius: 4, fontSize: 12, color: '#664d03' }}>
-                ℹ Phase 2 (поки не реалізовано): тут будуть параметри з імпортованого фіда магазину
-                — звідки AI заповнить 23 поля.
+                ℹ Для цього SKU ще немає feed_params. Створи та запусти імпорт фіда вище, де SKU присутній.
               </div>
             )}
           </>
@@ -456,19 +539,39 @@ function FeedForm({ apiFetch, existing, onSaved, onCancel }) {
   const [url, setUrl] = React.useState(existing?.url || "");
   const [format, setFormat] = React.useState(existing?.format || "yml");
   const [skuField, setSkuField] = React.useState(existing?.sku_field || "vendorCode");
-  const [optionsText, setOptionsText] = React.useState(JSON.stringify(existing?.options || {}, null, 2));
+
+  // Виокремлюємо excluded_fields з options у окремий state — UI зручніше.
+  const initialOptions = existing?.options || {};
+  const initialExcluded = Array.isArray(initialOptions.excluded_fields)
+    ? initialOptions.excluded_fields.join(", ")
+    : "";
+  // Решта options без excluded_fields — як JSON.
+  const restInitial = { ...initialOptions };
+  delete restInitial.excluded_fields;
+
+  const [excludedFields, setExcludedFields] = React.useState(initialExcluded);
+  const [optionsText, setOptionsText] = React.useState(
+    Object.keys(restInitial).length > 0 ? JSON.stringify(restInitial, null, 2) : ""
+  );
   const [error, setError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
   const save = async () => {
     setError("");
-    let options;
+    let extraOptions;
     try {
-      options = optionsText.trim() ? JSON.parse(optionsText) : {};
+      extraOptions = optionsText.trim() ? JSON.parse(optionsText) : {};
     } catch (err) {
-      setError("Невалідний JSON у options: " + err.message);
+      setError("Невалідний JSON у Додаткові options: " + err.message);
       return;
     }
+    const excludedArr = excludedFields
+      .split(/[,\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    const options = { ...extraOptions };
+    if (excludedArr.length > 0) options.excluded_fields = excludedArr;
+
     setSaving(true);
     try {
       const payload = { name: name.trim(), url: url.trim(), format, sku_field: skuField.trim(), options };
@@ -489,27 +592,56 @@ function FeedForm({ apiFetch, existing, onSaved, onCancel }) {
     <div style={{ marginTop: 12, padding: 12, border: "1px solid #aaa", borderRadius: 4, background: "#fff" }}>
       <h4 style={{ marginTop: 0 }}>{existing ? `Редагувати фід "${existing.name}"` : "Новий фід"}</h4>
       {error ? <div style={{ background: "#fee", padding: 6, marginBottom: 8, color: "#a00", borderRadius: 4 }}>{error}</div> : null}
-      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 6, alignItems: "center", marginBottom: 8 }}>
-        <label>Назва</label>
+      <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 6, alignItems: "start", marginBottom: 8 }}>
+        <label style={{ paddingTop: 6 }}>Назва</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="shopua / europasport / markshop" />
-        <label>URL</label>
+        <label style={{ paddingTop: 6 }}>URL</label>
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." />
-        <label>Формат</label>
+        <label style={{ paddingTop: 6 }}>Формат</label>
         <select value={format} onChange={(e) => setFormat(e.target.value)}>
           <option value="yml">YML (Yandex Market)</option>
           <option value="xml">XML (custom)</option>
           <option value="xlsx">XLSX (Excel)</option>
         </select>
-        <label>SKU field</label>
+        <label style={{ paddingTop: 6 }}>SKU field</label>
         <input value={skuField} onChange={(e) => setSkuField(e.target.value)} placeholder="vendorCode / article / A / id" />
-        <label>Options (JSON)</label>
-        <textarea value={optionsText} onChange={(e) => setOptionsText(e.target.value)} rows={4} style={{ fontFamily: "monospace", fontSize: 11 }} placeholder="{}" />
+
+        <label style={{ paddingTop: 6 }}>
+          Виключити поля при AI<br/>
+          <span style={{ fontSize: 10, color: "#888" }}>(через кому)</span>
+        </label>
+        <div>
+          <textarea
+            value={excludedFields}
+            onChange={(e) => setExcludedFields(e.target.value)}
+            rows={2}
+            placeholder="description, url, categoryId"
+            style={{ width: "100%", fontFamily: "monospace", fontSize: 12 }}
+          />
+          <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+            Ці поля НЕ потраплять у AI prompt (економія токенів). Дані зберігаються у БД як були.
+          </div>
+        </div>
+
+        <label style={{ paddingTop: 6 }}>
+          Додаткові options<br/>
+          <span style={{ fontSize: 10, color: "#888" }}>(JSON, опційно)</span>
+        </label>
+        <textarea
+          value={optionsText}
+          onChange={(e) => setOptionsText(e.target.value)}
+          rows={3}
+          style={{ fontFamily: "monospace", fontSize: 11 }}
+          placeholder={'{ "sheet_name": "Sheet1", "header_row": 2 }'}
+        />
       </div>
       <div style={{ fontSize: 11, color: "#666", marginBottom: 8 }}>
-        <b>Підказки sku_field:</b><br/>
-        • YML: <code>vendorCode</code>, <code>article</code>, <code>id</code><br/>
-        • XLSX: літера колонки (<code>A</code>, <code>B</code>) АБО назва колонки з header row (<code>Артикул</code>)<br/>
-        • XML: dot-notation (<code>product.code</code>)
+        <b>Підказки:</b><br/>
+        • <b>sku_field:</b> YML — <code>vendorCode</code> / <code>article</code> / <code>id</code>;
+        XLSX — літера колонки (<code>A</code>) або header (<code>Артикул</code>);
+        XML — dot (<code>product.code</code>).<br/>
+        • <b>Виключити поля:</b> найкорисніше виключити <code>description</code> якщо він великий —
+        економить 1-3K токенів на запит.
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn primary" disabled={saving} onClick={save}>Зберегти</button>
