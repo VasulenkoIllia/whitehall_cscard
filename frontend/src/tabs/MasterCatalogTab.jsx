@@ -43,6 +43,16 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   const [syncRunning, setSyncRunning] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchSummary, setBatchSummary] = useState(null);
+  const [batchSize, setBatchSize] = useState(10);
+  const [aiModel, setAiModel] = useState('claude-haiku-4-5');
+  // Set of master_catalog.id обраних чекбоксами:
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  // Cost summary з /ai/usage:
+  const [usageSummary, setUsageSummary] = useState(null);
+  // Prompt preview modal:
+  const [promptPreview, setPromptPreview] = useState(null);
 
   const loadList = useCallback(async () => {
     setStatus('Завантаження...');
@@ -66,6 +76,17 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
 
   useEffect(() => { void loadList(); }, [loadList]);
 
+  const loadUsage = useCallback(async () => {
+    try {
+      const data = await apiFetch('/master-catalog/ai/usage');
+      setUsageSummary(data);
+    } catch {
+      // ignore
+    }
+  }, [apiFetch]);
+
+  useEffect(() => { void loadUsage(); }, [loadUsage]);
+
   const triggerSync = async () => {
     if (isReadOnly || syncRunning) return;
     setSyncRunning(true);
@@ -82,6 +103,84 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     }
   };
 
+  // Bulk enrich — використовує selectedIds (чекбокси). Якщо нічого не обрано —
+  // підказка користувачу.
+  const runBatchEnrich = async (overwrite = false) => {
+    if (isReadOnly || batchRunning) return;
+    const candidates = Array.from(selectedIds).filter((id) => {
+      const row = rows.find((r) => Number(r.id) === id);
+      return row && row.feed_matched_at; // Тільки SKU з feed.
+    });
+    if (candidates.length === 0) {
+      setBatchSummary({
+        error: 'Оберіть SKU чекбоксами. Тільки ті що мають feed (feed_matched_at) йдуть в AI.'
+      });
+      return;
+    }
+    setBatchRunning(true);
+    setBatchSummary({ status: `Запускаю batch для ${candidates.length} SKU (model: ${aiModel})...` });
+    try {
+      const result = await apiFetch('/master-catalog/enrich-batch', {
+        method: 'POST',
+        body: JSON.stringify({ masterIds: candidates, batchSize, overwrite, model: aiModel })
+      });
+      setBatchSummary(result);
+      await loadList();
+      await loadUsage();
+    } catch (err) {
+      setBatchSummary({ error: err?.message || 'batch_error' });
+    } finally {
+      setBatchRunning(false);
+    }
+  };
+
+  // ─── Checkbox helpers ──────────────────────────────────────────────────────
+  const toggleOne = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const selectAllVisible = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const r of rows) next.add(Number(r.id));
+      return next;
+    });
+  };
+  const selectVisibleWithFeed = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const r of rows) {
+        if (r.feed_matched_at) next.add(Number(r.id));
+      }
+      return next;
+    });
+  };
+  const selectVisibleWithFeedNoAi = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const r of rows) {
+        if (r.feed_matched_at && !r.ai_enriched_at) next.add(Number(r.id));
+      }
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // ─── Prompt preview ────────────────────────────────────────────────────────
+  const openPromptPreview = async (masterId) => {
+    setPromptPreview({ loading: true, masterId });
+    try {
+      const data = await apiFetch(`/master-catalog/${masterId}/enrich/preview`);
+      setPromptPreview({ ...data, loading: false, masterId });
+    } catch (err) {
+      setPromptPreview({ loading: false, error: err?.message || 'preview_error', masterId });
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
@@ -90,6 +189,61 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       subtitle="Phase 1 — SKU з фіналайзу. Phase 2 — імпорт фідів + matching. Phase 3 — AI enrichment."
     >
       <FeedsSection apiFetch={apiFetch} isReadOnly={isReadOnly} onAfterImport={loadList} />
+
+      {/* Cost ribbon */}
+      {usageSummary?.summary ? (
+        <div style={{
+          border: '1px solid #d0d7e2', borderRadius: 6, padding: 8, marginBottom: 12,
+          background: '#fcfdff', display: 'flex', gap: 12, alignItems: 'center', fontSize: 13, flexWrap: 'wrap'
+        }}>
+          <strong>💰 AI витрати</strong>
+          <span>Всього: <b>${usageSummary.summary.totalCostUsd.toFixed(4)}</b></span>
+          <span style={{ color: '#666' }}>· викликів: {usageSummary.summary.totalCalls}</span>
+          <span style={{ color: '#666' }}>· SKU оброблено: {usageSummary.summary.totalItems}</span>
+          <span style={{ color: '#666' }}>· tokens in/out: {usageSummary.summary.totalInputTokens}/{usageSummary.summary.totalOutputTokens}</span>
+          <span style={{ marginLeft: 'auto', color: '#666' }}>
+            24h: ${usageSummary.summary.last24h.costUsd.toFixed(4)} ({usageSummary.summary.last24h.calls} викликів)
+          </span>
+          <details style={{ width: '100%', marginTop: 4 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 11, color: '#4a90e2' }}>📊 Розбивка по моделях + recent log</summary>
+            <div style={{ marginTop: 8, fontSize: 11 }}>
+              <b>По моделях:</b>
+              <ul style={{ margin: '4px 0 8px 16px' }}>
+                {usageSummary.summary.byModel.map((m) => (
+                  <li key={m.model}>
+                    <code>{m.model}</code>: {m.calls} викликів, {m.items} SKU, <b>${Number(m.costUsd).toFixed(4)}</b>
+                  </li>
+                ))}
+              </ul>
+              <b>Recent log (20 останніх):</b>
+              <table style={{ width: '100%', fontSize: 10, marginTop: 4, borderCollapse: 'collapse' }}>
+                <thead><tr style={{ background: '#f5f5f5' }}>
+                  <th style={{ textAlign: 'left', padding: 3 }}>Час</th>
+                  <th>Operation</th>
+                  <th>Модель</th>
+                  <th>SKU</th>
+                  <th>Tokens in/out</th>
+                  <th>Cost $</th>
+                  <th>Тривалість</th>
+                </tr></thead>
+                <tbody>
+                  {(usageSummary.recent || []).map((r) => (
+                    <tr key={r.id} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: 3 }}>{new Date(r.createdAt).toLocaleTimeString('uk-UA')}</td>
+                      <td>{r.operation}</td>
+                      <td><code>{r.modelVersion.replace(/-\d+$/, '')}</code></td>
+                      <td>{r.itemsCount}</td>
+                      <td>{r.inputTokens}/{r.outputTokens}</td>
+                      <td><b>${r.costUsd.toFixed(4)}</b></td>
+                      <td>{(r.durationMs / 1000).toFixed(1)}s</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      ) : null}
 
       {/* Top bar */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
@@ -163,10 +317,99 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
 
       {status ? <div className="status-line" style={{ marginBottom: 8 }}>{status}</div> : null}
 
+      {/* Batch AI enrich + selection controls */}
+      <div style={{ border: '1px solid #4a90e2', borderRadius: 6, padding: 10, marginBottom: 12, background: '#f0f7ff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          <strong>🤖 Batch AI Enrichment</strong>
+          <span style={{ fontSize: 11, color: '#666' }}>
+            Обрано: <b>{selectedIds.size}</b> SKU
+          </span>
+          <button className="btn btn-sm" onClick={selectVisibleWithFeedNoAi} disabled={rows.length === 0}>
+            Обрати видимі з feed без AI
+          </button>
+          <button className="btn btn-sm" onClick={selectVisibleWithFeed} disabled={rows.length === 0}>
+            Обрати всі видимі з feed
+          </button>
+          <button className="btn btn-sm" onClick={selectAllVisible} disabled={rows.length === 0}>
+            Обрати всі видимі
+          </button>
+          <button className="btn btn-sm" onClick={clearSelection} disabled={selectedIds.size === 0}>
+            Очистити
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 12 }}>
+            Модель:
+            <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ marginLeft: 4 }}>
+              <option value="claude-haiku-4-5">Haiku 4.5 (швидко, дешево)</option>
+              <option value="claude-sonnet-4-5">Sonnet 4.5 (точніше, дорожче)</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 12 }}>
+            Batch size:
+            <select value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} style={{ marginLeft: 4 }}>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={20}>20</option>
+              <option value={25}>25</option>
+            </select>
+          </label>
+          <button
+            className="btn btn-sm primary"
+            disabled={isReadOnly || batchRunning || selectedIds.size === 0}
+            onClick={() => runBatchEnrich(false)}
+            title="Тільки порожні поля у AI"
+          >
+            {batchRunning ? '⏳ AI працює...' : `✨ Enrich (${selectedIds.size}) — порожні`}
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={isReadOnly || batchRunning || selectedIds.size === 0}
+            onClick={() => runBatchEnrich(true)}
+            title="Переписати всі поля"
+          >
+            🔁 Enrich ({selectedIds.size}) — переписати
+          </button>
+        </div>
+
+        {batchSummary ? (
+          <div style={{ marginTop: 8, fontSize: 12 }}>
+            {batchSummary.error ? (
+              <span style={{ color: '#a00' }}>❌ {batchSummary.error}</span>
+            ) : batchSummary.status ? (
+              <span>{batchSummary.status}</span>
+            ) : (
+              <>
+                <Tag tone="ok">Enriched: {batchSummary.itemsEnriched} / {batchSummary.itemsRequested}</Tag>
+                {batchSummary.itemsFailed > 0 ? <Tag tone="error">Failed: {batchSummary.itemsFailed}</Tag> : null}
+                <span style={{ marginLeft: 8, color: '#666' }}>
+                  Полів записано: <b>{batchSummary.totalFieldsWritten}</b> ·
+                  Tokens in/out: {batchSummary.inputTokens}/{batchSummary.outputTokens} ·
+                  Час: {(batchSummary.durationMs / 1000).toFixed(1)}с ·
+                  Модель: {batchSummary.modelVersion}
+                </span>
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
+
       {/* Table */}
       <table style={{ width: '100%', fontSize: 13 }}>
         <thead>
           <tr style={{ background: '#f3f3f3' }}>
+            <th style={{ width: 30, padding: 6 }}>
+              <input
+                type="checkbox"
+                checked={rows.length > 0 && rows.every((r) => selectedIds.has(Number(r.id)))}
+                onChange={(e) => {
+                  if (e.target.checked) selectAllVisible();
+                  else clearSelection();
+                }}
+                title="Обрати/зняти всі видимі"
+              />
+            </th>
             <th style={{ textAlign: 'left', padding: 6 }}>SKU</th>
             <th style={{ textAlign: 'left' }}>Назва</th>
             <th>Бренд</th>
@@ -179,13 +422,22 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         </thead>
         <tbody>
           {rows.length === 0 ? (
-            <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: '#888' }}>
+            <tr><td colSpan={9} style={{ textAlign: 'center', padding: 20, color: '#888' }}>
               {status || 'Каталог порожній. Натисніть "Sync from finalize".'}
             </td></tr>
           ) : null}
           {rows.map((r) => (
             <tr key={r.id} style={{ borderBottom: '1px solid #eee', cursor: 'pointer' }}
               onClick={() => setSelected(r)}>
+              <td style={{ padding: 6, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(Number(r.id))}
+                  onChange={() => toggleOne(Number(r.id))}
+                  disabled={!r.feed_matched_at}
+                  title={!r.feed_matched_at ? 'Без feed — не можна enrich-ити' : ''}
+                />
+              </td>
               <td style={{ padding: 6, fontFamily: 'monospace' }}>{r.sku}</td>
               <td>{r.name_uk || <span style={{ color: '#aaa' }}>—</span>}</td>
               <td>{r.brand || <span style={{ color: '#aaa' }}>—</span>}</td>
@@ -231,16 +483,88 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       ) : null}
 
       {selected ? (
-        <DrillIn master={selected} apiFetch={apiFetch} onClose={() => setSelected(null)} />
+        <DrillIn
+          master={selected}
+          apiFetch={apiFetch}
+          onClose={() => setSelected(null)}
+          onPreviewPrompt={() => openPromptPreview(selected.id)}
+          onAfterEnrich={loadUsage}
+        />
+      ) : null}
+
+      {promptPreview ? (
+        <PromptPreviewModal preview={promptPreview} onClose={() => setPromptPreview(null)} />
       ) : null}
     </Section>
   );
 }
 
-function DrillIn({ master, apiFetch, onClose }) {
+// ─── Prompt preview modal ─────────────────────────────────────────────────────
+function PromptPreviewModal({ preview, onClose }) {
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+    }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: 'white', maxWidth: 1000, width: '95%', maxHeight: '90vh',
+        overflow: 'auto', borderRadius: 8, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>🔍 Preview prompt (master #{preview.masterId})</h3>
+          <button className="btn" onClick={onClose}>Закрити</button>
+        </div>
+        {preview.loading ? <div>Завантаження...</div> : preview.error ? (
+          <div style={{ background: '#fee', color: '#a00', padding: 8, borderRadius: 4 }}>{preview.error}</div>
+        ) : (
+          <>
+            <div style={{ marginBottom: 12, fontSize: 12 }}>
+              <Tag tone="warn">Estimated tokens: {preview.estimatedTokens}</Tag>
+              <span style={{ marginLeft: 8, color: '#666' }}>
+                ⚠ Це наближена оцінка (~4 символи на токен). Реальний AI tokenizer може дати +/-20%.
+              </span>
+            </div>
+
+            <details open style={{ marginBottom: 12 }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#4a90e2' }}>
+                📜 System prompt ({preview.systemPrompt.length} символів)
+              </summary>
+              <pre style={{ background: '#f8f8f8', padding: 8, fontSize: 11, overflow: 'auto', maxHeight: 300, whiteSpace: 'pre-wrap' }}>
+                {preview.systemPrompt}
+              </pre>
+            </details>
+
+            <details open>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#4a90e2' }}>
+                💬 User message ({preview.userMessage.length} символів)
+              </summary>
+              <pre style={{ background: '#f8f8f8', padding: 8, fontSize: 11, overflow: 'auto', maxHeight: 400, whiteSpace: 'pre-wrap' }}>
+                {preview.userMessage}
+              </pre>
+            </details>
+
+            {preview.feedParams ? (
+              <details>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#4a90e2' }}>
+                  🗂 Filtered feed_params (що AI бачить, з excluded_fields застосованими)
+                </summary>
+                <pre style={{ background: '#f8f8f8', padding: 8, fontSize: 11, overflow: 'auto', maxHeight: 300 }}>
+                  {JSON.stringify(preview.feedParams, null, 2)}
+                </pre>
+              </details>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DrillIn({ master, apiFetch, onClose, onPreviewPrompt, onAfterEnrich }) {
   const [full, setFull] = useState(null);
   const [loading, setLoading] = useState(true);
   const [aiStatus, setAiStatus] = useState(null);
+  const [aiModel, setAiModel] = useState('claude-haiku-4-5');
   const [enriching, setEnriching] = useState(false);
   const [enrichResult, setEnrichResult] = useState(null);
   const [enrichError, setEnrichError] = useState('');
@@ -272,10 +596,11 @@ function DrillIn({ master, apiFetch, onClose }) {
     try {
       const result = await apiFetch(`/master-catalog/${master.id}/enrich`, {
         method: 'POST',
-        body: JSON.stringify({ overwrite })
+        body: JSON.stringify({ overwrite, model: aiModel })
       });
       setEnrichResult(result);
       await reload();
+      if (onAfterEnrich) await onAfterEnrich();
     } catch (err) {
       setEnrichError(err?.message || 'enrich_error');
     } finally {
@@ -341,9 +666,19 @@ function DrillIn({ master, apiFetch, onClose }) {
                     >
                       🔁 Переписати всі
                     </button>
-                    <span style={{ fontSize: 11, color: '#666' }}>
-                      Модель: {aiStatus?.model || '—'}
-                    </span>
+                    <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ fontSize: 12 }}>
+                      <option value="claude-haiku-4-5">Haiku 4.5 (швидко, дешево)</option>
+                      <option value="claude-sonnet-4-5">Sonnet 4.5 (точніше)</option>
+                    </select>
+                    {onPreviewPrompt ? (
+                      <button
+                        className="btn btn-sm"
+                        onClick={onPreviewPrompt}
+                        title="Подивитись який prompt відсилатимемо в AI"
+                      >
+                        🔍 Preview prompt
+                      </button>
+                    ) : null}
                   </>
                 )}
               </div>

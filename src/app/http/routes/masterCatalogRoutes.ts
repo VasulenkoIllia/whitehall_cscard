@@ -1,6 +1,7 @@
 import type { Application, Request, Response } from 'express';
 import type { MasterCatalogService } from '../../../core/master_catalog/MasterCatalogService';
 import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
+import type { AiUsageService } from '../../../core/ai/AiUsageService';
 import type { PipelineJobRunner } from '../../../core/jobs/PipelineJobRunner';
 import type { createAuthMiddleware } from '../authMiddleware';
 
@@ -9,6 +10,7 @@ type AuthMiddleware = ReturnType<typeof createAuthMiddleware>;
 interface MasterCatalogRouteDeps {
   masterCatalogService: MasterCatalogService;
   enrichmentService: EnrichmentService;
+  aiUsageService: AiUsageService;
   jobRunner: PipelineJobRunner<unknown>;
   authMw: AuthMiddleware;
 }
@@ -39,7 +41,25 @@ function parseBoolOrNull(value: unknown): boolean | null {
 }
 
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
-  const { masterCatalogService, enrichmentService, jobRunner, authMw } = deps;
+  const { masterCatalogService, enrichmentService, aiUsageService, jobRunner, authMw } = deps;
+
+  // AI usage summary (для UI dashboard).
+  app.get(
+    '/admin/api/master-catalog/ai/usage',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const periodDays = parsePositiveInt(req.query.periodDays);
+        const summary = await aiUsageService.summary(periodDays || undefined);
+        const recent = await aiUsageService.recent(20);
+        res.json({ summary, recent });
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'usage_error')
+        });
+      }
+    }
+  );
 
   // AI status — чи доступне.
   app.get(
@@ -50,6 +70,65 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
         enabled: enrichmentService.isEnabled(),
         model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5'
       });
+    }
+  );
+
+  // POST /admin/api/master-catalog/enrich-batch — AI enrich many masters at once.
+  app.post(
+    '/admin/api/master-catalog/enrich-batch',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const masterIds = Array.isArray(req.body?.masterIds)
+          ? (req.body.masterIds as unknown[])
+              .map((x) => Number(x))
+              .filter((x) => Number.isFinite(x) && x > 0)
+          : [];
+        if (masterIds.length === 0) {
+          res.status(400).json({ error: 'masterIds порожній або невалідний' });
+          return;
+        }
+        const overwrite = req.body?.overwrite === true || req.body?.overwrite === 'true';
+        const batchSize = parsePositiveInt(req.body?.batchSize) ?? 10;
+        const threshold =
+          typeof req.body?.confidenceThreshold === 'number'
+            ? req.body.confidenceThreshold
+            : undefined;
+        const model = typeof req.body?.model === 'string' && req.body.model.trim()
+          ? req.body.model.trim() : undefined;
+        const result = await enrichmentService.enrichBatch(masterIds, {
+          overwriteExisting: overwrite,
+          batchSize,
+          confidenceThreshold: threshold,
+          model
+        });
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'enrich_batch_error')
+        });
+      }
+    }
+  );
+
+  // GET /admin/api/master-catalog/:id/enrich/preview — показати prompt без виклику AI.
+  app.get(
+    '/admin/api/master-catalog/:id/enrich/preview',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'id обовʼязковий' });
+          return;
+        }
+        const preview = await enrichmentService.previewPrompt(id);
+        res.json(preview);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({
+          error: readErrorMessage(err, 'preview_error')
+        });
+      }
     }
   );
 
@@ -69,9 +148,12 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
           typeof req.body?.confidenceThreshold === 'number'
             ? req.body.confidenceThreshold
             : undefined;
+        const model = typeof req.body?.model === 'string' && req.body.model.trim()
+          ? req.body.model.trim() : undefined;
         const result = await enrichmentService.enrichMaster(id, {
           overwriteExisting: overwrite,
-          confidenceThreshold: threshold
+          confidenceThreshold: threshold,
+          model
         });
         res.json(result);
       } catch (err) {

@@ -171,6 +171,57 @@ export function buildEnrichmentUserMessage(input: MasterEnrichmentInput): string
   ].join('\n');
 }
 
+// ─── Batch mode (multi-item у одному prompt) ─────────────────────────────────
+
+export interface BatchEnrichmentItem {
+  sku: string;
+  feedParams: Record<string, unknown>;
+}
+
+export interface BatchEnrichmentResult {
+  results: MasterEnrichmentResult[];
+}
+
+/**
+ * Будує batch user message. Замість 1 SKU — масив SKU. AI має повернути results[]
+ * у тій самій послідовності.
+ *
+ * Ефективність: system prompt відсилається 1 раз для N items, не N разів.
+ * Економія ~50% input tokens на batch.
+ */
+export function buildBatchEnrichmentUserMessage(items: BatchEnrichmentItem[]): string {
+  const itemsJson = items.map((it) => ({
+    sku: it.sku,
+    feed_params: it.feedParams
+  }));
+
+  return [
+    `=== BATCH ENRICHMENT — ${items.length} товарів ===`,
+    '',
+    'Тобі дано масив товарів. Для КОЖНОГО поверни enrichment у тій самій послідовності.',
+    '',
+    '=== Items ===',
+    JSON.stringify(itemsJson, null, 2),
+    '',
+    '=== Очікуваний вихідний JSON ===',
+    'Поверни ОДИН JSON виду:',
+    JSON.stringify(
+      {
+        results: [
+          buildExpectedOutputExample('SKU_1'),
+          buildExpectedOutputExample('SKU_2')
+          // ... по одному обʼєкту на кожен item
+        ]
+      },
+      null,
+      2
+    ),
+    '',
+    'ВАЖЛИВО: results.length має ТОЧНО дорівнювати кількості items вище. ',
+    'Порядок results має співпадати з порядком items. sku у кожному result має співпадати з sku item.'
+  ].join('\n');
+}
+
 function buildExpectedOutputExample(sku: string): unknown {
   return {
     sku,

@@ -1545,6 +1545,7 @@ export function createHttpServer(appContext: AppContext) {
   registerMasterCatalogRoutes(app, {
     masterCatalogService: appContext.masterCatalogService,
     enrichmentService: appContext.enrichmentService,
+    aiUsageService: appContext.aiUsageService,
     jobRunner,
     authMw
   });
