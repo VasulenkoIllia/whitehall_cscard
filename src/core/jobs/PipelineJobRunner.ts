@@ -15,6 +15,7 @@ import type {
   MasterCatalogService,
   MasterCatalogSyncSummary
 } from '../master_catalog/MasterCatalogService';
+import type { FeedService, FeedImportSummary } from '../feeds/FeedService';
 
 const BLOCKING_JOB_TYPES = [
   'update_pipeline',
@@ -25,7 +26,8 @@ const BLOCKING_JOB_TYPES = [
   'store_import',
   'cleanup',
   'store_mirror_sync',
-  'master_catalog_sync'
+  'master_catalog_sync',
+  'feed_import'
 ];
 
 interface JobRunnerResult<T> {
@@ -80,7 +82,8 @@ function summarizeStepResult(
     | 'store_import'
     | 'cleanup'
     | 'store_mirror_sync'
-    | 'master_catalog_sync',
+    | 'master_catalog_sync'
+    | 'feed_import',
   value: unknown
 ): unknown {
   if (type === 'store_import') {
@@ -105,7 +108,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
     private readonly logs: LogService,
     private readonly cleanupService: CleanupService,
     private readonly storeMirrorService: StoreMirrorService,
-    private readonly masterCatalogService?: MasterCatalogService | null
+    private readonly masterCatalogService?: MasterCatalogService | null,
+    private readonly feedService?: FeedService | null
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -349,7 +353,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
       | 'store_import'
       | 'cleanup'
       | 'store_mirror_sync'
-      | 'master_catalog_sync',
+      | 'master_catalog_sync'
+      | 'feed_import',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<JobRunnerResult<T>> {
@@ -588,6 +593,18 @@ export class PipelineJobRunner<MappedRow = unknown> {
       'master_catalog_sync',
       {},
       async (jobId) => service.syncFromFinalize(jobId)
+    );
+  }
+
+  runFeedImport(feedId: number): Promise<JobRunnerResult<FeedImportSummary>> {
+    if (!this.feedService) {
+      throw new Error('FeedService is not configured');
+    }
+    const service = this.feedService;
+    return this.runStandaloneStep(
+      'feed_import',
+      { feedId },
+      async (jobId) => service.importFeed(jobId, feedId)
     );
   }
 

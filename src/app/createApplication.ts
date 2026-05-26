@@ -33,6 +33,7 @@ import { SchedulerSettingsService } from '../core/jobs/SchedulerSettingsService'
 import type { StoreImportBatch } from '../core/domain/store';
 import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 import { MasterCatalogService } from '../core/master_catalog/MasterCatalogService';
+import { FeedService } from '../core/feeds/FeedService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -300,6 +301,7 @@ export interface Application {
   schedulerSettingsService: SchedulerSettingsService;
   catalogAdminService: CatalogAdminService;
   masterCatalogService: MasterCatalogService;
+  feedService: FeedService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
@@ -364,13 +366,15 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const jobService = new JobService(pool);
   const cleanupService = new CleanupService(pool);
   const masterCatalogService = new MasterCatalogService(pool, logService);
+  const feedService = new FeedService(pool, logService);
   const jobRunner = new PipelineJobRunner(
     pipeline,
     jobService,
     logService,
     cleanupService,
     storeMirrorService,
-    masterCatalogService
+    masterCatalogService,
+    feedService
   );
   const scheduler = new JobScheduler({
     enabled: config.scheduler.enabled,
@@ -427,6 +431,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     schedulerSettingsService,
     catalogAdminService,
     masterCatalogService,
+    feedService,
     cleanupService,
     storeMirrorService,
     auth,

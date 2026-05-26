@@ -86,9 +86,11 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
 
   return (
     <Section
-      title="Майстер-каталог (Phase 1)"
-      subtitle="Унікальні SKU з фіналайзу. Phase 2 — імпорт фіда + matching. Phase 3 — AI enrichment."
+      title="Майстер-каталог"
+      subtitle="Phase 1 — SKU з фіналайзу. Phase 2 — імпорт фідів + matching. Phase 3 — AI enrichment."
     >
+      <FeedsSection apiFetch={apiFetch} isReadOnly={isReadOnly} onAfterImport={loadList} />
+
       {/* Top bar */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
         <button
@@ -319,3 +321,201 @@ function DrillIn({ master, apiFetch, onClose }) {
     </div>
   );
 }
+
+
+// ─── Feeds section ────────────────────────────────────────────────────────────
+function FeedsSection({ apiFetch, isReadOnly, onAfterImport }) {
+  const [feeds, setFeeds] = React.useState([]);
+  const [status, setStatus] = React.useState("");
+  const [showForm, setShowForm] = React.useState(false);
+  const [editingFeed, setEditingFeed] = React.useState(null);
+  const [runningId, setRunningId] = React.useState(null);
+
+  const load = React.useCallback(async () => {
+    try {
+      const data = await apiFetch("/feeds");
+      setFeeds(Array.isArray(data?.rows) ? data.rows : []);
+    } catch (err) {
+      setStatus("Помилка завантаження: " + (err?.message || "unknown"));
+    }
+  }, [apiFetch]);
+
+  React.useEffect(() => { void load(); }, [load]);
+
+  const triggerImport = async (feedId) => {
+    if (isReadOnly || runningId) return;
+    setRunningId(feedId);
+    setStatus("Імпорт запущено...");
+    try {
+      const result = await apiFetch("/jobs/feed-import", {
+        method: "POST",
+        body: JSON.stringify({ feedId })
+      });
+      const r = result?.result || result;
+      setStatus(`Імпорт OK: ${r.itemsCount} items, matched ${r.matchedCount}, unmatched ${r.unmatchedCount}, ${r.durationMs}ms`);
+      await load();
+      if (onAfterImport) await onAfterImport();
+    } catch (err) {
+      setStatus("Помилка імпорту: " + (err?.message || "unknown"));
+    } finally {
+      setRunningId(null);
+    }
+  };
+
+  const deleteFeed = async (feedId, name) => {
+    if (isReadOnly) return;
+    if (!window.confirm(`Видалити фід "${name}"? (master_catalog.feed_params НЕ зачіпається)`)) return;
+    try {
+      await apiFetch(`/feeds/${feedId}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setStatus("Помилка видалення: " + (err?.message || "unknown"));
+    }
+  };
+
+  const startEdit = (feed) => { setEditingFeed(feed); setShowForm(true); };
+  const startCreate = () => { setEditingFeed(null); setShowForm(true); };
+  const closeForm = () => { setEditingFeed(null); setShowForm(false); };
+
+  const onSaved = async () => { closeForm(); await load(); };
+
+  return (
+    <div style={{ border: "1px solid #d0d7e2", borderRadius: 6, padding: 12, marginBottom: 16, background: "#fafbfc" }}>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+        <strong>📦 Фіди магазинів (Phase 2)</strong>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button className="btn btn-sm primary" disabled={isReadOnly} onClick={startCreate}>+ Додати фід</button>
+        </div>
+      </div>
+
+      {status ? <div className="status-line" style={{ marginBottom: 8 }}>{status}</div> : null}
+
+      <table style={{ width: "100%", fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: "#eef" }}>
+            <th style={{ textAlign: "left", padding: 4 }}>Назва</th>
+            <th style={{ textAlign: "left" }}>URL</th>
+            <th>Формат</th>
+            <th>SKU field</th>
+            <th>Останній імпорт</th>
+            <th>Items / Matched</th>
+            <th>Статус</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {feeds.length === 0 ? (
+            <tr><td colSpan={8} style={{ textAlign: "center", padding: 12, color: "#888" }}>
+              Жодного фіда. Натисніть "+ Додати фід"
+            </td></tr>
+          ) : null}
+          {feeds.map((f) => (
+            <tr key={f.id} style={{ borderBottom: "1px solid #eee" }}>
+              <td style={{ padding: 4, fontWeight: 600 }}>{f.name}</td>
+              <td style={{ fontSize: 10, color: "#555", maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.url}>{f.url}</td>
+              <td style={{ textAlign: "center" }}><code>{f.format}</code></td>
+              <td style={{ textAlign: "center" }}><code>{f.sku_field}</code></td>
+              <td style={{ fontSize: 11, color: "#666" }}>
+                {f.last_imported_at ? new Date(f.last_imported_at).toLocaleString("uk-UA") : "—"}
+              </td>
+              <td style={{ textAlign: "center" }}>
+                {f.last_items_count !== null ? `${f.last_items_count} / ${f.last_matched_count || 0}` : "—"}
+              </td>
+              <td style={{ textAlign: "center" }}>
+                {f.last_status === "success" ? <span style={{ color: "#1a8c1a" }}>✓</span> :
+                 f.last_status === "failed" ? <span style={{ color: "#a00" }} title={f.last_error || ""}>✗</span> : "—"}
+              </td>
+              <td>
+                <div className="actions" style={{ justifyContent: "flex-end" }}>
+                  <button className="btn btn-sm primary" disabled={isReadOnly || runningId === Number(f.id)} onClick={() => triggerImport(Number(f.id))}>
+                    {runningId === Number(f.id) ? "⏳" : "Імпорт"}
+                  </button>
+                  <button className="btn btn-sm" onClick={() => startEdit(f)}>Ред.</button>
+                  <button className="btn btn-sm danger" disabled={isReadOnly} onClick={() => deleteFeed(Number(f.id), f.name)}>×</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {showForm ? (
+        <FeedForm
+          apiFetch={apiFetch}
+          existing={editingFeed}
+          onSaved={onSaved}
+          onCancel={closeForm}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function FeedForm({ apiFetch, existing, onSaved, onCancel }) {
+  const [name, setName] = React.useState(existing?.name || "");
+  const [url, setUrl] = React.useState(existing?.url || "");
+  const [format, setFormat] = React.useState(existing?.format || "yml");
+  const [skuField, setSkuField] = React.useState(existing?.sku_field || "vendorCode");
+  const [optionsText, setOptionsText] = React.useState(JSON.stringify(existing?.options || {}, null, 2));
+  const [error, setError] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  const save = async () => {
+    setError("");
+    let options;
+    try {
+      options = optionsText.trim() ? JSON.parse(optionsText) : {};
+    } catch (err) {
+      setError("Невалідний JSON у options: " + err.message);
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = { name: name.trim(), url: url.trim(), format, sku_field: skuField.trim(), options };
+      if (existing?.id) {
+        await apiFetch(`/feeds/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
+      } else {
+        await apiFetch("/feeds", { method: "POST", body: JSON.stringify(payload) });
+      }
+      await onSaved();
+    } catch (err) {
+      setError(err?.message || "save_error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, padding: 12, border: "1px solid #aaa", borderRadius: 4, background: "#fff" }}>
+      <h4 style={{ marginTop: 0 }}>{existing ? `Редагувати фід "${existing.name}"` : "Новий фід"}</h4>
+      {error ? <div style={{ background: "#fee", padding: 6, marginBottom: 8, color: "#a00", borderRadius: 4 }}>{error}</div> : null}
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 6, alignItems: "center", marginBottom: 8 }}>
+        <label>Назва</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="shopua / europasport / markshop" />
+        <label>URL</label>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." />
+        <label>Формат</label>
+        <select value={format} onChange={(e) => setFormat(e.target.value)}>
+          <option value="yml">YML (Yandex Market)</option>
+          <option value="xml">XML (custom)</option>
+          <option value="xlsx">XLSX (Excel)</option>
+        </select>
+        <label>SKU field</label>
+        <input value={skuField} onChange={(e) => setSkuField(e.target.value)} placeholder="vendorCode / article / A / id" />
+        <label>Options (JSON)</label>
+        <textarea value={optionsText} onChange={(e) => setOptionsText(e.target.value)} rows={4} style={{ fontFamily: "monospace", fontSize: 11 }} placeholder="{}" />
+      </div>
+      <div style={{ fontSize: 11, color: "#666", marginBottom: 8 }}>
+        <b>Підказки sku_field:</b><br/>
+        • YML: <code>vendorCode</code>, <code>article</code>, <code>id</code><br/>
+        • XLSX: літера колонки (<code>A</code>, <code>B</code>) АБО назва колонки з header row (<code>Артикул</code>)<br/>
+        • XML: dot-notation (<code>product.code</code>)
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn primary" disabled={saving} onClick={save}>Зберегти</button>
+        <button className="btn" disabled={saving} onClick={onCancel}>Скасувати</button>
+      </div>
+    </div>
+  );
+}
+

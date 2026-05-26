@@ -8,6 +8,7 @@ import { createAuthMiddleware } from './authMiddleware';
 import { renderLoginPage } from './loginPage';
 import { getSheetPreview, listSheetNames } from '../../core/pipeline/googleSheetsService';
 import { registerMasterCatalogRoutes } from './routes/masterCatalogRoutes';
+import { registerFeedRoutes } from './routes/feedRoutes';
 
 export function createHttpServer(appContext: AppContext) {
   const app = express();
@@ -1543,6 +1544,13 @@ export function createHttpServer(appContext: AppContext) {
   // Master catalog (Phase 1: SKU sync + list + drill-in)
   registerMasterCatalogRoutes(app, {
     masterCatalogService: appContext.masterCatalogService,
+    jobRunner,
+    authMw
+  });
+
+  // Feeds (Phase 2: import URL → match SKUs → save feed_params)
+  registerFeedRoutes(app, {
+    feedService: appContext.feedService,
     jobRunner,
     authMw
   });
