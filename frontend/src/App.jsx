@@ -16,12 +16,14 @@ import { PricingTab } from './tabs/PricingTab';
 import { DataTab } from './tabs/DataTab';
 import { CronSettingsTab } from './tabs/CronSettingsTab';
 import { JobsTab } from './tabs/JobsTab';
+import { MasterCatalogTab } from './tabs/MasterCatalogTab';
 
 const TABS = [
   { id: 'overview', label: 'Панель' },
   { id: 'manual', label: 'Ручне керування' },
   { id: 'suppliers', label: 'Постачальники' },
   { id: 'data', label: 'Дані' },
+  { id: 'master_catalog', label: 'Майстер-каталог' },
   { id: 'cron', label: 'Розклад' },
   { id: 'jobs', label: 'Моніторинг' }
 ];
@@ -2232,6 +2234,10 @@ export default function App() {
           deleteSizeMapping={deleteSizeMapping}
           bulkImportSizeMappings={bulkImportSizeMappings}
         />
+      ) : null}
+
+      {tab === 'master_catalog' ? (
+        <MasterCatalogTab apiFetch={apiFetch} isReadOnly={isReadOnly} />
       ) : null}
 
       {tab === 'cron' ? (

@@ -7,6 +7,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { createAuthMiddleware } from './authMiddleware';
 import { renderLoginPage } from './loginPage';
 import { getSheetPreview, listSheetNames } from '../../core/pipeline/googleSheetsService';
+import { registerMasterCatalogRoutes } from './routes/masterCatalogRoutes';
 
 export function createHttpServer(appContext: AppContext) {
   const app = express();
@@ -1537,6 +1538,13 @@ export function createHttpServer(appContext: AppContext) {
       return res.redirect(302, nextPath);
     }
     return res.set('Content-Type', 'text/html; charset=utf-8').send(renderLoginPage(nextPath));
+  });
+
+  // Master catalog (Phase 1: SKU sync + list + drill-in)
+  registerMasterCatalogRoutes(app, {
+    masterCatalogService: appContext.masterCatalogService,
+    jobRunner,
+    authMw
   });
 
   // Protected static admin UI

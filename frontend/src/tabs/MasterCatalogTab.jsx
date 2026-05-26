@@ -1,0 +1,321 @@
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Section, Tag } from '../components/ui';
+
+// 23 атрибутні поля в порядку як у master_catalog.
+const MASTER_FIELDS = [
+  { key: 'name_uk', label: 'Назва (UA)', dataType: 'text' },
+  { key: 'brand', label: 'Бренд', dataType: 'text' },
+  { key: 'category_uk', label: 'Категорія', dataType: 'text' },
+  { key: 'photo', label: 'Фото', dataType: 'long_text' },
+  { key: 'description_full_uk', label: 'Опис', dataType: 'long_text' },
+  { key: 'old_price', label: 'Стара ціна', dataType: 'number' },
+  { key: 'product_kind', label: 'Вид товару', dataType: 'text' },
+  { key: 'product_type', label: 'Тип', dataType: 'text' },
+  { key: 'color_uk', label: 'Колір (UA)', dataType: 'text' },
+  { key: 'model_name', label: 'Модель', dataType: 'text' },
+  { key: 'gender', label: 'Стать', dataType: 'text' },
+  { key: 'style', label: 'Стиль', dataType: 'text' },
+  { key: 'material', label: 'Матеріал', dataType: 'text' },
+  { key: 'material_top', label: 'Матеріал верху', dataType: 'text' },
+  { key: 'material_inner', label: 'Матеріал всередині', dataType: 'text' },
+  { key: 'material_sole', label: 'Матеріал підошви', dataType: 'text' },
+  { key: 'toe_shape', label: 'Вид носка', dataType: 'text' },
+  { key: 'fastening', label: 'Застібка', dataType: 'text' },
+  { key: 'purpose', label: 'Призначення', dataType: 'text' },
+  { key: 'season', label: 'Сезон', dataType: 'text' },
+  { key: 'season_year', label: 'Сезон за роками', dataType: 'text' },
+  { key: 'country', label: 'Країна', dataType: 'text' },
+  { key: 'gtin', label: 'GTIN barcode', dataType: 'text' }
+];
+
+const TOTAL_FIELDS = MASTER_FIELDS.length;
+
+export function MasterCatalogTab({ apiFetch, isReadOnly }) {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [search, setSearch] = useState('');
+  const [hasFeed, setHasFeed] = useState('');
+  const [hasAi, setHasAi] = useState('');
+  const [sort, setSort] = useState('newest');
+  const [status, setStatus] = useState('');
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [lastSyncSummary, setLastSyncSummary] = useState(null);
+  const [selected, setSelected] = useState(null);
+
+  const loadList = useCallback(async () => {
+    setStatus('Завантаження...');
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+        sort
+      });
+      if (search.trim()) params.set('search', search.trim());
+      if (hasFeed) params.set('hasFeed', hasFeed);
+      if (hasAi) params.set('hasAi', hasAi);
+      const data = await apiFetch(`/master-catalog?${params.toString()}`);
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
+      setTotal(Number(data?.total || 0));
+      setStatus('');
+    } catch (err) {
+      setStatus(`Помилка: ${err?.message || 'unknown'}`);
+    }
+  }, [apiFetch, page, pageSize, search, hasFeed, hasAi, sort]);
+
+  useEffect(() => { void loadList(); }, [loadList]);
+
+  const triggerSync = async () => {
+    if (isReadOnly || syncRunning) return;
+    setSyncRunning(true);
+    setStatus('Запускаю sync...');
+    try {
+      const result = await apiFetch('/jobs/master-catalog-sync', { method: 'POST' });
+      setLastSyncSummary(result?.result || result);
+      setStatus(`Sync OK: +${result?.result?.inserted ?? 0} нових SKU, всього у фіналі ${result?.result?.sourceSkuCount ?? 0}`);
+      await loadList();
+    } catch (err) {
+      setStatus(`Помилка sync: ${err?.message || 'unknown'}`);
+    } finally {
+      setSyncRunning(false);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return (
+    <Section
+      title="Майстер-каталог (Phase 1)"
+      subtitle="Унікальні SKU з фіналайзу. Phase 2 — імпорт фіда + matching. Phase 3 — AI enrichment."
+    >
+      {/* Top bar */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+        <button
+          className="btn primary"
+          onClick={triggerSync}
+          disabled={isReadOnly || syncRunning}
+        >
+          {syncRunning ? '⏳ Sync...' : '🔄 Sync from finalize'}
+        </button>
+        {lastSyncSummary ? (
+          <Tag tone="ok">
+            +{lastSyncSummary.inserted} нових, {lastSyncSummary.skipped} вже існували, {lastSyncSummary.durationMs}ms
+          </Tag>
+        ) : null}
+        <div style={{ marginLeft: 'auto', color: '#666' }}>
+          Всього у каталозі: <b>{total}</b>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="mapping-builder" style={{ marginBottom: 12 }}>
+        <div>
+          <label>Пошук</label>
+          <input
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="артикул / SKU"
+          />
+        </div>
+        <div>
+          <label>З фіда</label>
+          <select value={hasFeed} onChange={(e) => { setHasFeed(e.target.value); setPage(1); }}>
+            <option value="">Усі</option>
+            <option value="true">З фіда ✓</option>
+            <option value="false">Без фіда</option>
+          </select>
+        </div>
+        <div>
+          <label>AI</label>
+          <select value={hasAi} onChange={(e) => { setHasAi(e.target.value); setPage(1); }}>
+            <option value="">Усі</option>
+            <option value="true">Опрацьовано AI ✓</option>
+            <option value="false">Не опрацьовано</option>
+          </select>
+        </div>
+        <div>
+          <label>Сортування</label>
+          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="newest">Спочатку нові</option>
+            <option value="oldest">Спочатку старі</option>
+            <option value="sku_asc">SKU A→Я</option>
+            <option value="sku_desc">SKU Я→A</option>
+            <option value="filled_desc">Більше заповнено</option>
+            <option value="filled_asc">Менше заповнено</option>
+          </select>
+        </div>
+        <div>
+          <label>На стор.</label>
+          <select value={String(pageSize)} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+        </div>
+        <div style={{ alignSelf: 'flex-end' }}>
+          <button className="btn" onClick={() => void loadList()}>Оновити</button>
+        </div>
+      </div>
+
+      {status ? <div className="status-line" style={{ marginBottom: 8 }}>{status}</div> : null}
+
+      {/* Table */}
+      <table style={{ width: '100%', fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: '#f3f3f3' }}>
+            <th style={{ textAlign: 'left', padding: 6 }}>SKU</th>
+            <th style={{ textAlign: 'left' }}>Назва</th>
+            <th>Бренд</th>
+            <th>Заповнено</th>
+            <th>Feed</th>
+            <th>AI</th>
+            <th>Створено</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: '#888' }}>
+              {status || 'Каталог порожній. Натисніть "Sync from finalize".'}
+            </td></tr>
+          ) : null}
+          {rows.map((r) => (
+            <tr key={r.id} style={{ borderBottom: '1px solid #eee', cursor: 'pointer' }}
+              onClick={() => setSelected(r)}>
+              <td style={{ padding: 6, fontFamily: 'monospace' }}>{r.sku}</td>
+              <td>{r.name_uk || <span style={{ color: '#aaa' }}>—</span>}</td>
+              <td>{r.brand || <span style={{ color: '#aaa' }}>—</span>}</td>
+              <td style={{ textAlign: 'center' }}>
+                <span style={{
+                  background: r.filled_count >= TOTAL_FIELDS * 0.8 ? '#d4edda' :
+                              r.filled_count > 0 ? '#fff3cd' : '#f8d7da',
+                  padding: '2px 8px',
+                  borderRadius: 10,
+                  fontSize: 11
+                }}>
+                  {r.filled_count}/{TOTAL_FIELDS}
+                </span>
+              </td>
+              <td style={{ textAlign: 'center' }}>
+                {r.feed_matched_at ? '✓' : '—'}
+              </td>
+              <td style={{ textAlign: 'center' }}>
+                {r.ai_enriched_at ? '🤖' : '—'}
+              </td>
+              <td style={{ fontSize: 11, color: '#666' }}>
+                {r.created_at ? new Date(r.created_at).toLocaleDateString('uk-UA') : ''}
+              </td>
+              <td>
+                <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); setSelected(r); }}>
+                  Деталі
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Pagination */}
+      {totalPages > 1 ? (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+          <button className="btn btn-sm" disabled={page <= 1} onClick={() => setPage(1)}>«</button>
+          <button className="btn btn-sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹</button>
+          <span style={{ alignSelf: 'center' }}>Стор. {page} / {totalPages}</span>
+          <button className="btn btn-sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>›</button>
+          <button className="btn btn-sm" disabled={page >= totalPages} onClick={() => setPage(totalPages)}>»</button>
+        </div>
+      ) : null}
+
+      {selected ? (
+        <DrillIn master={selected} apiFetch={apiFetch} onClose={() => setSelected(null)} />
+      ) : null}
+    </Section>
+  );
+}
+
+function DrillIn({ master, apiFetch, onClose }) {
+  const [full, setFull] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiFetch(`/master-catalog/${master.id}`)
+      .then((data) => { if (!cancelled) { setFull(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setFull(master); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [master.id]);
+
+  const filledCount = useMemo(() => {
+    if (!full) return 0;
+    return MASTER_FIELDS.filter((f) => {
+      const v = full[f.key];
+      return v !== null && v !== undefined && String(v).trim() !== '';
+    }).length;
+  }, [full]);
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+    }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: 'white', maxWidth: 800, width: '90%', maxHeight: '85vh',
+        overflow: 'auto', borderRadius: 8, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>
+            <code style={{ background: '#f3f3f3', padding: '2px 8px', borderRadius: 4 }}>{master.sku}</code>
+          </h3>
+          <button className="btn" onClick={onClose}>Закрити</button>
+        </div>
+
+        {loading ? <div>Завантаження...</div> : (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <Tag tone={filledCount >= TOTAL_FIELDS * 0.8 ? 'ok' : 'warn'}>
+                Заповнено: {filledCount}/{TOTAL_FIELDS} полів
+              </Tag>
+              {full?.feed_matched_at ? <Tag tone="ok">Feed: {new Date(full.feed_matched_at).toLocaleString('uk-UA')}</Tag> : <Tag tone="warn">Feed: не імпортовано</Tag>}
+              {full?.ai_enriched_at ? <Tag tone="ok">AI: {new Date(full.ai_enriched_at).toLocaleString('uk-UA')}</Tag> : <Tag tone="warn">AI: не опрацьовано</Tag>}
+            </div>
+
+            <h4>Картка товару (23 поля)</h4>
+            <table style={{ width: '100%', fontSize: 13 }}>
+              <tbody>
+                {MASTER_FIELDS.map((f) => {
+                  const v = full?.[f.key];
+                  const filled = v !== null && v !== undefined && String(v).trim() !== '';
+                  return (
+                    <tr key={f.key} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <td style={{ padding: 6, width: 180, color: '#555' }}>{f.label}</td>
+                      <td style={{ padding: 6, color: filled ? '#000' : '#bbb' }}>
+                        {filled ? String(v) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {full?.feed_params ? (
+              <details style={{ marginTop: 16 }}>
+                <summary><b>Параметри з фіда (raw JSONB)</b></summary>
+                <pre style={{ background: '#f8f8f8', padding: 8, fontSize: 11, overflow: 'auto', maxHeight: 300 }}>
+                  {JSON.stringify(full.feed_params, null, 2)}
+                </pre>
+              </details>
+            ) : (
+              <div style={{ marginTop: 16, padding: 12, background: '#fff3cd', borderRadius: 4, fontSize: 12, color: '#664d03' }}>
+                ℹ Phase 2 (поки не реалізовано): тут будуть параметри з імпортованого фіда магазину
+                — звідки AI заповнить 23 поля.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

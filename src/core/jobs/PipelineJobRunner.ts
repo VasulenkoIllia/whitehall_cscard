@@ -11,6 +11,10 @@ import { JobService, type JobRecord } from './JobService';
 import type { CleanupService, CleanupSummary } from './CleanupService';
 import type { StoreMirrorService, StoreMirrorSyncSummary } from './StoreMirrorService';
 import type { StoreImportProgress } from '../connectors/StoreConnector';
+import type {
+  MasterCatalogService,
+  MasterCatalogSyncSummary
+} from '../master_catalog/MasterCatalogService';
 
 const BLOCKING_JOB_TYPES = [
   'update_pipeline',
@@ -20,7 +24,8 @@ const BLOCKING_JOB_TYPES = [
   'finalize',
   'store_import',
   'cleanup',
-  'store_mirror_sync'
+  'store_mirror_sync',
+  'master_catalog_sync'
 ];
 
 interface JobRunnerResult<T> {
@@ -74,7 +79,8 @@ function summarizeStepResult(
     | 'finalize'
     | 'store_import'
     | 'cleanup'
-    | 'store_mirror_sync',
+    | 'store_mirror_sync'
+    | 'master_catalog_sync',
   value: unknown
 ): unknown {
   if (type === 'store_import') {
@@ -98,7 +104,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
     private readonly jobs: JobService,
     private readonly logs: LogService,
     private readonly cleanupService: CleanupService,
-    private readonly storeMirrorService: StoreMirrorService
+    private readonly storeMirrorService: StoreMirrorService,
+    private readonly masterCatalogService?: MasterCatalogService | null
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -341,7 +348,8 @@ export class PipelineJobRunner<MappedRow = unknown> {
       | 'finalize'
       | 'store_import'
       | 'cleanup'
-      | 'store_mirror_sync',
+      | 'store_mirror_sync'
+      | 'master_catalog_sync',
     meta: Record<string, unknown>,
     action: (jobId: number) => Promise<T>
   ): Promise<JobRunnerResult<T>> {
@@ -568,6 +576,18 @@ export class PipelineJobRunner<MappedRow = unknown> {
       'cleanup',
       { retentionDays: safeRetention },
       async (_jobId) => this.cleanupService.run(safeRetention)
+    );
+  }
+
+  runMasterCatalogSync(): Promise<JobRunnerResult<MasterCatalogSyncSummary>> {
+    if (!this.masterCatalogService) {
+      throw new Error('MasterCatalogService is not configured');
+    }
+    const service = this.masterCatalogService;
+    return this.runStandaloneStep(
+      'master_catalog_sync',
+      {},
+      async (jobId) => service.syncFromFinalize(jobId)
     );
   }
 
