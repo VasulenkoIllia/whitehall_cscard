@@ -1,21 +1,25 @@
 /**
- * One-time migration: переводить всі товари у CS-Cart зі status='H' (Hidden, legacy)
- * на status='D' (Disabled, нова бізнес-конвенція).
+ * One-time migration: REVERSE — переводить всі товари у CS-Cart зі status='D' (Disabled)
+ * назад на status='H' (Hidden, повернення до старої бізнес-конвенції).
+ *
+ * Контекст:
+ *   2026-05-08 ми зробили H → D (commit 923c7af). Тепер бізнес вирішив повернути H.
+ *   Цей скрипт — інверсна версія старого migrateHiddenToDisabled.ts.
  *
  * Чому окремий скрипт, а не звичайний update_pipeline:
  *   Внутрішня нормалізація `normalizeStatus` трактує H і D як "не active"
  *   однаково. delta-filter порівнює `currentVisibility (false) === desiredVisibility (false)`
- *   і скіпає такі SKU. Тому regular pipeline не може примусити магазин з H на D —
+ *   і скіпає такі SKU. Тому regular pipeline не може примусити магазин з D на H —
  *   він "не бачить" diff. Цей скрипт обходить pipeline і шле bulk products_update
- *   напряму з payload `[{sku, status:'D'}]` для кожного знайденого H-SKU.
+ *   напряму з payload `[{sku, status:'H'}]` для кожного знайденого D-SKU.
  *
  * Безпека:
  *   - Перед запуском вимкніть scheduler або заблокуйте ручні store_import,
  *     щоб mirror не сінкався під час write-фази.
  *   - DRY_RUN=true — лише сканує і друкує count, нічого не пише в магазин.
- *   - Snapshot SKU зберігається у /tmp/h_to_d_<timestamp>.json для rollback.
+ *   - Snapshot SKU зберігається у /tmp/d_to_h_<timestamp>.json для rollback.
  *   - Idempotent: повторний запуск після часткової міграції підхопить лише
- *     ті SKU що залишилися у H.
+ *     ті SKU що залишилися у D.
  *
  * Налаштування через ENV:
  *   DRY_RUN=true                   — pre-flight без запису.
@@ -24,10 +28,14 @@
  *   MIGRATE_MAX_PAGES=1000         — захист від нескінченного циклу.
  *
  * Запуск:
- *   docker compose exec app node dist/scripts/migrateHiddenToDisabled.js
+ *   docker compose exec app node dist/scripts/migrateDisabledToHidden.js
  *
  * Перевірка результату:
- *   після завершення треба mirror_sync, щоб store_mirror підхопив нові D.
+ *   після завершення треба mirror_sync, щоб store_mirror підхопив нові H.
+ *
+ * Rollback (якщо щось пішло не так):
+ *   До цього є commit-парою migrateHiddenToDisabled.ts (видалений 2026-05-27,
+ *   можна відновити з git history commit 923c7af).
  */
 import { writeFileSync } from 'fs';
 import fetch from 'node-fetch';
@@ -129,11 +137,11 @@ async function main(): Promise<void> {
   );
 
   // ───── 1. SCAN ─────
-  console.log('\n[1/3] Scanning catalog for status=H SKUs...');
-  const hidden: Array<{ sku: string; product_id: string }> = [];
+  console.log('\n[1/3] Scanning catalog for status=D SKUs (to be converted to H)...');
+  const disabled: Array<{ sku: string; product_id: string }> = [];
   let totalSeen = 0;
   let totalActive = 0;
-  let totalDisabled = 0;
+  let totalHidden = 0;
   const scanStartedAt = Date.now();
   for (let page = 1; page <= maxPages; page += 1) {
     const data = (await csCartRequest(
@@ -153,14 +161,14 @@ async function main(): Promise<void> {
       if (!sku || !pid) continue;
       totalSeen += 1;
       if (status === 'A') totalActive += 1;
-      else if (status === 'D') totalDisabled += 1;
-      else if (status === 'H') hidden.push({ sku, product_id: pid });
+      else if (status === 'H') totalHidden += 1;
+      else if (status === 'D') disabled.push({ sku, product_id: pid });
     }
     const totalItems = Number(data.params?.total_items || 0);
     const totalPages = totalItems > 0 ? Math.ceil(totalItems / pageSize) : page;
     if (page % 10 === 0 || page >= totalPages) {
       console.log(
-        `  page ${page}/${totalPages} seen=${totalSeen} hidden=${hidden.length} active=${totalActive} disabled=${totalDisabled}`
+        `  page ${page}/${totalPages} seen=${totalSeen} disabled=${disabled.length} active=${totalActive} hidden=${totalHidden}`
       );
     }
     if (page >= totalPages) {
@@ -170,33 +178,33 @@ async function main(): Promise<void> {
   }
   const scanDurationSec = Math.round((Date.now() - scanStartedAt) / 1000);
   console.log(
-    `  scan done: total=${totalSeen} active=${totalActive} hidden=${hidden.length} disabled=${totalDisabled} (${scanDurationSec}s)`
+    `  scan done: total=${totalSeen} active=${totalActive} disabled=${disabled.length} hidden=${totalHidden} (${scanDurationSec}s)`
   );
 
-  if (hidden.length === 0) {
-    console.log('\n✅ No H-status SKUs found. Nothing to migrate.');
+  if (disabled.length === 0) {
+    console.log('\n✅ No D-status SKUs found. Nothing to migrate.');
     return;
   }
 
-  const snapshotPath = `/tmp/h_to_d_${Date.now()}.json`;
-  writeFileSync(snapshotPath, JSON.stringify(hidden, null, 2), 'utf8');
+  const snapshotPath = `/tmp/d_to_h_${Date.now()}.json`;
+  writeFileSync(snapshotPath, JSON.stringify(disabled, null, 2), 'utf8');
   console.log(`  snapshot saved: ${snapshotPath}  (use it for rollback if needed)`);
 
   if (dryRun) {
-    console.log('\n[DRY_RUN] would migrate', hidden.length, 'SKUs from H to D. Exiting without writes.');
+    console.log('\n[DRY_RUN] would migrate', disabled.length, 'SKUs from D to H. Exiting without writes.');
     return;
   }
 
   // ───── 2. BULK UPDATE ─────
-  console.log(`\n[2/3] Updating ${hidden.length} SKUs to status=D via bulk products_update...`);
+  console.log(`\n[2/3] Updating ${disabled.length} SKUs to status=H via bulk products_update...`);
   let updated = 0;
   let notFound = 0;
   let serverTimeSec = 0;
   let batchSeq = 0;
   const writeStartedAt = Date.now();
-  for (let offset = 0; offset < hidden.length; offset += batchSize) {
-    const chunk = hidden.slice(offset, offset + batchSize);
-    const payload = chunk.map((h) => ({ sku: h.sku, status: 'D' }));
+  for (let offset = 0; offset < disabled.length; offset += batchSize) {
+    const chunk = disabled.slice(offset, offset + batchSize);
+    const payload = chunk.map((d) => ({ sku: d.sku, status: 'H' }));
     batchSeq += 1;
     try {
       const resp = (await csCartRequest(baseUrl, authHeader, '/api/products_update', {
@@ -235,8 +243,8 @@ async function main(): Promise<void> {
 
   // Sample 3 SKU for sanity check
   console.log('\nSanity sample (first 3 SKUs):');
-  for (let i = 0; i < Math.min(3, hidden.length); i += 1) {
-    const { sku, product_id } = hidden[i];
+  for (let i = 0; i < Math.min(3, disabled.length); i += 1) {
+    const { sku, product_id } = disabled[i];
     try {
       const data = (await csCartRequest(
         baseUrl,
@@ -250,7 +258,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    '\n✅ Migration complete. Run store_mirror_sync to refresh local mirror with new D statuses.'
+    '\n✅ Migration complete. Run store_mirror_sync to refresh local mirror with new H statuses.'
   );
   console.log(`   Snapshot: ${snapshotPath}`);
 }
