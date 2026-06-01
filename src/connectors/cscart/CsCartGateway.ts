@@ -99,7 +99,7 @@ interface ResolvedProductState {
   productCode: string;
   productId: string;
   parentProductId: string | null;
-  desiredStatus: 'A' | 'D';
+  desiredStatus: 'A' | 'H';
   desiredAmount: number;
   desiredPrice: number;
 }
@@ -179,9 +179,9 @@ export class CsCartGateway {
     return String(value || '').trim();
   }
 
-  private normalizeStatus(value: unknown): 'A' | 'D' {
+  private normalizeStatus(value: unknown): 'A' | 'H' {
     const normalized = String(value || '').toUpperCase();
-    return normalized === 'A' ? 'A' : 'D';
+    return normalized === 'A' ? 'A' : 'H';
   }
 
   private normalizePrice(value: unknown): number {
@@ -305,7 +305,7 @@ export class CsCartGateway {
       string,
       {
         productId: string;
-        status: 'A' | 'D';
+        status: 'A' | 'H';
         amount: number;
         price: number;
         parentProductId: string | null;
@@ -316,7 +316,7 @@ export class CsCartGateway {
       string,
       {
         productId: string;
-        status: 'A' | 'D';
+        status: 'A' | 'H';
         amount: number;
         price: number;
         parentProductId: string | null;
@@ -371,8 +371,8 @@ export class CsCartGateway {
   }
 
   private isSameProductState(
-    current: { status: 'A' | 'D'; amount: number; price: number; parentProductId: string | null },
-    next: { status: 'A' | 'D'; amount: number; price: number; parentProductId: string | null }
+    current: { status: 'A' | 'H'; amount: number; price: number; parentProductId: string | null },
+    next: { status: 'A' | 'H'; amount: number; price: number; parentProductId: string | null }
   ): boolean {
     if (current.status !== next.status) {
       return false;
@@ -885,13 +885,13 @@ export class CsCartGateway {
 
         const productCode = this.normalizeProductCode(row.productCode);
         const desiredAmount = row.visibility ? this.normalizeAmount(row.amount) : 0;
-        const desiredStatus = row.visibility ? ('A' as const) : ('D' as const);
+        const desiredStatus = row.visibility ? ('A' as const) : ('H' as const);
         const desiredPrice = this.normalizePrice(row.price);
 
         let productId: string | null = null;
         let parentProductId: string | null = null;
         let hasCurrentState = false;
-        let currentStatus: 'A' | 'D' | null = null;
+        let currentStatus: 'A' | 'H' | null = null;
         let currentAmount: number | null = null;
         let currentPrice: number | null = null;
         let currentParentProductId: string | null = null;
@@ -907,7 +907,7 @@ export class CsCartGateway {
             typeof row.storeParentProductId !== 'undefined'
           ) {
             hasCurrentState = true;
-            currentStatus = row.storeVisibility === true ? 'A' : 'D';
+            currentStatus = row.storeVisibility === true ? 'A' : 'H';
             currentAmount = this.normalizeAmount(row.storeAmount);
             currentPrice = this.normalizePrice(row.storePrice);
             currentParentProductId = row.storeParentProductId || null;

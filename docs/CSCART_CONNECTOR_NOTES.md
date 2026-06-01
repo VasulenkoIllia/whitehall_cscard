@@ -6,13 +6,13 @@
 - POST `/api/products` — створення нового товару (мінімум: `product_code`, `price`, `status`).
 - POST `/api/products_update` — bulk оновлення `sku/status/amount/price` (batch payload, **поточний шлях**).
 - POST `/api/stock_update` — старіший bulk-endpoint лише для `sku/amount/status`. Використовується тільки якщо ENV `CSCART_BULK_ENDPOINT=stock_update` (canary kill-switch).
-- Статус: `A` (active/visible), `D` (disabled — нова бізнес-конвенція для прихованих, **єдиний**, що ставить pipeline). `H` (hidden) — legacy, після міграції 2026-05-08 у магазині відсутній (див. секцію «H → D міграція» нижче).
+- Статус: `A` (active/visible), `H` (hidden — поточна бізнес-конвенція, **єдиний** не-active статус що ставить pipeline станом на 2026-05-27). `D` (disabled) — короткий період 2026-05-08 ÷ 2026-05-27 був default; після reverse-міграції 2026-05-27 у магазині відсутній (див. секцію «D → H reverse-міграція» нижче).
 - Режим за замовчуванням: **update-only** (PUT по існуючому product_id з mirror). POST створення вмикається лише якщо `CSCART_ALLOW_CREATE=true`.
 
 Пропонований мапінг з нейтрального preview:
 - `article` + `size` → `product_code` (повний артикул: `article-size` коли size не порожній, або тільки `article` коли size=null)
 - `parent_article` → `parent_product_id` (для варіантів; якщо немає — null)
-- `visibility` → `status` (`A` коли true, `D` коли false)
+- `visibility` → `status` (`A` коли true, `H` коли false)
 - `price_final` → `price`
 - `quantity` → `amount` (реальна кількість товару; при visibility=false → amount=0)
 
@@ -219,23 +219,27 @@ Endpoint truncate-ить дробову частину `price` (`1090.50 → 109
   - `POST /admin/api/jobs/import-supplier` (`supplierId`)
 - Ці джоби використовують той самий імпортний код (`ImporterDb`) і ті самі бізнес-правила, що `import_all`.
 
-## H → D міграція (2026-05-08, one-time)
-До 2026-05-08 у проді 91 993 SKU мали `status=H` (legacy hidden). Бізнес-конвенція переходила на формат `A + D` тільки. Pipeline кладе `D` для нових прихованих, але **не міг** перебити існуючі `H` через `normalizeStatus`, який трактує `H` і `D` як однакові («не active»).
+## D → H reverse-міграція (2026-05-27, one-time)
+2026-05-08 ми перевели pipeline з `H` на `D` (commit `923c7af`, історичний контекст нижче). 2026-05-27 бізнес вирішив **повернутися до `H`**:
+- Pipeline переведено назад на `A + H` (тип `desiredStatus: 'A' | 'H'`, `normalizeStatus` → `'A' | 'H'`).
+- Існуючі ~92 000 SKU зі `status=D` у магазині треба було повернути на `H`.
 
-Зробили one-time міграцію через окремий скрипт `src/scripts/migrateHiddenToDisabled.ts` (npm: `migrate:h-to-d`):
+Зробили reverse one-time міграцію через окремий скрипт `src/scripts/migrateDisabledToHidden.ts` (npm: `migrate:d-to-h`):
 - Сканує весь каталог через `GET /api/products?items_per_page=1000`.
-- Збирає SKU зі `status='H'` у snapshot (`/tmp/h_to_d_<ts>.json`).
-- Bulk-update через `POST /api/products_update` payload `[{sku, status:'D'}]` батчами по 1000.
+- Збирає SKU зі `status='D'` у snapshot (`/tmp/d_to_h_<ts>.json`).
+- Bulk-update через `POST /api/products_update` payload `[{sku, status:'H'}]` батчами по 1000.
 - DRY_RUN режим (через ENV `DRY_RUN=true`) — лише сканує, без писань.
 
-Результат на проді (commit `923c7af`, run 2026-05-08 14:50 UTC):
+Скрипт **idempotent** — повторний запуск після часткової міграції підхопить лише ті SKU що залишилися у `D`. Звичайний pipeline далі підтримує `A`/`H` без додаткової роботи.
+
+### Історична довідка: H → D (2026-05-08, скасовано 2026-05-27)
+До 2026-05-08 у проді 91 993 SKU мали `status=H` (legacy hidden). Тоді бізнес перейшов на `A + D`. Зробили one-time `migrateHiddenToDisabled.ts` (commit `923c7af`):
 - Scan: 239 091 products → 91 993 H, 147 074 A, 24 D (10 хв scan-фаза).
 - Bulk update: **91 993 SKU за 1.93 сек серверного часу CS-Cart** (92 batches × ~20 ms), wall time 23 сек.
-- 0 not_found, 0 fallback.
-- Після `mirror_sync` верифікація: A=147 049, D=92 011, **H=0**.
-- Snapshot для аудиту: `/tmp/h_to_d_1778242362027.json` всередині container.
+- Після `mirror_sync`: A=147 049, D=92 011, **H=0**.
+- Snapshot: `/tmp/h_to_d_1778242362027.json` всередині container.
 
-Скрипт залишається в кодовій базі як **idempotent** — повторний запуск підхопить лише ті SKU що знов опинилися у `H` (наприклад, через ручне втручання в CS-Cart admin'і). Звичайний pipeline далі підтримує `A`/`D` без додаткової роботи.
+Цикл `H → D → H` зайняв 19 днів. Скрипт `migrateHiddenToDisabled.ts` видалено з кодової бази як `migrate:d-to-h` його замінює; історичний код доступний у git history (commit `923c7af`).
 
 ## Підсумкові prod-метрики циклу міграції (2026-05-08)
 Усе наступне підтверджено реальними prod-runs на whitehall.com.ua:
@@ -244,14 +248,14 @@ Endpoint truncate-ить дробову частину `price` (`1090.50 → 109
 |---|---|---|
 | Перший cron-tick з новим кодом | `update_pipeline #494` | 27 хв (включно з `import_all` 9 хв + `finalize` 10 сек + перший store_import 5m35s з 38K real changes) |
 | Звичайний дрібний run | `store_import #502` | 162 SKU за 0.116 сек server time, 43 сек wall (1 batch, fallback=0) |
-| H → D міграція | `migrateHiddenToDisabled` | 91 993 SKU за 1.93 сек server time, 23 сек wall (92 batches, fallback=0) |
+| H → D міграція (2026-05-08, історія) | `migrateHiddenToDisabled` | 91 993 SKU за 1.93 сек server time, 23 сек wall (92 batches, fallback=0) |
 
 | Аспект | Раніше | Тепер |
 |---|---|---|
 | Bulk endpoint для status/amount/price | відсутній (тільки PUT поштучно) | `POST /api/products_update` |
 | Тривалість 38K real changes | ~83 хв (PUT × 38K при 10 RPS) | ~5-6 хв (38 batches) |
 | Тривалість дрібних run'ів | (per-SKU PUT pace) | sub-second server time |
-| Status convention | `A` + `H` + `D` mix | `A` + `D` тільки |
+| Status convention | `A` + `H` + `D` mix → (2026-05-08) `A` + `D` → (2026-05-27) `A` + `H` | `A` + `H` |
 | Захист від зависання fetch | відсутній | `AbortController` 60 сек + retry |
 | Захист від pool exhaustion | defaults | explicit timeouts (30 хв statement, 5 хв idle-in-tx) |
 | Live diagnostics для bulk-fail | прихована за warnings cap=200 | `logService.log('error')` через `onCriticalEvent` real-time |
