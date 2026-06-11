@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Section, Tag } from '../components/ui';
+import { AiSettingsPanel } from '../components/AiSettingsPanel';
 
 // 23 атрибутні поля в порядку як у master_catalog.
 const MASTER_FIELDS = [
@@ -251,6 +252,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       subtitle="Phase 1 — SKU з фіналайзу. Phase 2 — імпорт фідів + matching. Phase 3 — AI enrichment."
     >
       <FeedsSection apiFetch={apiFetch} isReadOnly={isReadOnly} onAfterImport={loadList} />
+
+      <AiSettingsPanel apiFetch={apiFetch} isReadOnly={isReadOnly} onSettingsChanged={loadUsage} />
 
       {/* Cost ribbon */}
       {usageSummary?.summary ? (
