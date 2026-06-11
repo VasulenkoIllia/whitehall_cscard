@@ -2,7 +2,8 @@
  * AnthropicClient — fetch wrapper над Anthropic Messages API.
  *
  * ENV:
- *   ANTHROPIC_API_KEY           — обовʼязково. Без нього isEnabled()=false.
+ *   ANTHROPIC_API_KEY           — fallback ключ. Runtime ключ з app_settings
+ *                                 (через keyProvider) має пріоритет.
  *   ANTHROPIC_API_BASE          — default 'https://api.anthropic.com/v1'
  *   ANTHROPIC_MODEL_ENRICHMENT  — default 'claude-sonnet-4-5'
  *   ANTHROPIC_MAX_RETRIES       — default 3
@@ -45,21 +46,36 @@ export interface AnthropicClient {
   send<T = unknown>(params: AnthropicMessageParams): Promise<AnthropicMessageResult<T>>;
 }
 
-export function createAnthropicClient(env: Record<string, string | undefined>): AnthropicClient {
-  const apiKey = (env.ANTHROPIC_API_KEY || '').trim();
+/** Повертає runtime API ключ (з БД) або null — тоді береться env ANTHROPIC_API_KEY. */
+export type AnthropicKeyProvider = () => Promise<string | null>;
+
+export function createAnthropicClient(
+  env: Record<string, string | undefined>,
+  keyProvider?: AnthropicKeyProvider
+): AnthropicClient {
+  const envApiKey = (env.ANTHROPIC_API_KEY || '').trim();
   const baseUrl = (env.ANTHROPIC_API_BASE || 'https://api.anthropic.com/v1').replace(/\/$/, '');
   const maxRetries = parsePositiveInt(env.ANTHROPIC_MAX_RETRIES) ?? 3;
   const timeoutMs = parsePositiveInt(env.ANTHROPIC_TIMEOUT_MS) ?? 180_000;
 
-  const enabled = apiKey.length > 0;
+  // Ключ з БД (keyProvider) має пріоритет; env — fallback. Резолвиться при
+  // кожному send(), щоб зміна ключа з фронта діяла без рестарту.
+  const resolveApiKey = async (): Promise<string> => {
+    const dbKey = keyProvider ? (await keyProvider().catch(() => null))?.trim() : null;
+    const apiKey = dbKey || envApiKey;
+    if (!apiKey) {
+      throw new AnthropicError(501, 'Anthropic API ключ не задано (ні в налаштуваннях, ні в env) — AI недоступний');
+    }
+    return apiKey;
+  };
+
+  const enabled = envApiKey.length > 0 || Boolean(keyProvider);
 
   return {
     isEnabled: () => enabled,
 
     async send<T = unknown>(params: AnthropicMessageParams): Promise<AnthropicMessageResult<T>> {
-      if (!enabled) {
-        throw new AnthropicError(501, 'ANTHROPIC_API_KEY не задано — AI недоступний');
-      }
+      const apiKey = await resolveApiKey();
 
       const requestBody: Record<string, unknown> = {
         model: params.model,

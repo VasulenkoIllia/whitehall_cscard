@@ -9,6 +9,7 @@ import { renderLoginPage } from './loginPage';
 import { getSheetPreview, listSheetNames } from '../../core/pipeline/googleSheetsService';
 import { registerMasterCatalogRoutes } from './routes/masterCatalogRoutes';
 import { registerFeedRoutes } from './routes/feedRoutes';
+import { registerSettingsRoutes } from './routes/settingsRoutes';
 
 export function createHttpServer(appContext: AppContext) {
   const app = express();
@@ -1547,6 +1548,7 @@ export function createHttpServer(appContext: AppContext) {
     enrichmentService: appContext.enrichmentService,
     aiUsageService: appContext.aiUsageService,
     anthropicBatchService: appContext.anthropicBatchService,
+    appSettingsService: appContext.appSettingsService,
     jobRunner,
     authMw
   });
@@ -1556,6 +1558,13 @@ export function createHttpServer(appContext: AppContext) {
     feedService: appContext.feedService,
     jobRunner,
     authMw
+  });
+
+  // App settings (редагований промпт, власний Anthropic ключ, Excel exclude-колонки)
+  registerSettingsRoutes(app, {
+    appSettingsService: appContext.appSettingsService,
+    authMw,
+    env: process.env
   });
 
   // Protected static admin UI

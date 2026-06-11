@@ -39,6 +39,7 @@ import { EnrichmentService } from '../core/ai/EnrichmentService';
 import { AiUsageService } from '../core/ai/AiUsageService';
 import { createAnthropicBatchClient } from '../core/ai/AnthropicBatchClient';
 import { AnthropicBatchService } from '../core/ai/AnthropicBatchService';
+import { AppSettingsService } from '../core/settings/AppSettingsService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
 
@@ -310,6 +311,7 @@ export interface Application {
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
   anthropicBatchService: AnthropicBatchService;
+  appSettingsService: AppSettingsService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
   migrationTargets: string[];
@@ -375,16 +377,27 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const cleanupService = new CleanupService(pool);
   const masterCatalogService = new MasterCatalogService(pool, logService);
   const feedService = new FeedService(pool, logService);
-  const anthropic = createAnthropicClient(env);
+  const appSettingsService = new AppSettingsService(pool);
+  // Ключ з app_settings (введений з фронта) має пріоритет над env.
+  const anthropicKeyProvider = () => appSettingsService.getAnthropicApiKey();
+  const anthropic = createAnthropicClient(env, anthropicKeyProvider);
   const aiUsageService = new AiUsageService(pool);
-  const enrichmentService = new EnrichmentService(pool, anthropic, logService, env, aiUsageService);
-  const anthropicBatchClient = createAnthropicBatchClient(env);
+  const enrichmentService = new EnrichmentService(
+    pool,
+    anthropic,
+    logService,
+    env,
+    aiUsageService,
+    appSettingsService
+  );
+  const anthropicBatchClient = createAnthropicBatchClient(env, anthropicKeyProvider);
   const anthropicBatchService = new AnthropicBatchService(
     pool,
     anthropicBatchClient,
     aiUsageService,
     logService,
-    env
+    env,
+    appSettingsService
   );
   const jobRunner = new PipelineJobRunner(
     pipeline,
@@ -454,6 +467,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     enrichmentService,
     aiUsageService,
     anthropicBatchService,
+    appSettingsService,
     cleanupService,
     storeMirrorService,
     auth,

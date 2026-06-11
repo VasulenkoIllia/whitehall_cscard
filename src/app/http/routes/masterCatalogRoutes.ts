@@ -3,6 +3,7 @@ import type { MasterCatalogService } from '../../../core/master_catalog/MasterCa
 import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
 import type { AiUsageService } from '../../../core/ai/AiUsageService';
 import type { AnthropicBatchService } from '../../../core/ai/AnthropicBatchService';
+import type { AppSettingsService } from '../../../core/settings/AppSettingsService';
 import type { PipelineJobRunner } from '../../../core/jobs/PipelineJobRunner';
 import type { createAuthMiddleware } from '../authMiddleware';
 
@@ -13,6 +14,7 @@ interface MasterCatalogRouteDeps {
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
   anthropicBatchService: AnthropicBatchService;
+  appSettingsService: AppSettingsService;
   jobRunner: PipelineJobRunner<unknown>;
   authMw: AuthMiddleware;
 }
@@ -43,7 +45,7 @@ function parseBoolOrNull(value: unknown): boolean | null {
 }
 
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
-  const { masterCatalogService, enrichmentService, aiUsageService, anthropicBatchService, jobRunner, authMw } = deps;
+  const { masterCatalogService, enrichmentService, aiUsageService, anthropicBatchService, appSettingsService, jobRunner, authMw } = deps;
 
   // ─── Anthropic Batch API (async масштабна обробка) ─────────────────────────
 
@@ -132,15 +134,25 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
     }
   );
 
-  // AI status — чи доступне.
+  // AI status — чи доступне + джерело ключа + версія промпта.
   app.get(
     '/admin/api/master-catalog/ai/status',
     authMw.requireRole('viewer'),
-    (_req: Request, res: Response) => {
-      res.json({
-        enabled: enrichmentService.isEnabled(),
-        model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5'
-      });
+    async (_req: Request, res: Response) => {
+      try {
+        const dbKey = await appSettingsService.getAnthropicApiKey();
+        const envKey = (process.env.ANTHROPIC_API_KEY || '').trim();
+        const prompt = await appSettingsService.getEnrichmentPrompt();
+        res.json({
+          enabled: Boolean(dbKey || envKey),
+          keySource: dbKey ? 'db' : envKey ? 'env' : null,
+          model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5',
+          promptIsCustom: prompt.isCustom,
+          promptVersion: prompt.version
+        });
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'ai_status_error') });
+      }
     }
   );
 

@@ -10,6 +10,7 @@ import {
   type EnrichedField
 } from './EnrichmentPrompt';
 import type { AiUsageService } from './AiUsageService';
+import type { AppSettingsService, EnrichmentPromptSetting } from '../settings/AppSettingsService';
 import { MASTER_CATALOG_FIELDS } from '../master_catalog/MasterCatalogService';
 
 /**
@@ -101,11 +102,20 @@ export class EnrichmentService {
     private readonly anthropic: AnthropicClient,
     private readonly logs: LogService,
     private readonly env: Record<string, string | undefined>,
-    private readonly usage?: AiUsageService | null
+    private readonly usage?: AiUsageService | null,
+    private readonly settings?: AppSettingsService | null
   ) {}
 
   isEnabled(): boolean {
     return this.anthropic.isEnabled();
+  }
+
+  /** Кастомний промпт з app_settings або вбудований default ('v1'). */
+  private async resolvePrompt(): Promise<EnrichmentPromptSetting> {
+    if (this.settings) {
+      return this.settings.getEnrichmentPrompt();
+    }
+    return { prompt: ENRICHMENT_SYSTEM_PROMPT, isCustom: false, version: 'v1' };
   }
 
   /**
@@ -149,11 +159,13 @@ export class EnrichmentService {
       feedParams: filtered || {}
     });
 
+    const promptSetting = await this.resolvePrompt();
+
     // Дуже груба оцінка: ~4 символи на токен для UA/EN тексту.
-    const estimatedTokens = Math.ceil((ENRICHMENT_SYSTEM_PROMPT.length + userMessage.length) / 4);
+    const estimatedTokens = Math.ceil((promptSetting.prompt.length + userMessage.length) / 4);
 
     return {
-      systemPrompt: ENRICHMENT_SYSTEM_PROMPT,
+      systemPrompt: promptSetting.prompt,
       userMessage,
       estimatedTokens,
       feedParams: filtered
@@ -212,9 +224,10 @@ export class EnrichmentService {
     const filteredFeedParams = filterFeedParams(master.feed_params, excludedByFeed);
 
     // 2. Call AI.
+    const promptSetting = await this.resolvePrompt();
     const response = await this.anthropic.send<MasterEnrichmentResult>({
       model,
-      systemPrompt: ENRICHMENT_SYSTEM_PROMPT,
+      systemPrompt: promptSetting.prompt,
       userMessage: buildEnrichmentUserMessage({
         sku: master.sku,
         feedParams: filteredFeedParams
@@ -273,7 +286,7 @@ export class EnrichmentService {
          WHERE id = $1
       `;
       params.push(response.modelVersion);
-      params.push('v1');
+      params.push(promptSetting.version);
       await this.pool.query(sql, params);
     } else {
       // Все одно позначити що пробували AI (щоб не крутити повторно).
@@ -284,7 +297,7 @@ export class EnrichmentService {
                 ai_prompt_version = $3,
                 updated_at = NOW()
           WHERE id = $1`,
-        [masterId, response.modelVersion, 'v1']
+        [masterId, response.modelVersion, promptSetting.version]
       );
     }
 
@@ -374,6 +387,8 @@ export class EnrichmentService {
       excludedByFeed[r.name] = new Set(ex);
     }
 
+    const promptSetting = await this.resolvePrompt();
+
     const startedAt = Date.now();
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -413,7 +428,7 @@ export class EnrichmentService {
       try {
         response = await this.anthropic.send<BatchEnrichmentResult>({
           model,
-          systemPrompt: ENRICHMENT_SYSTEM_PROMPT,
+          systemPrompt: promptSetting.prompt,
           userMessage: buildBatchEnrichmentUserMessage(batchPayload),
           jsonOutput: true,
           // Більше output tokens бо багато SKU.
@@ -478,7 +493,8 @@ export class EnrichmentService {
           result,
           threshold,
           overwrite,
-          modelVersion
+          modelVersion,
+          promptSetting.version
         );
         totalFieldsWritten += fieldsWritten;
         perItem.push({
@@ -532,7 +548,8 @@ export class EnrichmentService {
     result: MasterEnrichmentResult,
     threshold: number,
     overwrite: boolean,
-    modelVersion: string
+    modelVersion: string,
+    promptVersion: string
   ): Promise<{ fieldsWritten: number; fieldsSkipped: number }> {
     const updates: Record<string, string | number | null> = {};
     let fieldsWritten = 0;
@@ -567,7 +584,7 @@ export class EnrichmentService {
         idx++;
       }
       params.push(modelVersion);
-      params.push('v1');
+      params.push(promptVersion);
       await this.pool.query(
         `UPDATE master_catalog
             SET ${setParts.join(', ')},
@@ -586,7 +603,7 @@ export class EnrichmentService {
                 ai_prompt_version = $3,
                 updated_at = NOW()
           WHERE id = $1`,
-        [masterId, modelVersion, 'v1']
+        [masterId, modelVersion, promptVersion]
       );
     }
 

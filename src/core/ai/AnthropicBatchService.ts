@@ -4,6 +4,7 @@ import type { AnthropicBatchClient, BatchRequest } from './AnthropicBatchClient'
 import { ENRICHMENT_SYSTEM_PROMPT, buildEnrichmentUserMessage, type MasterEnrichmentResult, type EnrichedField } from './EnrichmentPrompt';
 import { MASTER_CATALOG_FIELDS } from '../master_catalog/MasterCatalogService';
 import { AiUsageService } from './AiUsageService';
+import type { AppSettingsService } from '../settings/AppSettingsService';
 
 /**
  * AnthropicBatchService — async масштабне enrichment через Anthropic Message Batches API.
@@ -48,6 +49,7 @@ export interface BatchRecord {
   cost_usd: number | null;
   results_url: string | null;
   error: string | null;
+  prompt_version: string | null;
   created_at: string;
   submitted_at: string | null;
   ended_at: string | null;
@@ -60,7 +62,8 @@ export class AnthropicBatchService {
     private readonly client: AnthropicBatchClient,
     private readonly usage: AiUsageService,
     private readonly logs: LogService,
-    private readonly env: Record<string, string | undefined>
+    private readonly env: Record<string, string | undefined>,
+    private readonly settings?: AppSettingsService | null
   ) {}
 
   isEnabled(): boolean {
@@ -83,6 +86,10 @@ export class AnthropicBatchService {
     if (masterIds.length === 0) throw new Error('masterIds порожній');
 
     const model = options.model || this.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-haiku-4-5';
+
+    const promptSetting = this.settings
+      ? await this.settings.getEnrichmentPrompt()
+      : { prompt: ENRICHMENT_SYSTEM_PROMPT, isCustom: false, version: 'v1' };
 
     // Завантажуємо masters + feeds.options для filtered feed_params.
     const mastersRes = await this.pool.query<{
@@ -114,7 +121,7 @@ export class AnthropicBatchService {
           model,
           max_tokens: 4096,
           temperature: 0,
-          system: buildJsonOnlySystem(ENRICHMENT_SYSTEM_PROMPT),
+          system: buildJsonOnlySystem(promptSetting.prompt),
           messages: [
             {
               role: 'user',
@@ -137,8 +144,8 @@ export class AnthropicBatchService {
     const insertRes = await this.pool.query<{ id: number }>(
       `INSERT INTO anthropic_batches
          (external_id, operation, status, model_version, master_ids,
-          items_count, last_anthropic_response, submitted_at)
-       VALUES ($1, 'enrich_batch', $2, $3, $4::bigint[], $5, $6::jsonb, NOW())
+          items_count, last_anthropic_response, submitted_at, prompt_version)
+       VALUES ($1, 'enrich_batch', $2, $3, $4::bigint[], $5, $6::jsonb, NOW(), $7)
        RETURNING id::int AS id`,
       [
         batchResponse.id,
@@ -146,7 +153,8 @@ export class AnthropicBatchService {
         model,
         validIds,
         requests.length,
-        JSON.stringify(batchResponse)
+        JSON.stringify(batchResponse),
+        promptSetting.version
       ]
     );
 
@@ -282,7 +290,8 @@ export class AnthropicBatchService {
         parsed,
         threshold,
         overwrite,
-        rec.model_version
+        rec.model_version,
+        rec.prompt_version || 'v1'
       );
       totalFieldsWritten += written;
     }
@@ -319,8 +328,8 @@ export class AnthropicBatchService {
       `SELECT id, external_id, operation, status, model_version, master_ids,
               items_count, processed_count, succeeded_count, errored_count,
               canceled_count, expired_count, input_tokens, output_tokens,
-              cost_usd, results_url, error, created_at, submitted_at, ended_at,
-              results_fetched_at
+              cost_usd, results_url, error, prompt_version, created_at,
+              submitted_at, ended_at, results_fetched_at
          FROM anthropic_batches WHERE id = $1`,
       [id]
     );
@@ -332,8 +341,8 @@ export class AnthropicBatchService {
       `SELECT id, external_id, operation, status, model_version, master_ids,
               items_count, processed_count, succeeded_count, errored_count,
               canceled_count, expired_count, input_tokens, output_tokens,
-              cost_usd, results_url, error, created_at, submitted_at, ended_at,
-              results_fetched_at
+              cost_usd, results_url, error, prompt_version, created_at,
+              submitted_at, ended_at, results_fetched_at
          FROM anthropic_batches
         ORDER BY id DESC
         LIMIT $1`,
@@ -348,7 +357,8 @@ export class AnthropicBatchService {
     result: MasterEnrichmentResult,
     threshold: number,
     overwrite: boolean,
-    modelVersion: string
+    modelVersion: string,
+    promptVersion: string
   ): Promise<number> {
     const updates: Record<string, string | number | null> = {};
     let fieldsWritten = 0;
@@ -366,7 +376,7 @@ export class AnthropicBatchService {
     if (fieldsWritten === 0) {
       await this.pool.query(
         `UPDATE master_catalog SET ai_enriched_at = NOW(), ai_model = $2, ai_prompt_version = $3, updated_at = NOW() WHERE id = $1`,
-        [masterId, modelVersion, 'v1']
+        [masterId, modelVersion, promptVersion]
       );
       return 0;
     }
@@ -380,7 +390,7 @@ export class AnthropicBatchService {
       idx++;
     }
     params.push(modelVersion);
-    params.push('v1');
+    params.push(promptVersion);
     await this.pool.query(
       `UPDATE master_catalog SET ${setParts.join(', ')}, ai_enriched_at = NOW(), ai_model = $${idx}, ai_prompt_version = $${idx + 1}, updated_at = NOW() WHERE id = $1`,
       params

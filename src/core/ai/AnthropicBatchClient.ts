@@ -75,15 +75,26 @@ export interface AnthropicBatchClient {
   fetchResults(resultsUrl: string): Promise<BatchResultEntry[]>;
 }
 
-export function createAnthropicBatchClient(env: Record<string, string | undefined>): AnthropicBatchClient {
-  const apiKey = (env.ANTHROPIC_API_KEY || '').trim();
+export function createAnthropicBatchClient(
+  env: Record<string, string | undefined>,
+  keyProvider?: () => Promise<string | null>
+): AnthropicBatchClient {
+  const envApiKey = (env.ANTHROPIC_API_KEY || '').trim();
   const baseUrl = (env.ANTHROPIC_API_BASE || 'https://api.anthropic.com/v1').replace(/\/$/, '');
   const timeoutMs = Number(env.ANTHROPIC_TIMEOUT_MS) || 180_000;
 
-  const enabled = apiKey.length > 0;
+  const enabled = envApiKey.length > 0 || Boolean(keyProvider);
+
+  // Ключ з БД має пріоритет над env; резолвиться при кожному запиті.
+  async function resolveApiKey(): Promise<string> {
+    const dbKey = keyProvider ? (await keyProvider().catch(() => null))?.trim() : null;
+    const apiKey = dbKey || envApiKey;
+    if (!apiKey) throw new Error('Anthropic API ключ не задано (ні в налаштуваннях, ні в env)');
+    return apiKey;
+  }
 
   async function call<T>(path: string, init: { method?: string; body?: unknown }): Promise<T> {
-    if (!enabled) throw new Error('ANTHROPIC_API_KEY не задано');
+    const apiKey = await resolveApiKey();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -109,7 +120,7 @@ export function createAnthropicBatchClient(env: Record<string, string | undefine
   }
 
   async function callRaw(url: string): Promise<string> {
-    if (!enabled) throw new Error('ANTHROPIC_API_KEY не задано');
+    const apiKey = await resolveApiKey();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
