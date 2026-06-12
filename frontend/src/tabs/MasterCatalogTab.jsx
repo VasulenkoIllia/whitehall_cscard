@@ -360,6 +360,21 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         >
           📥 Імпорт Excel
         </button>
+        <button
+          className="btn"
+          onClick={() => {
+            // Експорт за поточними фільтрами. Звичайна навігація — cookie auth
+            // працює для same-origin GET, браузер сам скачає attachment.
+            const params = new URLSearchParams({ sort });
+            if (search.trim()) params.set('search', search.trim());
+            if (hasFeed) params.set('hasFeed', hasFeed);
+            if (hasAi) params.set('hasAi', hasAi);
+            window.location.assign(`/admin/api/master-catalog/export.xlsx?${params.toString()}`);
+          }}
+          title="Скачати .xlsx: sku + 23 AI-поля + метадані. Враховує поточні фільтри — постав AI=«Опрацьовано», щоб скачати тільки збагачені"
+        >
+          📤 Експорт XLSX
+        </button>
         {lastSyncSummary ? (
           <Tag tone="ok">
             +{lastSyncSummary.inserted} нових, {lastSyncSummary.skipped} вже існували, {lastSyncSummary.durationMs}ms

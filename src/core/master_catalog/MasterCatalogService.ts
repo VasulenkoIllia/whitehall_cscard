@@ -306,6 +306,39 @@ export class MasterCatalogService {
     return res.rows.map((r) => Number(r.id));
   }
 
+  /**
+   * Рядки для XLSX-експорту: sku + 23 поля + AI метадані.
+   * In-memory expоrt, тому cap 50k рядків (поточний каталог ~27-40k — ок).
+   */
+  async listForExport(
+    filters: MasterCatalogListFilters,
+    limit = 50_000
+  ): Promise<Array<Record<string, unknown>>> {
+    const capped = Math.min(50_000, Math.max(1, Math.trunc(limit || 50_000)));
+    const { whereSql, params } = this.buildListWhere(filters);
+    const orderBy = this.resolveOrderBy(filters.sort);
+    const needsFilled = orderBy.includes('filled_count');
+    const filledExpr = MASTER_CATALOG_FIELDS.map(
+      (f) =>
+        `(CASE WHEN ${f} IS NOT NULL${
+          f === 'old_price' ? '' : ` AND btrim(${f}::text) <> ''`
+        } THEN 1 ELSE 0 END)`
+    ).join(' + ');
+
+    params.push(capped);
+    const sql = `
+      SELECT sku, ${MASTER_CATALOG_FIELDS.join(', ')},
+             ${needsFilled ? `(${filledExpr})::int AS filled_count,` : ''}
+             feed_source, ai_enriched_at, ai_model, ai_prompt_version
+      FROM master_catalog
+      ${whereSql}
+      ORDER BY ${orderBy}
+      LIMIT $${params.length}
+    `;
+    const res = await this.pool.query(sql, params);
+    return res.rows as Array<Record<string, unknown>>;
+  }
+
   async getMaster(idOrSku: string | number): Promise<Record<string, unknown> | null> {
     const isNumeric = typeof idOrSku === 'number' || /^\d+$/.test(String(idOrSku));
     const sql = isNumeric

@@ -1,5 +1,6 @@
 import type { Application, Request, RequestHandler, Response } from 'express';
 import multer from 'multer';
+import * as XLSX from 'xlsx';
 import type { MasterCatalogService } from '../../../core/master_catalog/MasterCatalogService';
 import type { ExcelImportService } from '../../../core/master_catalog/ExcelImportService';
 import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
@@ -415,6 +416,52 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
         res
           .status(readErrorStatus(err))
           .json({ error: readErrorMessage(err, 'master_catalog_ids_error') });
+      }
+    }
+  );
+
+  // GET /admin/api/master-catalog/export.xlsx — експорт каталогу в Excel
+  // (sku + 23 AI-поля + метадані). Реєструється ДО '/:id' (інакше Express
+  // трактує 'export.xlsx' як SKU). Будується в пам'яті, cap 50k рядків.
+  app.get(
+    '/admin/api/master-catalog/export.xlsx',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const rows = await masterCatalogService.listForExport(
+          {
+            search:
+              typeof req.query.search === 'string' ? req.query.search.trim() || null : null,
+            hasName: parseBoolOrNull(req.query.hasName),
+            hasFeed: parseBoolOrNull(req.query.hasFeed),
+            hasAi: parseBoolOrNull(req.query.hasAi),
+            isActive: parseBoolOrNull(req.query.isActive),
+            sort: typeof req.query.sort === 'string' ? req.query.sort : 'sku_asc'
+          },
+          parsePositiveInt(req.query.limit) || 50_000
+        );
+        // Дати → ISO рядки, щоб Excel показував читабельно.
+        const flat = rows.map((r) => {
+          const out: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(r)) {
+            out[k] = v instanceof Date ? v.toISOString() : v;
+          }
+          return out;
+        });
+        const sheet = XLSX.utils.json_to_sheet(flat);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, sheet, 'master_catalog');
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader('Content-Disposition', `attachment; filename="master_catalog_${ts}.xlsx"`);
+        res.send(buf);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'export_error') });
       }
     }
   );
