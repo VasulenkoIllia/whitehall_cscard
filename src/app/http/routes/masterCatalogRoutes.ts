@@ -377,6 +377,7 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
           hasName: parseBoolOrNull(req.query.hasName),
           hasFeed: parseBoolOrNull(req.query.hasFeed),
           hasAi: parseBoolOrNull(req.query.hasAi),
+          pendingBatch: parseBoolOrNull(req.query.pendingBatch),
           isActive: parseBoolOrNull(req.query.isActive),
           page: parsePositiveInt(req.query.page) || 1,
           pageSize: parsePositiveInt(req.query.pageSize) || 50,
@@ -387,6 +388,22 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
         res
           .status(readErrorStatus(err))
           .json({ error: readErrorMessage(err, 'master_catalog_list_error') });
+      }
+    }
+  );
+
+  // GET /admin/api/master-catalog/stats — глобальний прогрес каталогу
+  // (всього / з фідом / AI / у черзі / лишилось). ДО '/:id'.
+  app.get(
+    '/admin/api/master-catalog/stats',
+    authMw.requireRole('viewer'),
+    async (_req: Request, res: Response) => {
+      try {
+        res.json(await masterCatalogService.stats());
+      } catch (err) {
+        res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'master_catalog_stats_error') });
       }
     }
   );
@@ -406,6 +423,7 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
             hasName: parseBoolOrNull(req.query.hasName),
             hasFeed: parseBoolOrNull(req.query.hasFeed),
             hasAi: parseBoolOrNull(req.query.hasAi),
+            pendingBatch: parseBoolOrNull(req.query.pendingBatch),
             isActive: parseBoolOrNull(req.query.isActive),
             sort: typeof req.query.sort === 'string' ? req.query.sort : 'newest'
           },

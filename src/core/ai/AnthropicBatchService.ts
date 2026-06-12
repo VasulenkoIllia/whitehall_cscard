@@ -29,6 +29,10 @@ export interface BatchSubmitResult {
   externalId: string;     // anthropic 'msgbatch_...'
   itemsCount: number;
   modelVersion: string;
+  /** SKU відкинуті бо вже сидять в іншому активному batch (захист від подвійної оплати). */
+  skippedPending: number;
+  /** SKU відкинуті бо не мають feed_params. */
+  skippedNoFeed: number;
 }
 
 export interface BatchRecord {
@@ -91,12 +95,31 @@ export class AnthropicBatchService {
       ? await this.settings.getEnrichmentPrompt()
       : { prompt: ENRICHMENT_SYSTEM_PROMPT, isCustom: false, version: 'v1' };
 
+    // ЗАПОБІЖНИК: SKU що вже сидять в активному batch (submitted, результати
+    // ще не записані) відкидаємо — інакше при повторному submit платимо двічі.
+    const pendingRes = await this.pool.query<{ id: number }>(
+      `SELECT DISTINCT unnest(master_ids) AS id
+         FROM anthropic_batches
+        WHERE results_fetched_at IS NULL
+          AND status IN ('in_progress', 'canceling', 'ended')`
+    );
+    const pendingIds = new Set(pendingRes.rows.map((r) => Number(r.id)));
+    const freshIds = masterIds.filter((id) => !pendingIds.has(Number(id)));
+    const skippedPending = masterIds.length - freshIds.length;
+    if (freshIds.length === 0) {
+      const err = new Error(
+        `Всі ${masterIds.length} SKU вже у черзі в активних batch-ах — повторний submit коштував би подвійно. Дочекайся завершення або натисни Poll.`
+      );
+      (err as { status?: number }).status = 409;
+      throw err;
+    }
+
     // Завантажуємо masters + feeds.options для filtered feed_params.
     const mastersRes = await this.pool.query<{
       id: number;
       sku: string;
       feed_params: Record<string, unknown> | null;
-    }>(`SELECT id, sku, feed_params FROM master_catalog WHERE id = ANY($1::bigint[])`, [masterIds]);
+    }>(`SELECT id, sku, feed_params FROM master_catalog WHERE id = ANY($1::bigint[])`, [freshIds]);
 
     const feedsRes = await this.pool.query<{ name: string; options: { excluded_fields?: unknown } | null }>(
       `SELECT name, options FROM feeds`
@@ -133,6 +156,7 @@ export class AnthropicBatchService {
       validIds.push(Number(m.id));
     }
 
+    const skippedNoFeed = freshIds.length - requests.length;
     if (requests.length === 0) {
       throw new Error('Жоден з SKU не має feed_params — нічого відправляти');
     }
@@ -162,7 +186,9 @@ export class AnthropicBatchService {
       batchId: Number(insertRes.rows[0].id),
       externalId: batchResponse.id,
       itemsCount: requests.length,
-      modelVersion: model
+      modelVersion: model,
+      skippedPending,
+      skippedNoFeed
     };
   }
 

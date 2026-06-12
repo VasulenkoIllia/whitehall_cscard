@@ -61,6 +61,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   // "Обрати перші N за фільтром" (10/50/100):
   const [selectCount, setSelectCount] = useState(100);
   const [selectingFirstN, setSelectingFirstN] = useState(false);
+  // Глобальний прогрес каталогу (всього / AI / у черзі / лишилось):
+  const [catalogStats, setCatalogStats] = useState(null);
 
   const loadList = useCallback(async () => {
     setStatus('Завантаження...');
@@ -72,11 +74,21 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       });
       if (search.trim()) params.set('search', search.trim());
       if (hasFeed) params.set('hasFeed', hasFeed);
-      if (hasAi) params.set('hasAi', hasAi);
+      // hasAi: 'true'/'false' — класика; 'pending' — у черзі batch;
+      // 'fresh' — без AI і не в черзі (безпечно відправляти).
+      if (hasAi === 'true' || hasAi === 'false') params.set('hasAi', hasAi);
+      if (hasAi === 'pending') params.set('pendingBatch', 'true');
+      if (hasAi === 'fresh') {
+        params.set('hasAi', 'false');
+        params.set('pendingBatch', 'false');
+      }
       const data = await apiFetch(`/master-catalog?${params.toString()}`);
       setRows(Array.isArray(data?.rows) ? data.rows : []);
       setTotal(Number(data?.total || 0));
       setStatus('');
+      // Прогрес оновлюємо разом зі списком (loadList викликається після
+      // імпорту/enrich/poll — статистика завжди актуальна).
+      apiFetch('/master-catalog/stats').then(setCatalogStats).catch(() => undefined);
     } catch (err) {
       setStatus(`Помилка: ${err?.message || 'unknown'}`);
     }
@@ -132,8 +144,13 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         method: 'POST',
         body: JSON.stringify({ masterIds: candidates, model: aiModel })
       });
-      alert(`Submitted! batch_id=${result.batchId}, external=${result.externalId}, items=${result.itemsCount}`);
+      const skippedNote = result.skippedPending > 0
+        ? `\n⚠ ${result.skippedPending} SKU пропущено — вже в черзі іншого batch (захист від подвійної оплати).`
+        : '';
+      alert(`Submitted! batch_id=${result.batchId}, items=${result.itemsCount}${skippedNote}`);
+      setSelectedIds(new Set());
       await loadAsyncBatches();
+      await loadList();
     } catch (err) {
       alert('Помилка: ' + (err?.message || 'unknown'));
     } finally {
@@ -240,8 +257,9 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   };
   const clearSelection = () => setSelectedIds(new Set());
 
-  // "Обрати перші N за фільтром" — бере id з сервера (не тільки видиму сторінку).
-  // Завжди hasFeed=true (без feed enrich неможливий) + hasAi з поточного фільтра.
+  // "Обрати перші N" — бере id з сервера (не тільки видиму сторінку).
+  // Завжди тільки СВІЖІ: з фідом, без AI, не в активному batch — щоб
+  // неможливо було випадково відправити ті самі SKU вдруге.
   const selectFirstN = async () => {
     if (selectingFirstN) return;
     setSelectingFirstN(true);
@@ -249,15 +267,16 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       const params = new URLSearchParams({
         limit: String(selectCount),
         hasFeed: 'true',
+        hasAi: 'false',
+        pendingBatch: 'false',
         sort
       });
       if (search.trim()) params.set('search', search.trim());
-      if (hasAi) params.set('hasAi', hasAi);
       const data = await apiFetch(`/master-catalog/ids?${params.toString()}`);
       const ids = Array.isArray(data?.ids) ? data.ids.map(Number) : [];
       setSelectedIds(new Set(ids));
       if (ids.length === 0) {
-        alert('Нічого не знайдено за поточними фільтрами (з фідом).');
+        alert('Свіжих SKU нема: всі з фідом вже опрацьовані AI або в черзі batch.');
       }
     } catch (err) {
       alert('Помилка: ' + (err?.message || 'unknown'));
@@ -385,6 +404,27 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         </div>
       </div>
 
+      {/* Прогрес AI-обробки: щоб не плутати, що вже пройшло через AI і що в черзі */}
+      {catalogStats ? (
+        <div style={{
+          display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
+          border: '1px solid #d0d7e2', borderRadius: 6, padding: '6px 10px',
+          marginBottom: 12, background: '#fafcff', fontSize: 13
+        }}>
+          <strong>📊 Прогрес AI</strong>
+          <span>Всього: <b>{catalogStats.total}</b></span>
+          <span>З даними: <b>{catalogStats.withFeed}</b></span>
+          <span style={{ color: '#1a7f37' }}>🤖 Опрацьовано: <b>{catalogStats.aiEnriched}</b></span>
+          <span style={{ color: '#8e44ad' }}>⏳ У черзі (batch): <b>{catalogStats.pendingBatch}</b></span>
+          <span style={{ color: '#b35900' }}>✨ Лишилось: <b>{catalogStats.fresh}</b></span>
+          {catalogStats.withFeed > 0 ? (
+            <span style={{ marginLeft: 'auto', color: '#666', fontSize: 12 }}>
+              {Math.round((catalogStats.aiEnriched / catalogStats.withFeed) * 100)}% готово
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Filters */}
       <div className="mapping-builder" style={{ marginBottom: 12 }}>
         <div>
@@ -407,8 +447,10 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           <label>AI</label>
           <select value={hasAi} onChange={(e) => { setHasAi(e.target.value); setPage(1); }}>
             <option value="">Усі</option>
-            <option value="true">Опрацьовано AI ✓</option>
-            <option value="false">Не опрацьовано</option>
+            <option value="true">🤖 Опрацьовано AI</option>
+            <option value="fresh">✨ Свіжі (без AI, не в черзі)</option>
+            <option value="pending">⏳ У черзі (batch)</option>
+            <option value="false">Не опрацьовано (вкл. чергу)</option>
           </select>
         </div>
         <div>
@@ -663,7 +705,9 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
                 {r.feed_matched_at ? '✓' : '—'}
               </td>
               <td style={{ textAlign: 'center' }}>
-                {r.ai_enriched_at ? '🤖' : '—'}
+                {r.ai_enriched_at ? '🤖' : r.pending_batch ? (
+                  <span title="У черзі: відправлено в async batch, результати ще не записані">⏳</span>
+                ) : '—'}
               </td>
               <td style={{ fontSize: 11, color: '#666' }}>
                 {r.created_at ? new Date(r.created_at).toLocaleDateString('uk-UA') : ''}

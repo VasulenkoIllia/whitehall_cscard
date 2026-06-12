@@ -55,11 +55,36 @@ export interface MasterCatalogListFilters {
   hasName?: boolean | null;
   hasFeed?: boolean | null;
   hasAi?: boolean | null;
+  /** true — тільки SKU в активному (незавершеному) async batch; false — без них. */
+  pendingBatch?: boolean | null;
   isActive?: boolean | null;
   page?: number;
   pageSize?: number;
   sort?: string;
 }
+
+export interface MasterCatalogStats {
+  total: number;
+  withFeed: number;
+  aiEnriched: number;
+  /** У черзі: в активному batch (submitted, результати ще не записані). */
+  pendingBatch: number;
+  /** Готові до відправки: з фідом, без AI, не в черзі. */
+  fresh: number;
+}
+
+/**
+ * SKU що сидять в активних async батчах: submitted, але результати ще не
+ * записані у master_catalog. Такі SKU виглядають як "не опрацьовані"
+ * (ai_enriched_at IS NULL), тому без цього фільтра їх можна випадково
+ * відправити вдруге і заплатити двічі.
+ */
+const PENDING_BATCH_IDS_SQL = `(
+  SELECT DISTINCT unnest(master_ids)
+    FROM anthropic_batches
+   WHERE results_fetched_at IS NULL
+     AND status IN ('in_progress', 'canceling', 'ended')
+)`;
 
 export interface MasterCatalogListResult {
   rows: Array<Record<string, unknown> & {
@@ -209,6 +234,8 @@ export class MasterCatalogService {
     if (filters.hasFeed === false) where.push(`feed_matched_at IS NULL`);
     if (filters.hasAi === true) where.push(`ai_enriched_at IS NOT NULL`);
     if (filters.hasAi === false) where.push(`ai_enriched_at IS NULL`);
+    if (filters.pendingBatch === true) where.push(`id IN ${PENDING_BATCH_IDS_SQL}`);
+    if (filters.pendingBatch === false) where.push(`id NOT IN ${PENDING_BATCH_IDS_SQL}`);
     if (filters.isActive === true) where.push(`is_active = TRUE`);
     if (filters.isActive === false) where.push(`is_active = FALSE`);
 
@@ -253,6 +280,7 @@ export class MasterCatalogService {
         id, sku, name_uk, brand, category_uk, photo,
         feed_matched_at, ai_enriched_at, is_active,
         created_at, updated_at,
+        (id IN ${PENDING_BATCH_IDS_SQL}) AS pending_batch,
         (${filledExpr})::int AS filled_count,
         COUNT(*) OVER()::int AS total
       FROM master_catalog
@@ -271,6 +299,40 @@ export class MasterCatalogService {
       page,
       pageSize,
       total
+    };
+  }
+
+  /**
+   * Глобальна статистика каталогу — щоб одним поглядом бачити прогрес
+   * і не плутати, які SKU вже пройшли через AI, які в черзі, які лишились.
+   */
+  async stats(): Promise<MasterCatalogStats> {
+    const res = await this.pool.query<{
+      total: number;
+      with_feed: number;
+      ai_enriched: number;
+      pending_batch: number;
+      fresh: number;
+    }>(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE feed_matched_at IS NOT NULL)::int AS with_feed,
+        COUNT(*) FILTER (WHERE ai_enriched_at IS NOT NULL)::int AS ai_enriched,
+        COUNT(*) FILTER (WHERE id IN ${PENDING_BATCH_IDS_SQL})::int AS pending_batch,
+        COUNT(*) FILTER (
+          WHERE feed_matched_at IS NOT NULL
+            AND ai_enriched_at IS NULL
+            AND id NOT IN ${PENDING_BATCH_IDS_SQL}
+        )::int AS fresh
+      FROM master_catalog
+    `);
+    const r = res.rows[0];
+    return {
+      total: Number(r?.total || 0),
+      withFeed: Number(r?.with_feed || 0),
+      aiEnriched: Number(r?.ai_enriched || 0),
+      pendingBatch: Number(r?.pending_batch || 0),
+      fresh: Number(r?.fresh || 0)
     };
   }
 
