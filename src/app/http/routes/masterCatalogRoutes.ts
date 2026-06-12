@@ -390,6 +390,35 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
     }
   );
 
+  // GET /admin/api/master-catalog/ids — перші N id за фільтрами (для
+  // "обрати перші 10/50/100" в UI). ВАЖЛИВО: реєструється ДО '/:id',
+  // інакше Express трактує 'ids' як SKU.
+  app.get(
+    '/admin/api/master-catalog/ids',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const ids = await masterCatalogService.listMasterIds(
+          {
+            search:
+              typeof req.query.search === 'string' ? req.query.search.trim() || null : null,
+            hasName: parseBoolOrNull(req.query.hasName),
+            hasFeed: parseBoolOrNull(req.query.hasFeed),
+            hasAi: parseBoolOrNull(req.query.hasAi),
+            isActive: parseBoolOrNull(req.query.isActive),
+            sort: typeof req.query.sort === 'string' ? req.query.sort : 'newest'
+          },
+          parsePositiveInt(req.query.limit) || 10
+        );
+        res.json({ ids });
+      } catch (err) {
+        res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'master_catalog_ids_error') });
+      }
+    }
+  );
+
   // GET /admin/api/master-catalog/:id — деталі одного майстра.
   app.get(
     '/admin/api/master-catalog/:id',

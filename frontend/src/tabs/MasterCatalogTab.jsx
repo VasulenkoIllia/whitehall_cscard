@@ -58,6 +58,9 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   const [asyncBatches, setAsyncBatches] = useState([]);
   const [asyncSubmitting, setAsyncSubmitting] = useState(false);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
+  // "Обрати перші N за фільтром" (10/50/100):
+  const [selectCount, setSelectCount] = useState(100);
+  const [selectingFirstN, setSelectingFirstN] = useState(false);
 
   const loadList = useCallback(async () => {
     setStatus('Завантаження...');
@@ -103,12 +106,17 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
 
   useEffect(() => { void loadAsyncBatches(); }, [loadAsyncBatches]);
 
+  // Обрані id можуть бути поза видимою сторінкою (через "Обрати перші N" —
+  // там сервер вже відфільтрував hasFeed=true). Для видимих перевіряємо
+  // feed_matched_at, невидимим довіряємо; бекенд все одно skip-ає без feed_params.
+  const feedCandidates = () => Array.from(selectedIds).filter((id) => {
+    const row = rows.find((r) => Number(r.id) === id);
+    return !row || Boolean(row.feed_matched_at);
+  });
+
   const submitAsyncBatch = async () => {
     if (isReadOnly || asyncSubmitting) return;
-    const candidates = Array.from(selectedIds).filter((id) => {
-      const row = rows.find((r) => Number(r.id) === id);
-      return row && row.feed_matched_at;
-    });
+    const candidates = feedCandidates();
     if (candidates.length === 0) {
       alert('Оберіть SKU з feed для async batch.');
       return;
@@ -172,10 +180,7 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   // підказка користувачу.
   const runBatchEnrich = async (overwrite = false) => {
     if (isReadOnly || batchRunning) return;
-    const candidates = Array.from(selectedIds).filter((id) => {
-      const row = rows.find((r) => Number(r.id) === id);
-      return row && row.feed_matched_at; // Тільки SKU з feed.
-    });
+    const candidates = feedCandidates();
     if (candidates.length === 0) {
       setBatchSummary({
         error: 'Оберіть SKU чекбоксами. Тільки ті що мають feed (feed_matched_at) йдуть в AI.'
@@ -234,6 +239,32 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     });
   };
   const clearSelection = () => setSelectedIds(new Set());
+
+  // "Обрати перші N за фільтром" — бере id з сервера (не тільки видиму сторінку).
+  // Завжди hasFeed=true (без feed enrich неможливий) + hasAi з поточного фільтра.
+  const selectFirstN = async () => {
+    if (selectingFirstN) return;
+    setSelectingFirstN(true);
+    try {
+      const params = new URLSearchParams({
+        limit: String(selectCount),
+        hasFeed: 'true',
+        sort
+      });
+      if (search.trim()) params.set('search', search.trim());
+      if (hasAi) params.set('hasAi', hasAi);
+      const data = await apiFetch(`/master-catalog/ids?${params.toString()}`);
+      const ids = Array.isArray(data?.ids) ? data.ids.map(Number) : [];
+      setSelectedIds(new Set(ids));
+      if (ids.length === 0) {
+        alert('Нічого не знайдено за поточними фільтрами (з фідом).');
+      }
+    } catch (err) {
+      alert('Помилка: ' + (err?.message || 'unknown'));
+    } finally {
+      setSelectingFirstN(false);
+    }
+  };
 
   // ─── Prompt preview ────────────────────────────────────────────────────────
   const openPromptPreview = async (masterId) => {
@@ -398,6 +429,22 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           <strong>🤖 Batch AI Enrichment</strong>
           <span style={{ fontSize: 11, color: '#666' }}>
             Обрано: <b>{selectedIds.size}</b> SKU
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid #4a90e2', borderRadius: 4, padding: '2px 6px', background: 'white' }}>
+            <span style={{ fontSize: 12 }}>Обрати перші</span>
+            <select value={selectCount} onChange={(e) => setSelectCount(Number(e.target.value))} style={{ fontSize: 12 }}>
+              <option value={10}>10</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+            <button
+              className="btn btn-sm primary"
+              onClick={selectFirstN}
+              disabled={selectingFirstN}
+              title="Обрати перші N SKU з фідом за поточними фільтрами (пошук, AI, сортування) — з усього каталогу, не тільки видимої сторінки"
+            >
+              {selectingFirstN ? '⏳' : '✓ Обрати'}
+            </button>
           </span>
           <button className="btn btn-sm" onClick={selectVisibleWithFeedNoAi} disabled={rows.length === 0}>
             Обрати видимі з feed без AI

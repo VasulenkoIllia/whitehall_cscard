@@ -194,11 +194,8 @@ export class MasterCatalogService {
     }
   }
 
-  async listMasters(filters: MasterCatalogListFilters): Promise<MasterCatalogListResult> {
-    const page = Math.max(1, Math.trunc(filters.page || 1));
-    const pageSize = Math.min(200, Math.max(1, Math.trunc(filters.pageSize || 50)));
-    const offset = (page - 1) * pageSize;
-
+  /** Спільний WHERE-білдер для listMasters / listMasterIds. */
+  private buildListWhere(filters: MasterCatalogListFilters): { whereSql: string; params: unknown[] } {
     const where: string[] = [];
     const params: unknown[] = [];
 
@@ -215,9 +212,11 @@ export class MasterCatalogService {
     if (filters.isActive === true) where.push(`is_active = TRUE`);
     if (filters.isActive === false) where.push(`is_active = FALSE`);
 
-    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    return { whereSql: where.length > 0 ? `WHERE ${where.join(' AND ')}` : '', params };
+  }
 
-    // Сортування — whitelisted щоб не було SQL injection через rawvalue.
+  /** Сортування — whitelisted щоб не було SQL injection через raw value. */
+  private resolveOrderBy(sort: string | undefined): string {
     const allowedSort: Record<string, string> = {
       sku_asc: 'sku ASC',
       sku_desc: 'sku DESC',
@@ -226,8 +225,16 @@ export class MasterCatalogService {
       filled_desc: 'filled_count DESC, sku ASC',
       filled_asc: 'filled_count ASC, sku ASC'
     };
-    const sortKey = filters.sort && allowedSort[filters.sort] ? filters.sort : 'newest';
-    const orderBy = allowedSort[sortKey];
+    return allowedSort[sort && allowedSort[sort] ? sort : 'newest'];
+  }
+
+  async listMasters(filters: MasterCatalogListFilters): Promise<MasterCatalogListResult> {
+    const page = Math.max(1, Math.trunc(filters.page || 1));
+    const pageSize = Math.min(200, Math.max(1, Math.trunc(filters.pageSize || 50)));
+    const offset = (page - 1) * pageSize;
+
+    const { whereSql, params } = this.buildListWhere(filters);
+    const orderBy = this.resolveOrderBy(filters.sort);
 
     // filled_count — скільки з 23 атрибутних полів заповнені.
     const filledExpr = MASTER_CATALOG_FIELDS.map(
@@ -265,6 +272,38 @@ export class MasterCatalogService {
       pageSize,
       total
     };
+  }
+
+  /**
+   * Перші N id за фільтрами (для "обрати перші 10/50/100" в UI).
+   * Той самий WHERE/sort що у listMasters, але тільки id — швидко і без пагінації.
+   */
+  async listMasterIds(filters: MasterCatalogListFilters, limit: number): Promise<number[]> {
+    const capped = Math.min(1000, Math.max(1, Math.trunc(limit || 10)));
+    const { whereSql, params } = this.buildListWhere(filters);
+    const orderBy = this.resolveOrderBy(filters.sort);
+
+    // filled_count потрібен тільки якщо сортуємо за заповненістю.
+    const needsFilled = orderBy.includes('filled_count');
+    const filledExpr = needsFilled
+      ? MASTER_CATALOG_FIELDS.map(
+          (f) =>
+            `(CASE WHEN ${f} IS NOT NULL${
+              f === 'old_price' ? '' : ` AND btrim(${f}::text) <> ''`
+            } THEN 1 ELSE 0 END)`
+        ).join(' + ')
+      : null;
+
+    params.push(capped);
+    const sql = `
+      SELECT id${filledExpr ? `, (${filledExpr})::int AS filled_count` : ''}
+      FROM master_catalog
+      ${whereSql}
+      ORDER BY ${orderBy}
+      LIMIT $${params.length}
+    `;
+    const res = await this.pool.query<{ id: number }>(sql, params);
+    return res.rows.map((r) => Number(r.id));
   }
 
   async getMaster(idOrSku: string | number): Promise<Record<string, unknown> | null> {
