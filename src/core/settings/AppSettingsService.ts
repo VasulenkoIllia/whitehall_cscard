@@ -18,10 +18,17 @@ export const SETTING_ENRICHMENT_PROMPT = 'enrichment_system_prompt';
 export const SETTING_ANTHROPIC_API_KEY = 'anthropic_api_key';
 export const SETTING_EXCEL_EXCLUDED_COLUMNS = 'excel_import_excluded_columns';
 
-/** Дефолтні виключені колонки Excel: фото/лінки роздувають токени і не потрібні AI. */
+/**
+ * Дефолтні виключені колонки Excel: фото/лінки/технічне/SEO-сміття роздувають
+ * токени і не потрібні AI. Матчинг — case-insensitive substring по назві колонки.
+ * Підлаштовано під реальний файл (enriched_final.xlsx): photo_1..15, url,
+ * feed_url, image_count, _feed_matched, feed_keywords*, юридичні поля.
+ */
 export const DEFAULT_EXCEL_EXCLUDED_COLUMNS = [
-  'photo', 'photos', 'image', 'images', 'picture', 'pictures', 'img',
-  'фото', 'зображення', 'картинка', 'url', 'link', 'links', 'посилання'
+  'photo', 'image', 'picture', 'img', 'фото', 'зображення', 'картинка',
+  'url', 'link', 'посилання',
+  '_feed_matched', 'keywords',
+  'тнвэд', 'тнвед', 'висновок сез', 'адреса виробника', 'закону україни'
 ];
 
 export interface EnrichmentPromptSetting {

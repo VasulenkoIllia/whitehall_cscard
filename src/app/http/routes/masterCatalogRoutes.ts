@@ -1,5 +1,7 @@
-import type { Application, Request, Response } from 'express';
+import type { Application, Request, RequestHandler, Response } from 'express';
+import multer from 'multer';
 import type { MasterCatalogService } from '../../../core/master_catalog/MasterCatalogService';
+import type { ExcelImportService } from '../../../core/master_catalog/ExcelImportService';
 import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
 import type { AiUsageService } from '../../../core/ai/AiUsageService';
 import type { AnthropicBatchService } from '../../../core/ai/AnthropicBatchService';
@@ -11,12 +13,39 @@ type AuthMiddleware = ReturnType<typeof createAuthMiddleware>;
 
 interface MasterCatalogRouteDeps {
   masterCatalogService: MasterCatalogService;
+  excelImportService: ExcelImportService;
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
   anthropicBatchService: AnthropicBatchService;
   appSettingsService: AppSettingsService;
   jobRunner: PipelineJobRunner<unknown>;
   authMw: AuthMiddleware;
+}
+
+/** Excel файли бувають великі (реальний кейс — 76 MB), тримаємо в пам'яті. */
+const EXCEL_MAX_FILE_BYTES = 150 * 1024 * 1024;
+
+const excelUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: EXCEL_MAX_FILE_BYTES }
+});
+
+/** Обгортка multer.single('file') з людською обробкою помилок (413 замість 500 HTML). */
+function uploadSingleFile(): RequestHandler {
+  const mw = excelUpload.single('file');
+  return (req, res, next) => {
+    mw(req, res, (err: unknown) => {
+      if (!err) {
+        next();
+        return;
+      }
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        res.status(413).json({ error: `Файл завеликий (макс ${EXCEL_MAX_FILE_BYTES / 1024 / 1024} MB)` });
+        return;
+      }
+      res.status(400).json({ error: readErrorMessage(err, 'upload_error') });
+    });
+  };
 }
 
 function readErrorMessage(err: unknown, fallback: string): string {
@@ -45,7 +74,79 @@ function parseBoolOrNull(value: unknown): boolean | null {
 }
 
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
-  const { masterCatalogService, enrichmentService, aiUsageService, anthropicBatchService, appSettingsService, jobRunner, authMw } = deps;
+  const { masterCatalogService, excelImportService, enrichmentService, aiUsageService, anthropicBatchService, appSettingsService, jobRunner, authMw } = deps;
+
+  // ─── Excel upload import ────────────────────────────────────────────────────
+
+  // POST /admin/api/master-catalog/excel/preview — preview файлу без запису:
+  // аркуші, заголовки, перші очищені рядки, підказки SKU/виключених колонок.
+  app.post(
+    '/admin/api/master-catalog/excel/preview',
+    authMw.requireRole('admin'),
+    uploadSingleFile(),
+    async (req: Request, res: Response) => {
+      try {
+        const file = (req as Request & { file?: { buffer: Buffer; originalname: string } }).file;
+        if (!file || !file.buffer) {
+          res.status(400).json({ error: 'Файл відсутній (поле "file")' });
+          return;
+        }
+        const result = await excelImportService.preview(file.buffer, {
+          sheetName: typeof req.body?.sheetName === 'string' && req.body.sheetName ? req.body.sheetName : undefined,
+          headerRow: parsePositiveInt(req.body?.headerRow) || undefined
+        });
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'excel_preview_error') });
+      }
+    }
+  );
+
+  // POST /admin/api/master-catalog/excel/import — імпорт: upsert по SKU,
+  // очищені параметри → feed_params.excel_upload (фото окремо у photo).
+  app.post(
+    '/admin/api/master-catalog/excel/import',
+    authMw.requireRole('admin'),
+    uploadSingleFile(),
+    async (req: Request, res: Response) => {
+      try {
+        const file = (req as Request & { file?: { buffer: Buffer; originalname: string } }).file;
+        if (!file || !file.buffer) {
+          res.status(400).json({ error: 'Файл відсутній (поле "file")' });
+          return;
+        }
+        const skuColumn = typeof req.body?.skuColumn === 'string' ? req.body.skuColumn.trim() : '';
+        if (!skuColumn) {
+          res.status(400).json({ error: 'skuColumn обовʼязковий' });
+          return;
+        }
+        let excludedColumns: string[] = [];
+        if (typeof req.body?.excludedColumns === 'string' && req.body.excludedColumns.trim()) {
+          try {
+            const parsed = JSON.parse(req.body.excludedColumns);
+            if (Array.isArray(parsed)) {
+              excludedColumns = parsed.filter((x): x is string => typeof x === 'string');
+            }
+          } catch {
+            res.status(400).json({ error: 'excludedColumns — невалідний JSON масив' });
+            return;
+          }
+        }
+        const result = await excelImportService.importFile(file.buffer, {
+          skuColumn,
+          excludedColumns,
+          photoColumn: typeof req.body?.photoColumn === 'string' && req.body.photoColumn.trim()
+            ? req.body.photoColumn.trim() : null,
+          overwritePhoto: req.body?.overwritePhoto === 'true' || req.body?.overwritePhoto === true,
+          sheetName: typeof req.body?.sheetName === 'string' && req.body.sheetName ? req.body.sheetName : undefined,
+          headerRow: parsePositiveInt(req.body?.headerRow) || undefined
+        });
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'excel_import_error') });
+      }
+    }
+  );
 
   // ─── Anthropic Batch API (async масштабна обробка) ─────────────────────────
 

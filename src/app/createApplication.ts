@@ -33,6 +33,7 @@ import { SchedulerSettingsService } from '../core/jobs/SchedulerSettingsService'
 import type { StoreImportBatch } from '../core/domain/store';
 import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 import { MasterCatalogService } from '../core/master_catalog/MasterCatalogService';
+import { ExcelImportService } from '../core/master_catalog/ExcelImportService';
 import { FeedService } from '../core/feeds/FeedService';
 import { createAnthropicClient } from '../core/ai/AnthropicClient';
 import { EnrichmentService } from '../core/ai/EnrichmentService';
@@ -307,6 +308,7 @@ export interface Application {
   schedulerSettingsService: SchedulerSettingsService;
   catalogAdminService: CatalogAdminService;
   masterCatalogService: MasterCatalogService;
+  excelImportService: ExcelImportService;
   feedService: FeedService;
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
@@ -378,6 +380,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   const masterCatalogService = new MasterCatalogService(pool, logService);
   const feedService = new FeedService(pool, logService);
   const appSettingsService = new AppSettingsService(pool);
+  const excelImportService = new ExcelImportService(pool, logService, appSettingsService);
   // Ключ з app_settings (введений з фронта) має пріоритет над env.
   const anthropicKeyProvider = () => appSettingsService.getAnthropicApiKey();
   const anthropic = createAnthropicClient(env, anthropicKeyProvider);
@@ -463,6 +466,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     schedulerSettingsService,
     catalogAdminService,
     masterCatalogService,
+    excelImportService,
     feedService,
     enrichmentService,
     aiUsageService,

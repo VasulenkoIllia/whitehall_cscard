@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Section, Tag } from '../components/ui';
 import { AiSettingsPanel } from '../components/AiSettingsPanel';
+import { ExcelImportModal } from '../components/ExcelImportModal';
 
 // 23 атрибутні поля в порядку як у master_catalog.
 const MASTER_FIELDS = [
@@ -56,6 +57,7 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   const [promptPreview, setPromptPreview] = useState(null);
   const [asyncBatches, setAsyncBatches] = useState([]);
   const [asyncSubmitting, setAsyncSubmitting] = useState(false);
+  const [excelModalOpen, setExcelModalOpen] = useState(false);
 
   const loadList = useCallback(async () => {
     setStatus('Завантаження...');
@@ -318,6 +320,14 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           disabled={isReadOnly || syncRunning}
         >
           {syncRunning ? '⏳ Sync...' : '🔄 Sync from finalize'}
+        </button>
+        <button
+          className="btn"
+          onClick={() => setExcelModalOpen(true)}
+          disabled={isReadOnly}
+          title="Завантажити Excel з товарами: SKU + параметри → feed_params"
+        >
+          📥 Імпорт Excel
         </button>
         {lastSyncSummary ? (
           <Tag tone="ok">
@@ -629,6 +639,14 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
 
       {promptPreview ? (
         <PromptPreviewModal preview={promptPreview} onClose={() => setPromptPreview(null)} />
+      ) : null}
+
+      {excelModalOpen ? (
+        <ExcelImportModal
+          apiFetch={apiFetch}
+          onClose={() => setExcelModalOpen(false)}
+          onAfterImport={loadList}
+        />
       ) : null}
     </Section>
   );

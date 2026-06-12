@@ -24,3 +24,6 @@ yarn-error.log*
 
 .vscode/*
 .claude/*
+
+# Локальні вхідні файли (Excel з товарами тощо) — не комітимо
+input/

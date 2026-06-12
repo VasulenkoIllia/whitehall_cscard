@@ -48,6 +48,32 @@ export async function apiFetch(path, options = {}) {
   return json;
 }
 
+/**
+ * apiUpload — multipart upload (FormData). Окремо від apiFetch, бо той
+ * примусово ставить Content-Type: application/json, що ламає multipart
+ * (browser сам виставляє boundary).
+ */
+export async function apiUpload(path, formData, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    body: formData,
+    ...options
+  });
+
+  const json = await readJsonSafe(response);
+  if (!response.ok) {
+    if (response.status === 401) {
+      redirectToLogin();
+    }
+    const message = json?.error || `${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return json;
+}
+
 export function isRetryableApiError(error) {
   if (!error) {
     return false;
