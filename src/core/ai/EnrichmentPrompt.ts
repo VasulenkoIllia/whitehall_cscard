@@ -168,66 +168,66 @@ AEO/SEO:
 
 САМОПЕРЕВІРКА опису: [ ] перше речення самодостатнє; [ ] жодного вигаданого
 атрибута; [ ] ~180–250 слів без «вати»; [ ] немає списку характеристик у тексті;
-[ ] закриття м'яке. Конфлікт даних (КРОК 0) → value: null + warning.
+[ ] закриття м'яке. Конфлікт даних (КРОК 0) → пропусти поле опису + warning.
+
+═══════════════════════════════════════════════════════════════════════════
+ПРИКЛАДИ НОРМАЛІЗАЦІЇ (приводь значення до канонічного вигляду)
+═══════════════════════════════════════════════════════════════════════════
+* Стать: "Чол."/"чоловічий"/"M"/"муж" → "Чоловіча"; "Жін."/"жен."/"W"/"F" → "Жіноча";
+  "J"/"Junior"/"дитячий"/"kids" → "Дитяча"; "уні"/"unisex" → "Унісекс".
+* Колір: "Black"/"Черный"/"чорн." → "Чорний"; дубль мовами "Синій; синий" → "Синій";
+  склад. кольори через дефіс "Чорно-білий".
+* Країна: "Виготовлено в Китаї"/"Made in China"/"КНР"/"Китай(КНР)" → "Китай";
+  "Вьетнам"/"Vietnam" → "Вʼєтнам"; "Made in Italy" → "Італія".
+* Матеріал: прибери префікси "Склад:"/"Матеріал:" і службове; "100% cotton" →
+  "100% бавовна"; "Synthetic"/"синтетика" → "Синтетика".
+* Сезон: "Demi"/"демисезон"/"всесезон-? " → "Демісезон"; "SS"/"літо" → "Літо";
+  "FW"/"зима" → "Зима".
+* Бренд/модель: лиши латиницею як в оригіналі ("Nike", "Air Force 1"), не транслітеруй.
+* Тип/вид: визнач за товаром, не за випадковим полем (див. КРОК 0).
 
 ═══════════════════════════════════════════════════════════════════════════
 ПРАВИЛА ЗАПОВНЕННЯ
 ═══════════════════════════════════════════════════════════════════════════
-* Немає даних для поля / поле не релевантне типу товару (material_sole для куртки) →
-  value: null, confidence: 0.
 * confidence калібруй чесно:
   - 0.95+ — точна копія з даних + впевнена нормалізація
   - 0.7-0.94 — є дані, треба інтерпретувати/перекласти
   - 0.4-0.7 — здогад на основі непрямих даних
-  - <0.4 — невпевнений → краще null
-* source_feed — ключ із feed_params звідки взято. source_field — поле у data.
-* reasoning — 1-2 речення, як вирішив.
+  - <0.4 — невпевнений → краще пропусти поле
 
 ═══════════════════════════════════════════════════════════════════════════
-ФОРМАТ ВИВОДУ
+ФОРМАТ ВИВОДУ (ЕКОНОМНИЙ — суворо дотримуйся)
 ═══════════════════════════════════════════════════════════════════════════
-Поверни РІВНО ОДИН JSON-обʼєкт виду (для одного товару). Включай УСІ 23 поля;
-відсутні/нерелевантні → value: null, confidence: 0. source_feed/source_field/reasoning —
-опційні, але бажані. Приклад (взуття):
+Поверни РІВНО ОДИН JSON-обʼєкт. Щоб не палити токени:
+* Кожне поле — ТІЛЬКИ { "value": ..., "confidence": ... }. БЕЗ source_feed,
+  source_field, reasoning — вони не потрібні.
+* Поля, для яких немає даних / не релевантні / непевні — ПРОСТО ПРОПУСТИ
+  (НЕ включай у fields). Не виводь value:null.
+* Жодного зайвого тексту поза JSON.
+Приклад (взуття; наведено лише заповнені поля):
 {
   "sku": "ABC-123",
   "fields": {
-    "name_uk": { "value": "Кросівки Adidas Stan Smith White", "confidence": 0.96,
-                 "source_feed": "excel_upload", "source_field": "name_uk",
-                 "reasoning": "Нормалізовано; містить тип + бренд + модель." },
-    "brand": { "value": "Adidas", "confidence": 0.99, "source_field": "brand",
-               "reasoning": "Точна копія." },
-    "category_uk": { "value": "Чоловіки/Взуття/Кросівки", "confidence": 0.85,
-                     "source_field": "category_uk", "reasoning": "Шлях із категорії." },
-    "photo": { "value": null, "confidence": 0, "reasoning": "У даних немає URL фото." },
-    "description_full_uk": { "value": "<SEO-проза ~180-250 слів за структурою вище>",
-                             "confidence": 0.85,
-                             "reasoning": "Згенеровано за SEO/AEO-структурою з наявних фактів." },
-    "old_price": { "value": null, "confidence": 0, "reasoning": "Старої ціни немає." },
-    "product_kind": { "value": "Взуття", "confidence": 0.95, "reasoning": "Тип = кросівки." },
-    "product_type": { "value": "Кросівки", "confidence": 0.95, "source_field": "product_type" },
-    "color_uk": { "value": "Білий", "confidence": 0.9, "source_field": "color_uk",
-                  "reasoning": "Нормалізовано укр.; прибрано дубль мовами." },
-    "model_name": { "value": "Stan Smith", "confidence": 0.9, "source_field": "model_name" },
-    "gender": { "value": "Чоловіча", "confidence": 0.8, "reasoning": "Нормалізовано з 'Чол.'." },
-    "style": { "value": "Casual", "confidence": 0.6, "reasoning": "Здогад за типом моделі." },
-    "material": { "value": "Натуральна шкіра", "confidence": 0.85, "source_field": "material" },
-    "material_top": { "value": "Натуральна шкіра", "confidence": 0.7, "reasoning": "Верх зі шкіри." },
-    "material_inner": { "value": null, "confidence": 0, "reasoning": "Немає даних про підкладку." },
-    "material_sole": { "value": "Гума", "confidence": 0.6, "reasoning": "Типова підошва моделі." },
-    "toe_shape": { "value": "Круглий", "confidence": 0.5, "reasoning": "Здогад за силуетом." },
-    "fastening": { "value": "Шнурки", "confidence": 0.7, "reasoning": "Класична модель на шнурках." },
-    "purpose": { "value": "Повсякденне", "confidence": 0.7, "source_field": "purpose" },
-    "season": { "value": "Демісезон", "confidence": 0.5, "reasoning": "Здогад за типом." },
-    "season_year": { "value": null, "confidence": 0, "reasoning": "Рік не вказано." },
-    "country": { "value": "Вʼєтнам", "confidence": 0.8, "source_field": "country",
-                 "reasoning": "Нормалізовано з 'Виготовлено у Вʼєтнамі'." },
-    "gtin": { "value": "1940123456789", "confidence": 0.95, "source_field": "gtin",
-              "reasoning": "Точна копія штрихкоду." }
+    "name_uk": { "value": "Кросівки Adidas Stan Smith White", "confidence": 0.96 },
+    "brand": { "value": "Adidas", "confidence": 0.99 },
+    "category_uk": { "value": "Чоловіки/Взуття/Кросівки", "confidence": 0.85 },
+    "description_full_uk": { "value": "<SEO-проза ~180-250 слів за структурою вище>", "confidence": 0.85 },
+    "product_kind": { "value": "Взуття", "confidence": 0.95 },
+    "product_type": { "value": "Кросівки", "confidence": 0.95 },
+    "color_uk": { "value": "Білий", "confidence": 0.9 },
+    "model_name": { "value": "Stan Smith", "confidence": 0.9 },
+    "gender": { "value": "Чоловіча", "confidence": 0.8 },
+    "material": { "value": "Натуральна шкіра", "confidence": 0.85 },
+    "fastening": { "value": "Шнурки", "confidence": 0.7 },
+    "purpose": { "value": "Повсякденне", "confidence": 0.7 },
+    "country": { "value": "Вʼєтнам", "confidence": 0.8 },
+    "gtin": { "value": "1940123456789", "confidence": 0.95 }
   },
   "overall_confidence": 0.82,
   "warnings": []
 }
+(тут пропущено photo, old_price, style, material_top/inner/sole, toe_shape,
+season, season_year — для них не було даних.)
 Для batch-режиму — оберни масив таких обʼєктів у { "results": [ ... ] } у тому ж
 порядку, що й items.
 `;
