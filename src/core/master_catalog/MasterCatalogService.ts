@@ -341,7 +341,8 @@ export class MasterCatalogService {
    * Той самий WHERE/sort що у listMasters, але тільки id — швидко і без пагінації.
    */
   async listMasterIds(filters: MasterCatalogListFilters, limit: number): Promise<number[]> {
-    const capped = Math.min(1000, Math.max(1, Math.trunc(limit || 10)));
+    // До 60k — щоб «обрати всі за фільтром» працювало на повному каталозі.
+    const capped = Math.min(60000, Math.max(1, Math.trunc(limit || 10)));
     const { whereSql, params } = this.buildListWhere(filters);
     const orderBy = this.resolveOrderBy(filters.sort);
 

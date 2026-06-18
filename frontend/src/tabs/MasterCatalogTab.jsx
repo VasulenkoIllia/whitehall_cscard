@@ -38,24 +38,23 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   // Глобальний прогрес каталогу (всього / AI / у черзі / лишилось):
   const [catalogStats, setCatalogStats] = useState(null);
 
+  // Спільні параметри фільтра (для списку І для вибору) — щоб «що бачу, те й
+  // обираю». hasAi: 'true'=опрацьовані, 'false'=не опрацьовані, 'pending'=у черзі.
+  const filterParams = useCallback(() => {
+    const p = new URLSearchParams({ sort });
+    if (search.trim()) p.set('search', search.trim());
+    if (hasFeed) p.set('hasFeed', hasFeed);
+    if (hasAi === 'true' || hasAi === 'false') p.set('hasAi', hasAi);
+    if (hasAi === 'pending') p.set('pendingBatch', 'true');
+    return p;
+  }, [search, hasFeed, hasAi, sort]);
+
   const loadList = useCallback(async () => {
     setStatus('Завантаження...');
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        sort
-      });
-      if (search.trim()) params.set('search', search.trim());
-      if (hasFeed) params.set('hasFeed', hasFeed);
-      // hasAi: 'true'/'false' — класика; 'pending' — у черзі batch;
-      // 'fresh' — без AI і не в черзі (безпечно відправляти).
-      if (hasAi === 'true' || hasAi === 'false') params.set('hasAi', hasAi);
-      if (hasAi === 'pending') params.set('pendingBatch', 'true');
-      if (hasAi === 'fresh') {
-        params.set('hasAi', 'false');
-        params.set('pendingBatch', 'false');
-      }
+      const params = filterParams();
+      params.set('page', String(page));
+      params.set('pageSize', String(pageSize));
       const data = await apiFetch(`/master-catalog?${params.toString()}`);
       setRows(Array.isArray(data?.rows) ? data.rows : []);
       setTotal(Number(data?.total || 0));
@@ -66,7 +65,7 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     } catch (err) {
       setStatus(`Помилка: ${err?.message || 'unknown'}`);
     }
-  }, [apiFetch, page, pageSize, search, hasFeed, hasAi, sort]);
+  }, [apiFetch, filterParams, page, pageSize]);
 
   useEffect(() => { void loadList(); }, [loadList]);
 
@@ -107,10 +106,11 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       alert('Оберіть SKU з feed для async batch.');
       return;
     }
+    const chunks = Math.ceil(candidates.length / 5000);
     if (!window.confirm(
       `Submit ${candidates.length} SKU у Anthropic Batch API (async)?\n` +
-      `Це повертає batch_id одразу, але результат буде через 1-24 години.\n` +
-      `Ціна -50% від звичайних викликів.`
+      (chunks > 1 ? `Розіб'ється на ${chunks} батчі (ліміт розміру).\n` : '') +
+      `Результат через 1-24 години. Ціна -50% + кеш.`
     )) return;
     setAsyncSubmitting(true);
     try {
@@ -119,9 +119,10 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         body: JSON.stringify({ masterIds: candidates, model: aiModel })
       });
       const skippedNote = result.skippedPending > 0
-        ? `\n⚠ ${result.skippedPending} SKU пропущено — вже в черзі іншого batch (захист від подвійної оплати).`
+        ? `\n⚠ ${result.skippedPending} вже в черзі — пропущено (захист від подвійної оплати).`
         : '';
-      alert(`Submitted! batch_id=${result.batchId}, items=${result.itemsCount}${skippedNote}`);
+      const nB = (result.batches || []).length;
+      alert(`Відправлено ${result.itemsCount} SKU у ${nB} батч${nB === 1 ? '' : 'і'}.${skippedNote}`);
       setSelectedIds(new Set());
       await loadAsyncBatches();
       await loadList();
@@ -195,7 +196,7 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     }
   };
 
-  // ─── Checkbox helpers ──────────────────────────────────────────────────────
+  // ─── Вибір SKU ─────────────────────────────────────────────────────────────
   const toggleOne = (id) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -211,47 +212,20 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       return next;
     });
   };
-  const selectVisibleWithFeed = () => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const r of rows) {
-        if (r.feed_matched_at) next.add(Number(r.id));
-      }
-      return next;
-    });
-  };
-  const selectVisibleWithFeedNoAi = () => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const r of rows) {
-        if (r.feed_matched_at && !r.ai_enriched_at) next.add(Number(r.id));
-      }
-      return next;
-    });
-  };
   const clearSelection = () => setSelectedIds(new Set());
 
-  // "Обрати перші N" — бере id з сервера (не тільки видиму сторінку).
-  // Завжди тільки СВІЖІ: з фідом, без AI, не в активному batch — щоб
-  // неможливо було випадково відправити ті самі SKU вдруге.
-  const selectFirstN = async () => {
+  // Обрати id за ПОТОЧНИМ фільтром (limit=null → усі, що відповідають фільтру).
+  // «Що бачу в таблиці, те й обираю» — без гортання сторінок.
+  const selectByFilter = async (limit) => {
     if (selectingFirstN) return;
     setSelectingFirstN(true);
     try {
-      const params = new URLSearchParams({
-        limit: String(selectCount),
-        hasFeed: 'true',
-        hasAi: 'false',
-        pendingBatch: 'false',
-        sort
-      });
-      if (search.trim()) params.set('search', search.trim());
+      const params = filterParams();
+      params.set('limit', String(limit || 60000));
       const data = await apiFetch(`/master-catalog/ids?${params.toString()}`);
       const ids = Array.isArray(data?.ids) ? data.ids.map(Number) : [];
       setSelectedIds(new Set(ids));
-      if (ids.length === 0) {
-        alert('Свіжих SKU нема: всі з фідом вже опрацьовані AI або в черзі batch.');
-      }
+      if (ids.length === 0) alert('За поточним фільтром SKU немає.');
     } catch (err) {
       alert('Помилка: ' + (err?.message || 'unknown'));
     } finally {
@@ -416,13 +390,12 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           </select>
         </div>
         <div>
-          <label>AI</label>
+          <label>Статус AI</label>
           <select value={hasAi} onChange={(e) => { setHasAi(e.target.value); setPage(1); }}>
             <option value="">Усі</option>
-            <option value="true">🤖 Опрацьовано AI</option>
-            <option value="fresh">✨ Свіжі (без AI, не в черзі)</option>
-            <option value="pending">⏳ У черзі (batch)</option>
-            <option value="false">Не опрацьовано (вкл. чергу)</option>
+            <option value="false">✨ Не опрацьовані</option>
+            <option value="true">🤖 Опрацьовані</option>
+            <option value="pending">⏳ У черзі</option>
           </select>
         </div>
         <div>
@@ -456,33 +429,32 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       <div style={{ border: '1px solid #4a90e2', borderRadius: 6, padding: 10, marginBottom: 12, background: '#f0f7ff' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           <strong>🤖 Batch AI Enrichment</strong>
-          <span style={{ fontSize: 11, color: '#666' }}>
-            Обрано: <b>{selectedIds.size}</b> SKU
+          <span style={{ fontSize: 12, color: '#333' }}>
+            Обрано: <b>{selectedIds.size}</b> · за фільтром: <b>{total}</b>
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid #4a90e2', borderRadius: 4, padding: '2px 6px', background: 'white' }}>
-            <span style={{ fontSize: 12 }}>Обрати перші</span>
+          <span style={{ color: '#bbb' }}>|</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+            Обрати перші
             <select value={selectCount} onChange={(e) => setSelectCount(Number(e.target.value))} style={{ fontSize: 12 }}>
-              <option value={10}>10</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
+              <option value={500}>500</option>
+              <option value={1000}>1000</option>
             </select>
-            <button
-              className="btn btn-sm primary"
-              onClick={selectFirstN}
-              disabled={selectingFirstN}
-              title="Обрати перші N SKU з фідом за поточними фільтрами (пошук, AI, сортування) — з усього каталогу, не тільки видимої сторінки"
-            >
-              {selectingFirstN ? '⏳' : '✓ Обрати'}
+            <button className="btn btn-sm" onClick={() => selectByFilter(selectCount)} disabled={selectingFirstN}>
+              {selectingFirstN ? '⏳' : 'Обрати'}
             </button>
           </span>
-          <button className="btn btn-sm" onClick={selectVisibleWithFeedNoAi} disabled={rows.length === 0}>
-            Обрати видимі з feed без AI
+          <button
+            className="btn btn-sm primary"
+            onClick={() => selectByFilter(null)}
+            disabled={selectingFirstN || total === 0}
+            title="Обрати ВСІ SKU, що відповідають поточному фільтру (з усього каталогу, без гортання)"
+          >
+            ✓ Обрати ВСІ за фільтром ({total})
           </button>
-          <button className="btn btn-sm" onClick={selectVisibleWithFeed} disabled={rows.length === 0}>
-            Обрати всі видимі з feed
-          </button>
-          <button className="btn btn-sm" onClick={selectAllVisible} disabled={rows.length === 0}>
-            Обрати всі видимі
+          <button className="btn btn-sm" onClick={selectAllVisible} disabled={rows.length === 0} title="Лише видиму сторінку">
+            Видимі
           </button>
           <button className="btn btn-sm" onClick={clearSelection} disabled={selectedIds.size === 0}>
             Очистити

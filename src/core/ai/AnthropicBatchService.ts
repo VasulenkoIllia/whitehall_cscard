@@ -25,8 +25,9 @@ export interface SubmitOptions {
 }
 
 export interface BatchSubmitResult {
-  batchId: number;        // local DB id
-  externalId: string;     // anthropic 'msgbatch_...'
+  /** Створені батчі (великий submit ділиться на чанки — ліміт Anthropic 256MB/батч). */
+  batches: Array<{ batchId: number; externalId: string; itemsCount: number }>;
+  /** Скільки SKU реально відправлено (сума по всіх чанках). */
   itemsCount: number;
   modelVersion: string;
   /** SKU відкинуті бо вже сидять в іншому активному batch (захист від подвійної оплати). */
@@ -155,30 +156,40 @@ export class AnthropicBatchService {
       throw new Error('Жоден з SKU не має feed_params — нічого відправляти');
     }
 
-    // Submit до Anthropic.
-    const batchResponse = await this.client.submitBatch(requests);
-
-    // DB record.
-    const insertRes = await this.pool.query<{ id: number }>(
-      `INSERT INTO anthropic_batches
-         (external_id, operation, status, model_version, master_ids,
-          items_count, last_anthropic_response, submitted_at, prompt_version)
-       VALUES ($1, 'enrich_batch', $2, $3, $4::bigint[], $5, $6::jsonb, NOW(), $7)
-       RETURNING id::int AS id`,
-      [
-        batchResponse.id,
-        batchResponse.processing_status,
-        model,
-        validIds,
-        requests.length,
-        JSON.stringify(batchResponse),
-        promptSetting.version
-      ]
-    );
+    // Anthropic batch limit — 256MB / 100k requests. Кожен запит несе повний
+    // system-промпт (~19KB), тож ділимо великий submit на чанки по CHUNK,
+    // створюючи окремий batch на кожен.
+    const CHUNK = 5000;
+    const batches: Array<{ batchId: number; externalId: string; itemsCount: number }> = [];
+    for (let i = 0; i < requests.length; i += CHUNK) {
+      const chunkReqs = requests.slice(i, i + CHUNK);
+      const chunkIds = validIds.slice(i, i + CHUNK);
+      const batchResponse = await this.client.submitBatch(chunkReqs);
+      const insertRes = await this.pool.query<{ id: number }>(
+        `INSERT INTO anthropic_batches
+           (external_id, operation, status, model_version, master_ids,
+            items_count, last_anthropic_response, submitted_at, prompt_version)
+         VALUES ($1, 'enrich_batch', $2, $3, $4::bigint[], $5, $6::jsonb, NOW(), $7)
+         RETURNING id::int AS id`,
+        [
+          batchResponse.id,
+          batchResponse.processing_status,
+          model,
+          chunkIds,
+          chunkReqs.length,
+          JSON.stringify(batchResponse),
+          promptSetting.version
+        ]
+      );
+      batches.push({
+        batchId: Number(insertRes.rows[0].id),
+        externalId: batchResponse.id,
+        itemsCount: chunkReqs.length
+      });
+    }
 
     return {
-      batchId: Number(insertRes.rows[0].id),
-      externalId: batchResponse.id,
+      batches,
       itemsCount: requests.length,
       modelVersion: model,
       skippedPending,
