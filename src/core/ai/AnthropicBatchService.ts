@@ -114,41 +114,35 @@ export class AnthropicBatchService {
       throw err;
     }
 
-    // Завантажуємо masters + feeds.options для filtered feed_params.
+    // Завантажуємо masters. Зайві колонки вже відкинуто на Excel-імпорті.
     const mastersRes = await this.pool.query<{
       id: number;
       sku: string;
       feed_params: Record<string, unknown> | null;
     }>(`SELECT id, sku, feed_params FROM master_catalog WHERE id = ANY($1::bigint[])`, [freshIds]);
 
-    const feedsRes = await this.pool.query<{ name: string; options: { excluded_fields?: unknown } | null }>(
-      `SELECT name, options FROM feeds`
-    );
-    const excludedByFeed: Record<string, Set<string>> = {};
-    for (const r of feedsRes.rows) {
-      const ex = Array.isArray(r.options?.excluded_fields)
-        ? (r.options!.excluded_fields as unknown[]).filter((x): x is string => typeof x === 'string')
-        : [];
-      excludedByFeed[r.name] = new Set(ex);
-    }
+    // Статичний system — однаковий для всіх запитів батча, з cache_control:
+    // перший запит пише кеш, решта читають (~0.1× ціни).
+    const systemBlocks = [
+      { type: 'text' as const, text: buildJsonOnlySystem(promptSetting.prompt), cache_control: { type: 'ephemeral' as const } }
+    ];
 
     // Будуємо BatchRequest[] — 1 на SKU.
     const requests: BatchRequest[] = [];
     const validIds: number[] = [];
     for (const m of mastersRes.rows) {
       if (!m.feed_params || Object.keys(m.feed_params).length === 0) continue;
-      const filtered = filterFeedParams(m.feed_params, excludedByFeed);
       requests.push({
         custom_id: `master_${m.id}`,
         params: {
           model,
           max_tokens: 4096,
           temperature: 0,
-          system: buildJsonOnlySystem(promptSetting.prompt),
+          system: systemBlocks,
           messages: [
             {
               role: 'user',
-              content: buildEnrichmentUserMessage({ sku: m.sku, feedParams: filtered })
+              content: buildEnrichmentUserMessage({ sku: m.sku, feedParams: m.feed_params })
             }
           ]
         }
@@ -265,6 +259,8 @@ export class AnthropicBatchService {
 
     let totalInput = 0;
     let totalOutput = 0;
+    let totalCacheCreation = 0;
+    let totalCacheRead = 0;
     let totalFieldsWritten = 0;
     const threshold = options.confidenceThreshold ?? 0.4;
     const overwrite = options.overwriteExisting ?? false;
@@ -285,6 +281,8 @@ export class AnthropicBatchService {
       const usage = msg.usage || { input_tokens: 0, output_tokens: 0 };
       totalInput += usage.input_tokens || 0;
       totalOutput += usage.output_tokens || 0;
+      totalCacheCreation += usage.cache_creation_input_tokens || 0;
+      totalCacheRead += usage.cache_read_input_tokens || 0;
 
       const text = (msg.content || [])
         .filter((c) => c.type === 'text' && typeof c.text === 'string')
@@ -322,9 +320,11 @@ export class AnthropicBatchService {
       totalFieldsWritten += written;
     }
 
-    // Розрахунок cost (з -50% Batch API discount).
+    // Розрахунок cost (з -50% Batch API discount + кеш-токени).
     const { calculateCostUsd } = await import('./AiUsageService');
-    const cost = calculateCostUsd(rec.model_version, totalInput, totalOutput, true);
+    const cost = calculateCostUsd(
+      rec.model_version, totalInput, totalOutput, true, totalCacheCreation, totalCacheRead
+    );
 
     await this.pool.query(
       `UPDATE anthropic_batches SET
@@ -341,6 +341,8 @@ export class AnthropicBatchService {
       masterIds: rec.master_ids,
       inputTokens: totalInput,
       outputTokens: totalOutput,
+      cacheCreationInputTokens: totalCacheCreation,
+      cacheReadInputTokens: totalCacheRead,
       durationMs: 0, // async — не вимірюємо.
       isBatchApi: true,
       fieldsWritten: totalFieldsWritten
@@ -437,30 +439,4 @@ function buildJsonOnlySystem(base: string): string {
     '4. Use double quotes for all strings.',
     '5. If you are uncertain about a field, return null + a "reasoning" explaining why.'
   ].join('\n');
-}
-
-function filterFeedParams(
-  feedParams: Record<string, unknown>,
-  excludedByFeed: Record<string, Set<string>>
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [feedName, feedEntry] of Object.entries(feedParams)) {
-    const excluded = excludedByFeed[feedName] || new Set<string>();
-    if (excluded.size === 0 || !feedEntry || typeof feedEntry !== 'object') {
-      out[feedName] = feedEntry;
-      continue;
-    }
-    const entry = feedEntry as Record<string, unknown>;
-    const data = entry.data;
-    if (!data || typeof data !== 'object') {
-      out[feedName] = entry;
-      continue;
-    }
-    const filtered: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-      if (!excluded.has(k)) filtered[k] = v;
-    }
-    out[feedName] = { ...entry, data: filtered };
-  }
-  return out;
 }

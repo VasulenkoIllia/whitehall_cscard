@@ -21,6 +21,7 @@ interface ModelPricing {
 
 const PRICING_TABLE: Record<string, ModelPricing> = {
   'claude-haiku-4-5': { inputPerMtok: 1.0, outputPerMtok: 5.0 },
+  'claude-sonnet-4-6': { inputPerMtok: 3.0, outputPerMtok: 15.0 },
   'claude-sonnet-4-5': { inputPerMtok: 3.0, outputPerMtok: 15.0 },
   'claude-opus-4': { inputPerMtok: 15.0, outputPerMtok: 75.0 },
   // Старі моделі (для сумісності якщо хтось ще їх використовує):
@@ -28,26 +29,42 @@ const PRICING_TABLE: Record<string, ModelPricing> = {
   'claude-sonnet-3-7': { inputPerMtok: 3.0, outputPerMtok: 15.0 }
 };
 
+// Prompt caching множники до ціни input.
+const CACHE_WRITE_MULT = 1.25; // 5-хв ephemeral write
+const CACHE_READ_MULT = 0.1; // read
+
 function resolveModelPricing(modelVersion: string): ModelPricing {
   // modelVersion типу 'claude-haiku-4-5-20251001' — обріжемо timestamp suffix.
   for (const key of Object.keys(PRICING_TABLE)) {
     if (modelVersion.startsWith(key)) return PRICING_TABLE[key];
   }
   // Default — найдорожче (краще overestimate ніж underestimate).
-  return PRICING_TABLE['claude-sonnet-4-5'];
+  return PRICING_TABLE['claude-sonnet-4-6'];
 }
 
+/**
+ * Точна вартість з урахуванням prompt caching.
+ *   inputTokens         — некешований input (повна ціна).
+ *   cacheCreationTokens — записані в кеш (1.25× input).
+ *   cacheReadTokens     — прочитані з кешу (0.1× input).
+ * Batch API: -50% на все.
+ */
 export function calculateCostUsd(
   modelVersion: string,
   inputTokens: number,
   outputTokens: number,
-  isBatchApi = false
+  isBatchApi = false,
+  cacheCreationTokens = 0,
+  cacheReadTokens = 0
 ): number {
   const pricing = resolveModelPricing(modelVersion);
   const discount = isBatchApi ? 0.5 : 1.0;
-  const inputCost = (inputTokens / 1_000_000) * pricing.inputPerMtok * discount;
-  const outputCost = (outputTokens / 1_000_000) * pricing.outputPerMtok * discount;
-  return Number((inputCost + outputCost).toFixed(6));
+  const m = 1_000_000;
+  const inputCost = (inputTokens / m) * pricing.inputPerMtok;
+  const cacheWriteCost = (cacheCreationTokens / m) * pricing.inputPerMtok * CACHE_WRITE_MULT;
+  const cacheReadCost = (cacheReadTokens / m) * pricing.inputPerMtok * CACHE_READ_MULT;
+  const outputCost = (outputTokens / m) * pricing.outputPerMtok;
+  return Number(((inputCost + cacheWriteCost + cacheReadCost + outputCost) * discount).toFixed(6));
 }
 
 export interface LogUsageInput {
@@ -60,24 +77,31 @@ export interface LogUsageInput {
   isBatchApi?: boolean;
   fieldsWritten?: number | null;
   userId?: string | null;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 export class AiUsageService {
   constructor(private readonly pool: Pool) {}
 
   async log(input: LogUsageInput): Promise<{ id: number; costUsd: number }> {
+    const cacheCreation = input.cacheCreationInputTokens ?? 0;
+    const cacheRead = input.cacheReadInputTokens ?? 0;
     const costUsd = calculateCostUsd(
       input.modelVersion,
       input.inputTokens,
       input.outputTokens,
-      input.isBatchApi ?? false
+      input.isBatchApi ?? false,
+      cacheCreation,
+      cacheRead
     );
     const res = await this.pool.query<{ id: number }>(
       `INSERT INTO ai_usage_log
          (operation, model_version, master_ids, items_count,
           input_tokens, output_tokens, cost_usd, duration_ms,
-          is_batch_api, fields_written, user_id)
-       VALUES ($1, $2, $3::bigint[], $4, $5, $6, $7, $8, $9, $10, $11)
+          is_batch_api, fields_written, user_id,
+          cache_creation_input_tokens, cache_read_input_tokens)
+       VALUES ($1, $2, $3::bigint[], $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING id::int AS id`,
       [
         input.operation,
@@ -90,7 +114,9 @@ export class AiUsageService {
         input.durationMs,
         input.isBatchApi ?? false,
         input.fieldsWritten ?? null,
-        input.userId ?? null
+        input.userId ?? null,
+        cacheCreation,
+        cacheRead
       ]
     );
     return { id: Number(res.rows[0].id), costUsd };

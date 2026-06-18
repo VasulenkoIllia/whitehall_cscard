@@ -26,7 +26,7 @@ export interface EnrichOptions {
   confidenceThreshold?: number;
   /** Якщо true — переписуємо існуючі значення. Default false (лишаємо те що було). */
   overwriteExisting?: boolean;
-  /** Модель. Default з env ANTHROPIC_MODEL_ENRICHMENT або 'claude-sonnet-4-5'. */
+  /** Модель. Default з env ANTHROPIC_MODEL_ENRICHMENT або 'claude-haiku-4-5'. */
   model?: string;
 }
 
@@ -66,35 +66,6 @@ export interface BatchEnrichOptions extends EnrichOptions {
   batchSize?: number;
 }
 
-/**
- * Фільтрує feed_params, видаляючи з .data ключі що у excludedByFeed[feed_name].
- * Структура feed_params: { feed_name: { imported_at, feed_id, data: {...} } }
- */
-function filterFeedParams(
-  feedParams: Record<string, unknown>,
-  excludedByFeed: Record<string, Set<string>>
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [feedName, feedEntry] of Object.entries(feedParams)) {
-    const excluded = excludedByFeed[feedName] || new Set<string>();
-    if (excluded.size === 0 || !feedEntry || typeof feedEntry !== 'object') {
-      out[feedName] = feedEntry;
-      continue;
-    }
-    const entry = feedEntry as Record<string, unknown>;
-    const data = entry.data;
-    if (!data || typeof data !== 'object') {
-      out[feedName] = entry;
-      continue;
-    }
-    const filteredData: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-      if (!excluded.has(k)) filteredData[k] = v;
-    }
-    out[feedName] = { ...entry, data: filteredData };
-  }
-  return out;
-}
 
 export class EnrichmentService {
   constructor(
@@ -119,8 +90,7 @@ export class EnrichmentService {
   }
 
   /**
-   * Повертає сирий promptq без відправки в AI — для UI preview / дебагу.
-   * Враховує feeds.options.excluded_fields так само як справжній виклик.
+   * Повертає сирий prompt без відправки в AI — для UI preview / дебагу.
    */
   async previewPrompt(masterId: number): Promise<{
     systemPrompt: string;
@@ -139,20 +109,9 @@ export class EnrichmentService {
     }
     const master = masterRes.rows[0];
 
-    // Завантажимо excluded fields per feed.
-    const feedsRes = await this.pool.query<{ name: string; options: { excluded_fields?: unknown } | null }>(
-      `SELECT name, options FROM feeds`
-    );
-    const excludedByFeed: Record<string, Set<string>> = {};
-    for (const r of feedsRes.rows) {
-      const ex = Array.isArray(r.options?.excluded_fields)
-        ? (r.options!.excluded_fields as unknown[]).filter((x): x is string => typeof x === 'string')
-        : [];
-      excludedByFeed[r.name] = new Set(ex);
-    }
-    const filtered = master.feed_params
-      ? filterFeedParams(master.feed_params, excludedByFeed)
-      : null;
+    // Зайві колонки відкидаються ще на етапі Excel-імпорту, тому feed_params
+    // йде в AI як є.
+    const filtered = master.feed_params || null;
 
     const userMessage = buildEnrichmentUserMessage({
       sku: master.sku,
@@ -195,7 +154,7 @@ export class EnrichmentService {
 
     if (!master.feed_params || Object.keys(master.feed_params).length === 0) {
       const err = new Error(
-        `Master #${masterId} (sku=${master.sku}) не має feed_params — імпортуй фіди спершу`
+        `Master #${masterId} (sku=${master.sku}) не має даних — завантаж Excel спершу`
       );
       (err as { status?: number }).status = 422;
       throw err;
@@ -203,26 +162,9 @@ export class EnrichmentService {
 
     const threshold = options.confidenceThreshold ?? 0.4;
     const overwrite = options.overwriteExisting ?? false;
-    const model = options.model || this.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5';
+    const model = options.model || this.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-haiku-4-5';
 
-    // 1.5. Загрузити налаштування фідів — нам треба знати які поля виключити
-    //      з кожного feed_params.<feed_name>.data перед відправкою в AI.
-    //      Зменшує токени значно (наприклад description у shopua = ~1-3K tokens).
-    const feedsRes = await this.pool.query<{ name: string; options: { excluded_fields?: unknown } | null }>(
-      `SELECT name, options FROM feeds`
-    );
-    const excludedByFeed: Record<string, Set<string>> = {};
-    for (const row of feedsRes.rows) {
-      const excluded = Array.isArray(row.options?.excluded_fields)
-        ? (row.options!.excluded_fields as unknown[])
-            .filter((x): x is string => typeof x === 'string')
-            .map((x) => x.trim())
-            .filter((x) => x.length > 0)
-        : [];
-      excludedByFeed[row.name] = new Set(excluded);
-    }
-    const filteredFeedParams = filterFeedParams(master.feed_params, excludedByFeed);
-
+    // Зайві колонки відкинуто на Excel-імпорті — feed_params іде в AI як є.
     // 2. Call AI.
     const promptSetting = await this.resolvePrompt();
     const response = await this.anthropic.send<MasterEnrichmentResult>({
@@ -230,7 +172,7 @@ export class EnrichmentService {
       systemPrompt: promptSetting.prompt,
       userMessage: buildEnrichmentUserMessage({
         sku: master.sku,
-        feedParams: filteredFeedParams
+        feedParams: master.feed_params
       }),
       jsonOutput: true,
       maxTokens: 4096,
@@ -310,6 +252,8 @@ export class EnrichmentService {
           masterIds: [masterId],
           inputTokens: response.inputTokens,
           outputTokens: response.outputTokens,
+          cacheCreationInputTokens: response.cacheCreationInputTokens,
+          cacheReadInputTokens: response.cacheReadInputTokens,
           durationMs: response.durationMs,
           fieldsWritten
         })
@@ -359,7 +303,7 @@ export class EnrichmentService {
     const batchSize = Math.min(25, Math.max(1, Math.trunc(options.batchSize || 10)));
     const threshold = options.confidenceThreshold ?? 0.4;
     const overwrite = options.overwriteExisting ?? false;
-    const model = options.model || this.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5';
+    const model = options.model || this.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-haiku-4-5';
 
     // Load all masters at once.
     const mastersRes = await this.pool.query<{
@@ -374,24 +318,13 @@ export class EnrichmentService {
     const mastersById = new Map<number, typeof mastersRes.rows[number]>();
     for (const row of mastersRes.rows) mastersById.set(Number(row.id), row);
 
-    // Load feeds.options.excluded_fields once.
-    const feedsRes = await this.pool.query<{ name: string; options: { excluded_fields?: unknown } | null }>(
-      `SELECT name, options FROM feeds`
-    );
-    const excludedByFeed: Record<string, Set<string>> = {};
-    for (const r of feedsRes.rows) {
-      const ex = Array.isArray(r.options?.excluded_fields)
-        ? (r.options!.excluded_fields as unknown[])
-            .filter((x): x is string => typeof x === 'string')
-        : [];
-      excludedByFeed[r.name] = new Set(ex);
-    }
-
     const promptSetting = await this.resolvePrompt();
 
     const startedAt = Date.now();
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
+    let totalCacheCreation = 0;
+    let totalCacheRead = 0;
     let totalFieldsWritten = 0;
     let modelVersion = model;
     const perItem: BatchEnrichResult['perItem'] = [];
@@ -420,7 +353,7 @@ export class EnrichmentService {
 
       const batchPayload = items.map((m) => ({
         sku: m.sku,
-        feedParams: filterFeedParams(m.feed_params!, excludedByFeed)
+        feedParams: m.feed_params!
       }));
 
       // Call AI for the chunk.
@@ -451,6 +384,8 @@ export class EnrichmentService {
 
       totalInputTokens += response.inputTokens;
       totalOutputTokens += response.outputTokens;
+      totalCacheCreation += response.cacheCreationInputTokens;
+      totalCacheRead += response.cacheReadInputTokens;
       modelVersion = response.modelVersion;
 
       const results = response.content?.results || [];
@@ -520,6 +455,8 @@ export class EnrichmentService {
           masterIds,
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,
+          cacheCreationInputTokens: totalCacheCreation,
+          cacheReadInputTokens: totalCacheRead,
           durationMs,
           fieldsWritten: totalFieldsWritten
         })

@@ -149,48 +149,6 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
     }
   );
 
-  // POST /admin/api/master-catalog/excel/import-direct — імпорт прямо в поля
-  // каталогу за зіставленням колонок (без AI, без feed_params).
-  app.post(
-    '/admin/api/master-catalog/excel/import-direct',
-    authMw.requireRole('admin'),
-    uploadSingleFile(),
-    async (req: Request, res: Response) => {
-      try {
-        const file = (req as Request & { file?: { buffer: Buffer } }).file;
-        if (!file || !file.buffer) {
-          res.status(400).json({ error: 'Файл відсутній (поле "file")' });
-          return;
-        }
-        const skuColumn = typeof req.body?.skuColumn === 'string' ? req.body.skuColumn.trim() : '';
-        if (!skuColumn) {
-          res.status(400).json({ error: 'skuColumn обовʼязковий' });
-          return;
-        }
-        let fieldMapping: unknown[] = [];
-        if (typeof req.body?.fieldMapping === 'string' && req.body.fieldMapping.trim()) {
-          try {
-            const parsed = JSON.parse(req.body.fieldMapping);
-            if (Array.isArray(parsed)) fieldMapping = parsed;
-          } catch {
-            res.status(400).json({ error: 'fieldMapping — невалідний JSON' });
-            return;
-          }
-        }
-        const result = await excelImportService.importDirectFields(file.buffer, {
-          skuColumn,
-          fieldMapping: fieldMapping as { field: string; columns: string[] }[],
-          updateOnly: req.body?.updateOnly === 'true' || req.body?.updateOnly === true,
-          overwriteFilled: !(req.body?.overwriteFilled === 'false' || req.body?.overwriteFilled === false),
-          sheetName: typeof req.body?.sheetName === 'string' && req.body.sheetName ? req.body.sheetName : undefined,
-          headerRow: parsePositiveInt(req.body?.headerRow) || undefined
-        });
-        res.json(result);
-      } catch (err) {
-        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'excel_import_direct_error') });
-      }
-    }
-  );
 
   // ─── Anthropic Batch API (async масштабна обробка) ─────────────────────────
 
@@ -291,7 +249,7 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
         res.json({
           enabled: Boolean(dbKey || envKey),
           keySource: dbKey ? 'db' : envKey ? 'env' : null,
-          model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-sonnet-4-5',
+          model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-haiku-4-5',
           promptIsCustom: prompt.isCustom,
           promptVersion: prompt.version
         });

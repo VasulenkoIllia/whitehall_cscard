@@ -14,13 +14,21 @@
 
 import fetch from 'node-fetch';
 
+/** System-блок з опційним cache_control для prompt caching. */
+export interface SystemCacheBlock {
+  type: 'text';
+  text: string;
+  cache_control?: { type: 'ephemeral' };
+}
+
 export interface BatchRequest {
   custom_id: string;
   params: {
     model: string;
     max_tokens: number;
     temperature?: number;
-    system?: string;
+    /** Рядок або масив блоків (для кешування статичної частини). */
+    system?: string | SystemCacheBlock[];
     messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   };
 }
@@ -57,7 +65,12 @@ export interface BatchResultEntry {
           model: string;
           stop_reason: string | null;
           stop_sequence: string | null;
-          usage: { input_tokens: number; output_tokens: number };
+          usage: {
+            input_tokens: number;
+            output_tokens: number;
+            cache_creation_input_tokens?: number;
+            cache_read_input_tokens?: number;
+          };
         };
       }
     | {

@@ -5,7 +5,7 @@
  *   ANTHROPIC_API_KEY           — fallback ключ. Runtime ключ з app_settings
  *                                 (через keyProvider) має пріоритет.
  *   ANTHROPIC_API_BASE          — default 'https://api.anthropic.com/v1'
- *   ANTHROPIC_MODEL_ENRICHMENT  — default 'claude-sonnet-4-5'
+ *   ANTHROPIC_MODEL_ENRICHMENT  — default 'claude-haiku-4-5'
  *   ANTHROPIC_MAX_RETRIES       — default 3
  *   ANTHROPIC_TIMEOUT_MS        — default 180000 (3 хв)
  */
@@ -28,6 +28,10 @@ export interface AnthropicMessageResult<T = unknown> {
   modelVersion: string;
   inputTokens: number;
   outputTokens: number;
+  /** Токени, записані в кеш цим запитом (~1.25× ціни). */
+  cacheCreationInputTokens: number;
+  /** Токени, прочитані з кешу (~0.1× ціни). */
+  cacheReadInputTokens: number;
   durationMs: number;
   rawResponse: unknown;
 }
@@ -77,11 +81,19 @@ export function createAnthropicClient(
     async send<T = unknown>(params: AnthropicMessageParams): Promise<AnthropicMessageResult<T>> {
       const apiKey = await resolveApiKey();
 
+      // System як один статичний блок з cache_control — кешується (prompt caching).
+      // Дані товару — в user-повідомленні (волатильне, після breakpoint).
       const requestBody: Record<string, unknown> = {
         model: params.model,
         max_tokens: params.maxTokens ?? 4096,
         temperature: params.temperature ?? 0,
-        system: buildSystemPrompt(params.systemPrompt, params.jsonOutput === true),
+        system: [
+          {
+            type: 'text',
+            text: buildSystemPrompt(params.systemPrompt, params.jsonOutput === true),
+            cache_control: { type: 'ephemeral' }
+          }
+        ],
         messages: [{ role: 'user', content: params.userMessage }]
       };
 
@@ -138,6 +150,8 @@ export function createAnthropicClient(
             modelVersion: payload?.model || params.model,
             inputTokens,
             outputTokens,
+            cacheCreationInputTokens: payload?.usage?.cache_creation_input_tokens ?? 0,
+            cacheReadInputTokens: payload?.usage?.cache_read_input_tokens ?? 0,
             durationMs,
             rawResponse: payload
           };
@@ -161,7 +175,12 @@ interface AnthropicApiResponse {
   id?: string;
   model?: string;
   content?: Array<{ type: string; text?: string }>;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
 }
 
 function extractText(payload: AnthropicApiResponse): string {

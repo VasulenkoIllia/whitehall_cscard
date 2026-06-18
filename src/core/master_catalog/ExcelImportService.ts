@@ -2,42 +2,6 @@ import * as XLSX from 'xlsx';
 import type { Pool } from 'pg';
 import type { LogService } from '../pipeline/log';
 import type { AppSettingsService } from '../settings/AppSettingsService';
-import { MASTER_CATALOG_FIELDS } from './MasterCatalogService';
-
-/**
- * Дефолтні алиаси «поле каталогу → можливі назви колонок» для режиму прямого
- * мапінгу. Матчинг case-insensitive, exact по назві колонки. Порядок = пріоритет
- * (перше непорожнє виграє). Підлаштовано під реальні файли master_site +
- * enriched_final, але працює і для довільних колонок з однаковими назвами.
- */
-const FIELD_COLUMN_ALIASES: Record<string, string[]> = {
-  name_uk: ['name_uk', 'name', 'назва', 'найменування'],
-  brand: ['brand', 'бренд', 'vendor', 'торгова марка'],
-  category_uk: ['category_uk', 'category', 'категорія'],
-  description_full_uk: ['description_full_uk', 'feed_description', 'description', 'опис'],
-  color_uk: ['color_uk', 'feed_param:Колір', 'колір', 'цвет', 'color'],
-  gender: ['gender', 'feed_param:Стать', 'стать', 'пол'],
-  country: ['country', 'feed_param:Країна', 'feed_country', 'країна', 'страна'],
-  model_name: ['model_name', 'feed_param:Модель', 'feed_param:Назва моделі', 'модель'],
-  style: ['style', 'feed_param:Стиль', 'стиль'],
-  material: ['material', 'feed_param:Матеріал', 'feed_param:Структура', 'feed_param:Склад', 'матеріал', 'склад'],
-  material_top: ['material_top', 'feed_param:Матеріал верха', 'матеріал верху'],
-  material_inner: ['material_inner', 'матеріал всередині', 'матеріал підкладки'],
-  material_sole: ['material_sole', 'feed_param:Матеріал підошви', 'матеріал підошви'],
-  fastening: ['fastening', 'feed_param:Застежка', 'застібка', 'застежка'],
-  purpose: ['purpose', 'feed_param:Призначення', 'призначення'],
-  season: ['season', 'feed_param:Сезонність', 'сезон', 'сезонність'],
-  season_year: ['season_year', 'сезон за роками'],
-  product_type: ['product_type', 'feed_param:Тип взуття', 'feed_param:Тип товару', 'feed_param:Тип', 'тип'],
-  product_kind: ['product_kind', 'вид товару'],
-  toe_shape: ['toe_shape', 'feed_param:Форма носка', 'вид носка'],
-  old_price: ['old_price', 'стара ціна', 'old price'],
-  gtin: ['gtin', 'feed_param:EAN', 'feed_barcode', 'barcode', 'ean', 'штрихкод']
-};
-
-const ALLOWED_FIELD_SET = new Set<string>(MASTER_CATALOG_FIELDS);
-/** Числові поля master_catalog — потребують безпечного касту при записі. */
-const NUMERIC_FIELDS = new Set<string>(['old_price']);
 
 /**
  * ExcelImportService — імпорт товарів з Excel файлу у master_catalog.
@@ -63,12 +27,6 @@ export interface ExcelPreviewOptions {
   headerRow?: number;
 }
 
-/** Зіставлення «поле каталогу ← перше непорожнє з цих колонок». */
-export interface FieldMappingEntry {
-  field: string;
-  columns: string[];
-}
-
 export interface ExcelPreviewResult {
   sheetNames: string[];
   sheetName: string;
@@ -78,8 +36,6 @@ export interface ExcelPreviewResult {
   totalRows: number;
   suggestedSkuColumn: string | null;
   suggestedExcludedColumns: string[];
-  /** Авто-зіставлення колонок на поля каталогу (для режиму «прямо в поля»). */
-  suggestedFieldMapping: FieldMappingEntry[];
 }
 
 export interface ExcelImportOptions {
@@ -100,31 +56,6 @@ export interface ExcelImportResult {
   updated: number;
   skippedNoSku: number;
   dedupedSkus: number;
-  durationMs: number;
-}
-
-export interface ExcelDirectImportOptions {
-  skuColumn: string;
-  fieldMapping: FieldMappingEntry[];
-  /** true — лише оновлювати наявні SKU (не створювати нові). Default false. */
-  updateOnly?: boolean;
-  /** true — перезаписувати заповнені поля. Default true (файл = джерело правди). */
-  overwriteFilled?: boolean;
-  sheetName?: string;
-  headerRow?: number;
-}
-
-export interface ExcelDirectImportResult {
-  sheetName: string;
-  totalRows: number;
-  created: number;
-  updated: number;
-  skippedNoSku: number;
-  /** updateOnly: SKU яких нема в каталозі. */
-  skippedNoMatch: number;
-  dedupedSkus: number;
-  fieldsWritten: number;
-  mappedFields: string[];
   durationMs: number;
 }
 
@@ -193,175 +124,7 @@ export class ExcelImportService {
       rows,
       totalRows,
       suggestedSkuColumn,
-      suggestedExcludedColumns: suggestedExcluded,
-      suggestedFieldMapping: suggestFieldMapping(headers)
-    };
-  }
-
-  /**
-   * Імпорт у режимі «прямо в поля каталогу»: значення колонок копіюються у поля
-   * master_catalog за зіставленням (без AI, без feed_params). Для кожного поля —
-   * перше непорожнє з його списку колонок (coalesce). Числові поля кастяться
-   * безпечно. Невалідні/невідомі поля ігноруються.
-   */
-  async importDirectFields(
-    buffer: Buffer,
-    opts: ExcelDirectImportOptions
-  ): Promise<ExcelDirectImportResult> {
-    const startedAt = Date.now();
-    const { sheetName, matrix, headers } = this.parseSheet(buffer, opts);
-    const headerRowNum = Math.max(1, Math.trunc(Number(opts.headerRow) || 1));
-    const updateOnly = opts.updateOnly === true;
-    const overwriteFilled = opts.overwriteFilled !== false; // default true
-
-    const skuIdx = resolveColumnIndex(headers, opts.skuColumn);
-    if (skuIdx < 0) {
-      const err = new Error(`Колонку SKU "${opts.skuColumn}" не знайдено у заголовках`);
-      (err as { status?: number }).status = 400;
-      throw err;
-    }
-
-    // Резолвимо зіставлення: лише дозволені поля + наявні колонки.
-    const mapping: Array<{ field: string; isNumeric: boolean; indices: number[] }> = [];
-    for (const entry of opts.fieldMapping || []) {
-      const field = String(entry.field || '').trim();
-      if (!ALLOWED_FIELD_SET.has(field)) continue;
-      const indices = (entry.columns || [])
-        .map((c) => resolveColumnIndex(headers, c))
-        .filter((idx) => idx >= 0 && idx !== skuIdx);
-      if (indices.length === 0) continue;
-      mapping.push({ field, isNumeric: NUMERIC_FIELDS.has(field), indices });
-    }
-    if (mapping.length === 0) {
-      const err = new Error('Жодне поле не зіставлено з колонками');
-      (err as { status?: number }).status = 400;
-      throw err;
-    }
-    const mappedFields = mapping.map((m) => m.field);
-
-    // Дедуп по SKU (перший виграє). fields = {field: значення} після coalesce+очистки.
-    let totalRows = 0;
-    let skippedNoSku = 0;
-    const dedupedMap = new Map<string, Record<string, string>>();
-    for (let i = headerRowNum; i < matrix.length; i++) {
-      const row = matrix[i];
-      if (!row || row.every((c) => c === null || c === '' || typeof c === 'undefined')) continue;
-      totalRows++;
-      const skuRaw = row[skuIdx];
-      const sku = skuRaw === null || typeof skuRaw === 'undefined' ? '' : String(skuRaw).trim();
-      if (!sku) {
-        skippedNoSku++;
-        continue;
-      }
-      if (dedupedMap.has(sku)) continue;
-
-      const fields: Record<string, string> = {};
-      for (const m of mapping) {
-        for (const idx of m.indices) {
-          let cleaned = cleanValue(row[idx]);
-          if (cleaned === null) continue;
-          if (m.isNumeric) {
-            const num = cleaned.replace(/[^0-9.,]/g, '').replace(',', '.');
-            if (!num || !Number.isFinite(Number(num))) continue;
-            cleaned = num;
-          }
-          fields[m.field] = cleaned;
-          break; // перше непорожнє виграє
-        }
-      }
-      dedupedMap.set(sku, fields);
-    }
-
-    const entries = Array.from(dedupedMap.entries());
-    const dedupedSkus = totalRows - skippedNoSku - entries.length;
-
-    // SET clause: для кожного поля — перезапис або fill-empty.
-    //   targetAlias — таблиця-ціль (mc для UPDATE, master_catalog для ON CONFLICT).
-    //   srcExpr(field) — звідки беремо нове значення:
-    //     UPDATE ... FROM b → з b.fields; ON CONFLICT → з EXCLUDED (b недоступний).
-    const buildSetClause = (targetAlias: string, srcExpr: (m: { field: string; isNumeric: boolean }) => string) =>
-      mapping
-        .map((m) => {
-          const src = srcExpr(m);
-          if (overwriteFilled) {
-            return `${m.field} = COALESCE(${src}, ${targetAlias}.${m.field})`;
-          }
-          const isEmpty = m.isNumeric
-            ? `${targetAlias}.${m.field} IS NULL`
-            : `(${targetAlias}.${m.field} IS NULL OR btrim(${targetAlias}.${m.field}::text) = '')`;
-          return `${m.field} = CASE WHEN ${isEmpty} THEN COALESCE(${src}, ${targetAlias}.${m.field}) ELSE ${targetAlias}.${m.field} END`;
-        })
-        .join(', ');
-
-    const fromBexpr = (m: { field: string; isNumeric: boolean }) =>
-      m.isNumeric ? `NULLIF(b.fields->>'${m.field}','')::numeric` : `NULLIF(b.fields->>'${m.field}','')`;
-    const fromExcluded = (m: { field: string }) => `EXCLUDED.${m.field}`;
-
-    let created = 0;
-    let updated = 0;
-    let fieldsWritten = 0;
-
-    for (let i = 0; i < entries.length; i += UPSERT_BATCH_SIZE) {
-      const batch = entries.slice(i, i + UPSERT_BATCH_SIZE);
-      for (const [, f] of batch) fieldsWritten += Object.keys(f).length;
-      const skus = batch.map(([sku]) => sku);
-      const fieldJsons = batch.map(([, f]) => JSON.stringify(f));
-
-      const client = await this.pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query(
-          `CREATE TEMP TABLE _excel_fields (sku TEXT PRIMARY KEY, fields JSONB) ON COMMIT DROP`
-        );
-        await client.query(
-          `INSERT INTO _excel_fields (sku, fields)
-             SELECT * FROM UNNEST($1::text[], $2::jsonb[])`,
-          [skus, fieldJsons]
-        );
-
-        if (updateOnly) {
-          const res = await client.query(
-            `UPDATE master_catalog mc
-                SET ${buildSetClause('mc', fromBexpr)}, updated_at = NOW()
-               FROM _excel_fields b
-              WHERE mc.sku = b.sku`
-          );
-          updated += res.rowCount || 0;
-        } else {
-          const insertExprs = mapping.map(fromBexpr).join(', ');
-          const res = await client.query<{ inserted: boolean }>(
-            `INSERT INTO master_catalog (sku, ${mappedFields.join(', ')}, created_at, updated_at)
-               SELECT b.sku, ${insertExprs}, NOW(), NOW()
-                 FROM _excel_fields b
-               ON CONFLICT (sku) DO UPDATE SET ${buildSetClause('master_catalog', fromExcluded)}, updated_at = NOW()
-               RETURNING (xmax = 0) AS inserted`
-          );
-          for (const r of res.rows) {
-            if (r.inserted) created++;
-            else updated++;
-          }
-        }
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        throw err;
-      } finally {
-        client.release();
-      }
-    }
-
-    const skippedNoMatch = updateOnly ? entries.length - updated : 0;
-    const durationMs = Date.now() - startedAt;
-    this.logs
-      .log(null, 'info', 'excel_import_direct: finished', {
-        sheetName, totalRows, created, updated, skippedNoSku, skippedNoMatch,
-        dedupedSkus, fieldsWritten, mappedFields, updateOnly, durationMs
-      })
-      .catch(() => undefined);
-
-    return {
-      sheetName, totalRows, created, updated, skippedNoSku, skippedNoMatch,
-      dedupedSkus, fieldsWritten, mappedFields, durationMs
+      suggestedExcludedColumns: suggestedExcluded
     };
   }
 
@@ -543,30 +306,6 @@ function resolveColumnIndex(headers: Array<{ letter: string; label: string }>, c
     if (byLetter >= 0) return byLetter;
   }
   return headers.findIndex((h) => h.label.toLowerCase() === c.toLowerCase());
-}
-
-/**
- * Авто-зіставлення колонок Excel на поля master_catalog за алиасами.
- * Для кожного поля — колонки в порядку пріоритету (перше непорожнє виграє).
- * Повертає лише поля, для яких знайшлась хоч одна колонка.
- */
-function suggestFieldMapping(headers: Array<{ letter: string; label: string }>): FieldMappingEntry[] {
-  const byLower = new Map<string, string>();
-  for (const h of headers) {
-    const k = h.label.trim().toLowerCase();
-    if (!byLower.has(k)) byLower.set(k, h.label); // перша колонка з такою назвою
-  }
-  const out: FieldMappingEntry[] = [];
-  for (const field of MASTER_CATALOG_FIELDS) {
-    const aliases = FIELD_COLUMN_ALIASES[field] || [field];
-    const columns: string[] = [];
-    for (const alias of aliases) {
-      const found = byLower.get(alias.trim().toLowerCase());
-      if (found && !columns.includes(found)) columns.push(found);
-    }
-    if (columns.length > 0) out.push({ field, columns });
-  }
-  return out;
 }
 
 /** Case-insensitive substring матчинг назви колонки проти списку виключень. */
