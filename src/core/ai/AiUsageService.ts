@@ -17,6 +17,12 @@ interface ModelPricing {
   inputPerMtok: number;
   /** USD per million output tokens */
   outputPerMtok: number;
+  /**
+   * USD per million cached-read input tokens. Якщо задано — використовується
+   * напряму (DeepSeek cache-hit значно дешевший за inputPerMtok×0.1). Якщо ні —
+   * рахуємо inputPerMtok × CACHE_READ_MULT (Anthropic ephemeral 0.1×).
+   */
+  cacheReadPerMtok?: number;
 }
 
 const PRICING_TABLE: Record<string, ModelPricing> = {
@@ -26,7 +32,13 @@ const PRICING_TABLE: Record<string, ModelPricing> = {
   'claude-opus-4': { inputPerMtok: 15.0, outputPerMtok: 75.0 },
   // Старі моделі (для сумісності якщо хтось ще їх використовує):
   'claude-haiku-3-5': { inputPerMtok: 0.8, outputPerMtok: 4.0 },
-  'claude-sonnet-3-7': { inputPerMtok: 3.0, outputPerMtok: 15.0 }
+  'claude-sonnet-3-7': { inputPerMtok: 3.0, outputPerMtok: 15.0 },
+  // DeepSeek (автокешування — cache-hit тарифікується окремою низькою ставкою).
+  // deepseek-chat/reasoner → v4-flash (non-thinking/thinking), однакова ставка.
+  'deepseek-chat': { inputPerMtok: 0.14, outputPerMtok: 0.28, cacheReadPerMtok: 0.0028 },
+  'deepseek-reasoner': { inputPerMtok: 0.14, outputPerMtok: 0.28, cacheReadPerMtok: 0.0028 },
+  'deepseek-v4-flash': { inputPerMtok: 0.14, outputPerMtok: 0.28, cacheReadPerMtok: 0.0028 },
+  'deepseek-v4-pro': { inputPerMtok: 0.435, outputPerMtok: 0.87, cacheReadPerMtok: 0.003625 }
 };
 
 // Prompt caching множники до ціни input.
@@ -38,6 +50,8 @@ function resolveModelPricing(modelVersion: string): ModelPricing {
   for (const key of Object.keys(PRICING_TABLE)) {
     if (modelVersion.startsWith(key)) return PRICING_TABLE[key];
   }
+  // Невідома deepseek-модель → ставка deepseek-chat (а не дорогий Claude).
+  if (modelVersion.startsWith('deepseek')) return PRICING_TABLE['deepseek-chat'];
   // Default — найдорожче (краще overestimate ніж underestimate).
   return PRICING_TABLE['claude-sonnet-4-6'];
 }
@@ -60,9 +74,13 @@ export function calculateCostUsd(
   const pricing = resolveModelPricing(modelVersion);
   const discount = isBatchApi ? 0.5 : 1.0;
   const m = 1_000_000;
+  const cacheReadRate =
+    typeof pricing.cacheReadPerMtok === 'number'
+      ? pricing.cacheReadPerMtok
+      : pricing.inputPerMtok * CACHE_READ_MULT;
   const inputCost = (inputTokens / m) * pricing.inputPerMtok;
   const cacheWriteCost = (cacheCreationTokens / m) * pricing.inputPerMtok * CACHE_WRITE_MULT;
-  const cacheReadCost = (cacheReadTokens / m) * pricing.inputPerMtok * CACHE_READ_MULT;
+  const cacheReadCost = (cacheReadTokens / m) * cacheReadRate;
   const outputCost = (outputTokens / m) * pricing.outputPerMtok;
   return Number(((inputCost + cacheWriteCost + cacheReadCost + outputCost) * discount).toFixed(6));
 }

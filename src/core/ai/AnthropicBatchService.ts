@@ -92,6 +92,14 @@ export class AnthropicBatchService {
 
     const model = options.model || this.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-haiku-4-5';
 
+    // Async Batch API є лише в Anthropic. Для DeepSeek-моделей цей шлях недоступний —
+    // використовувати синхронний Enrich (він і так дешевий).
+    if (model.trim().toLowerCase().startsWith('deepseek')) {
+      const err = new Error('DeepSeek не має async Batch API — використовуй синхронний Enrich (✨/🔁)');
+      (err as { status?: number }).status = 400;
+      throw err;
+    }
+
     const promptSetting = this.settings
       ? await this.settings.getEnrichmentPrompt()
       : { prompt: ENRICHMENT_SYSTEM_PROMPT, isCustom: false, version: 'v1' };

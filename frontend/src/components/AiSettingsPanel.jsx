@@ -1,11 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Tag } from './ui';
 
+// Провайдери AI-ключів (узгоджено з бекендом /settings/ai-key/:provider).
+const KEY_PROVIDERS = [
+  { id: 'anthropic', label: 'Anthropic (Claude)', icon: '🟣', prefix: 'sk-ant-...' },
+  { id: 'deepseek', label: 'DeepSeek', icon: '🔵', prefix: 'sk-...' }
+];
+
 /**
  * AiSettingsPanel — налаштування AI enrichment:
  *   1. Редагований system prompt (зберігається в app_settings, fallback = вбудований).
- *   2. Власний Anthropic API ключ (write-only: у форму ніколи не повертається,
- *      сервер віддає тільки маску + джерело db/env).
+ *   2. API ключі провайдерів (Anthropic + DeepSeek), write-only: у форму ніколи
+ *      не повертаються, сервер віддає тільки маску + джерело db/env.
  */
 export function AiSettingsPanel({ apiFetch, isReadOnly, onSettingsChanged }) {
   const [open, setOpen] = useState(false);
@@ -18,11 +24,11 @@ export function AiSettingsPanel({ apiFetch, isReadOnly, onSettingsChanged }) {
   const [promptStatus, setPromptStatus] = useState('');
   const [showDefault, setShowDefault] = useState(false);
 
-  // API key state
-  const [keyInfo, setKeyInfo] = useState(null); // {configured, source, masked}
-  const [keyInput, setKeyInput] = useState('');
-  const [keySaving, setKeySaving] = useState(false);
-  const [keyStatus, setKeyStatus] = useState('');
+  // API keys state (per provider): {anthropic:{configured,source,masked}, deepseek:{...}}
+  const [keys, setKeys] = useState({});
+  const [keyInputs, setKeyInputs] = useState({}); // {anthropic:'', deepseek:''}
+  const [keySaving, setKeySaving] = useState(''); // provider id, що зберігається
+  const [keyStatuses, setKeyStatuses] = useState({}); // {provider: 'текст'}
 
   const loadAll = useCallback(async () => {
     try {
@@ -34,11 +40,11 @@ export function AiSettingsPanel({ apiFetch, isReadOnly, onSettingsChanged }) {
       setPromptStatus(`Помилка завантаження промпта: ${err?.message || 'unknown'}`);
     }
     try {
-      const k = await apiFetch('/settings/anthropic-key');
-      setKeyInfo(k);
+      const k = await apiFetch('/settings/ai-keys');
+      setKeys(k || {});
     } catch {
-      // viewer без admin-прав отримає 403 — ключ просто не показуємо
-      setKeyInfo(null);
+      // viewer без admin-прав отримає 403 — ключі просто не показуємо
+      setKeys({});
     }
   }, [apiFetch]);
 
@@ -89,40 +95,44 @@ export function AiSettingsPanel({ apiFetch, isReadOnly, onSettingsChanged }) {
     }
   };
 
-  const saveKey = async () => {
-    if (keySaving || !keyInput.trim()) return;
-    setKeySaving(true);
-    setKeyStatus('');
+  const setKeyStatus = (provider, text) =>
+    setKeyStatuses((prev) => ({ ...prev, [provider]: text }));
+
+  const saveKey = async (provider) => {
+    const input = (keyInputs[provider] || '').trim();
+    if (keySaving || !input) return;
+    setKeySaving(provider);
+    setKeyStatus(provider, '');
     try {
-      const result = await apiFetch('/settings/anthropic-key', {
+      const result = await apiFetch(`/settings/ai-key/${provider}`, {
         method: 'PUT',
-        body: JSON.stringify({ apiKey: keyInput.trim() })
+        body: JSON.stringify({ apiKey: input })
       });
-      setKeyInfo(result);
-      setKeyInput('');
-      setKeyStatus('✓ Ключ збережено — використовується для всіх AI запитів');
+      setKeys((prev) => ({ ...prev, [provider]: result }));
+      setKeyInputs((prev) => ({ ...prev, [provider]: '' }));
+      setKeyStatus(provider, '✓ Ключ збережено');
       if (onSettingsChanged) onSettingsChanged();
     } catch (err) {
-      setKeyStatus(`Помилка: ${err?.message || 'unknown'}`);
+      setKeyStatus(provider, `Помилка: ${err?.message || 'unknown'}`);
     } finally {
-      setKeySaving(false);
+      setKeySaving('');
     }
   };
 
-  const deleteKey = async () => {
+  const deleteKey = async (provider) => {
     if (keySaving) return;
     if (!window.confirm('Видалити власний ключ і повернутись до серверного (env)?')) return;
-    setKeySaving(true);
-    setKeyStatus('');
+    setKeySaving(provider);
+    setKeyStatus(provider, '');
     try {
-      const result = await apiFetch('/settings/anthropic-key', { method: 'DELETE' });
-      setKeyInfo(result);
-      setKeyStatus(result.configured ? '✓ Повернулись до env ключа' : '⚠ Ключів немає — AI недоступний');
+      const result = await apiFetch(`/settings/ai-key/${provider}`, { method: 'DELETE' });
+      setKeys((prev) => ({ ...prev, [provider]: result }));
+      setKeyStatus(provider, result.configured ? '✓ Повернулись до env ключа' : '⚠ Ключа немає');
       if (onSettingsChanged) onSettingsChanged();
     } catch (err) {
-      setKeyStatus(`Помилка: ${err?.message || 'unknown'}`);
+      setKeyStatus(provider, `Помилка: ${err?.message || 'unknown'}`);
     } finally {
-      setKeySaving(false);
+      setKeySaving('');
     }
   };
 
@@ -138,11 +148,15 @@ export function AiSettingsPanel({ apiFetch, isReadOnly, onSettingsChanged }) {
             промпт: {promptMeta.version || 'v1'}
           </Tag>
         ) : null}
-        {keyInfo ? (
-          <Tag tone={keyInfo.configured ? 'ok' : 'error'}>
-            ключ: {keyInfo.configured ? `${keyInfo.masked} (${keyInfo.source})` : 'не задано'}
-          </Tag>
-        ) : null}
+        {KEY_PROVIDERS.map((p) => {
+          const info = keys[p.id];
+          if (!info) return null;
+          return (
+            <Tag key={p.id} tone={info.configured ? 'ok' : 'error'}>
+              {p.icon} {info.configured ? `${info.masked} (${info.source})` : 'нема ключа'}
+            </Tag>
+          );
+        })}
         <span style={{ marginLeft: 'auto', color: '#888', fontSize: 12 }}>{open ? '▲ згорнути' : '▼ розгорнути'}</span>
       </div>
 
@@ -192,42 +206,54 @@ export function AiSettingsPanel({ apiFetch, isReadOnly, onSettingsChanged }) {
             ) : null}
           </div>
 
-          {/* ─── API key ───────────────────────────────────────────────── */}
+          {/* ─── API keys (Anthropic + DeepSeek) ───────────────────────── */}
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 13 }}>🔑 Anthropic API ключ</strong>
-              {keyInfo?.configured ? (
-                <Tag tone="ok">{keyInfo.masked} · джерело: {keyInfo.source === 'db' ? 'власний (БД)' : 'серверний (env)'}</Tag>
-              ) : (
-                <Tag tone="error">не задано — AI недоступний</Tag>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <input
-                type="password"
-                value={keyInput}
-                onChange={(e) => setKeyInput(e.target.value)}
-                disabled={isReadOnly}
-                placeholder="sk-ant-..."
-                autoComplete="new-password"
-                style={{ width: 320, fontFamily: 'monospace', fontSize: 12, padding: 6 }}
-              />
-              <button className="btn btn-sm primary" disabled={isReadOnly || keySaving || !keyInput.trim()} onClick={saveKey}>
-                {keySaving ? '⏳...' : '💾 Зберегти ключ'}
-              </button>
-              <button
-                className="btn btn-sm"
-                disabled={isReadOnly || keySaving || keyInfo?.source !== 'db'}
-                onClick={deleteKey}
-                title="Видалити власний ключ — повернутись до серверного env"
-              >
-                🗑 Видалити (→ env)
-              </button>
-              {keyStatus ? <span style={{ fontSize: 12, color: keyStatus.startsWith('✓') ? '#1a7f37' : '#a00' }}>{keyStatus}</span> : null}
-            </div>
-            <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-              Власний ключ має пріоритет над серверним і застосовується одразу (sync і async batch).
-              Збережений ключ ніколи не показується повністю — тільки останні 4 символи.
+            <strong style={{ fontSize: 13 }}>🔑 API ключі провайдерів</strong>
+            {KEY_PROVIDERS.map((p) => {
+              const info = keys[p.id] || null;
+              const input = keyInputs[p.id] || '';
+              const status = keyStatuses[p.id] || '';
+              const saving = keySaving === p.id;
+              return (
+                <div key={p.id} style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{p.icon} {p.label}</span>
+                    {info?.configured ? (
+                      <Tag tone="ok">{info.masked} · {info.source === 'db' ? 'власний (БД)' : 'серверний (env)'}</Tag>
+                    ) : (
+                      <Tag tone="error">не задано</Tag>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="password"
+                      value={input}
+                      onChange={(e) => setKeyInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                      disabled={isReadOnly}
+                      placeholder={p.prefix}
+                      autoComplete="new-password"
+                      style={{ width: 300, fontFamily: 'monospace', fontSize: 12, padding: 6 }}
+                    />
+                    <button className="btn btn-sm primary" disabled={isReadOnly || !!keySaving || !input.trim()} onClick={() => saveKey(p.id)}>
+                      {saving ? '⏳...' : '💾 Зберегти'}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={isReadOnly || !!keySaving || info?.source !== 'db'}
+                      onClick={() => deleteKey(p.id)}
+                      title="Видалити власний ключ — повернутись до серверного env"
+                    >
+                      🗑 → env
+                    </button>
+                    {status ? <span style={{ fontSize: 12, color: status.startsWith('✓') ? '#1a7f37' : '#a00' }}>{status}</span> : null}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+              Власний ключ має пріоритет над серверним (env) і діє одразу. Модель обирається у
+              списку/деталях SKU — за назвою (claude-* / deepseek-*) система сама бере потрібний ключ.
+              Ключ ніколи не показується повністю — тільки останні 4 символи.
             </div>
           </div>
         </div>

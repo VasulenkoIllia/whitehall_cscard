@@ -192,7 +192,7 @@ function extractText(payload: AnthropicApiResponse): string {
     .trim();
 }
 
-function buildSystemPrompt(base: string, jsonOnly: boolean): string {
+export function buildSystemPrompt(base: string, jsonOnly: boolean): string {
   if (!jsonOnly) return base;
   return [
     base.trim(),
@@ -207,7 +207,7 @@ function buildSystemPrompt(base: string, jsonOnly: boolean): string {
   ].join('\n');
 }
 
-function parseJsonStrict<T>(raw: string): T {
+export function parseJsonStrict<T>(raw: string): T {
   let text = raw.trim();
   if (text.startsWith('```')) {
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();

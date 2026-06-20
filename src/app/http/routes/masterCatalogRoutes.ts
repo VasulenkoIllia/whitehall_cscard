@@ -245,13 +245,19 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
       try {
         const dbKey = await appSettingsService.getAnthropicApiKey();
         const envKey = (process.env.ANTHROPIC_API_KEY || '').trim();
+        const dsDbKey = await appSettingsService.getDeepseekApiKey();
+        const dsEnvKey = (process.env.DEEPSEEK_API_KEY || '').trim();
         const prompt = await appSettingsService.getEnrichmentPrompt();
         res.json({
           enabled: Boolean(dbKey || envKey),
           keySource: dbKey ? 'db' : envKey ? 'env' : null,
           model: process.env.ANTHROPIC_MODEL_ENRICHMENT || 'claude-haiku-4-5',
           promptIsCustom: prompt.isCustom,
-          promptVersion: prompt.version
+          promptVersion: prompt.version,
+          deepseek: {
+            enabled: Boolean(dsDbKey || dsEnvKey),
+            keySource: dsDbKey ? 'db' : dsEnvKey ? 'env' : null
+          }
         });
       } catch (err) {
         res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'ai_status_error') });

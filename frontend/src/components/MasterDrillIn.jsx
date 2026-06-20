@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Tag } from './ui';
+import { ModelSelect } from './ModelSelect';
 import { MASTER_FIELDS, TOTAL_FIELDS } from '../lib/masterFields';
 
 /** Деталі одного SKU: картка 23 полів + AI enrichment (заповнити/переписати, preview). */
@@ -109,10 +110,7 @@ export function MasterDrillIn({ master, apiFetch, onClose, onPreviewPrompt, onAf
                     >
                       🔁 Переписати всі
                     </button>
-                    <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ fontSize: 12 }}>
-                      <option value="claude-haiku-4-5">Haiku 4.5 (швидко, дешево)</option>
-                      <option value="claude-sonnet-4-6">Sonnet 4.6 (точніше)</option>
-                    </select>
+                    <ModelSelect value={aiModel} onChange={setAiModel} style={{ fontSize: 12 }} />
                     {onPreviewPrompt ? (
                       <button
                         className="btn btn-sm"

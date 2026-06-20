@@ -4,6 +4,8 @@ import { AiSettingsPanel } from '../components/AiSettingsPanel';
 import { ExcelImportModal } from '../components/ExcelImportModal';
 import { PromptPreviewModal } from '../components/PromptPreviewModal';
 import { MasterDrillIn } from '../components/MasterDrillIn';
+import { ModelSelect } from '../components/ModelSelect';
+import { isDeepseek } from '../lib/aiModels';
 import { TOTAL_FIELDS } from '../lib/masterFields';
 
 export function MasterCatalogTab({ apiFetch, isReadOnly }) {
@@ -463,10 +465,7 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <label style={{ fontSize: 12 }}>
             Модель:
-            <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={{ marginLeft: 4 }}>
-              <option value="claude-haiku-4-5">Haiku 4.5 (швидко, дешево)</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6 (точніше, дорожче)</option>
-            </select>
+            <ModelSelect value={aiModel} onChange={setAiModel} style={{ marginLeft: 4 }} />
           </label>
           <label style={{ fontSize: 12 }}>
             Batch size:
@@ -496,12 +495,14 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           </button>
           <button
             className="btn btn-sm"
-            disabled={isReadOnly || asyncSubmitting || selectedIds.size === 0}
+            disabled={isReadOnly || asyncSubmitting || selectedIds.size === 0 || isDeepseek(aiModel)}
             onClick={submitAsyncBatch}
-            title="Anthropic Batch API: async обробка, -50% ціна, 1-24 год"
-            style={{ background: '#8e44ad', color: 'white' }}
+            title={isDeepseek(aiModel)
+              ? 'DeepSeek не має async Batch API — використовуй ✨ Enrich (синхронно, і так дешево)'
+              : 'Anthropic Batch API: async обробка, -50% ціна, 1-24 год'}
+            style={{ background: isDeepseek(aiModel) ? '#bbb' : '#8e44ad', color: 'white' }}
           >
-            🌙 Submit async batch
+            🌙 Submit async batch{isDeepseek(aiModel) ? ' (лише Claude)' : ''}
           </button>
         </div>
 

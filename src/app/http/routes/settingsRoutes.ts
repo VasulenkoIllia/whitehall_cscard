@@ -3,6 +3,7 @@ import {
   AppSettingsService,
   SETTING_ENRICHMENT_PROMPT,
   SETTING_ANTHROPIC_API_KEY,
+  SETTING_DEEPSEEK_API_KEY,
   SETTING_EXCEL_EXCLUDED_COLUMNS,
   DEFAULT_EXCEL_EXCLUDED_COLUMNS
 } from '../../../core/settings/AppSettingsService';
@@ -30,8 +31,115 @@ function readErrorStatus(err: unknown, fallback = 500): number {
   return fallback;
 }
 
+/** Конфіг провайдерів AI-ключів для узагальнених роутів /settings/ai-key/:provider. */
+interface KeyProviderConfig {
+  setting: string;
+  envVar: string;
+  prefix: RegExp;
+  prefixHint: string;
+  get: (svc: AppSettingsService) => Promise<string | null>;
+}
+const KEY_PROVIDERS: Record<string, KeyProviderConfig> = {
+  anthropic: {
+    setting: SETTING_ANTHROPIC_API_KEY,
+    envVar: 'ANTHROPIC_API_KEY',
+    prefix: /^sk-ant-/,
+    prefixHint: 'sk-ant-',
+    get: (svc) => svc.getAnthropicApiKey()
+  },
+  deepseek: {
+    setting: SETTING_DEEPSEEK_API_KEY,
+    envVar: 'DEEPSEEK_API_KEY',
+    prefix: /^sk-/,
+    prefixHint: 'sk-',
+    get: (svc) => svc.getDeepseekApiKey()
+  }
+};
+
+async function keyStatus(
+  svc: AppSettingsService,
+  cfg: KeyProviderConfig,
+  env: Record<string, string | undefined>
+): Promise<{ configured: boolean; source: 'db' | 'env' | null; masked: string | null }> {
+  const dbKey = await cfg.get(svc);
+  const envKey = (env[cfg.envVar] || '').trim();
+  const active = dbKey || envKey || null;
+  return {
+    configured: Boolean(active),
+    source: dbKey ? 'db' : envKey ? 'env' : null,
+    masked: active ? `••••${active.slice(-4)}` : null
+  };
+}
+
 export function registerSettingsRoutes(app: Application, deps: SettingsRouteDeps): void {
   const { appSettingsService, authMw, env } = deps;
+
+  // ─── AI API keys (узагальнено: anthropic + deepseek) ────────────────────────
+
+  // GET — статус усіх провайдерів (тільки маска + джерело, ніколи повний ключ).
+  app.get(
+    '/admin/api/settings/ai-keys',
+    authMw.requireRole('admin'),
+    async (_req: Request, res: Response) => {
+      try {
+        const out: Record<string, unknown> = {};
+        for (const [name, cfg] of Object.entries(KEY_PROVIDERS)) {
+          out[name] = await keyStatus(appSettingsService, cfg, env);
+        }
+        res.json(out);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'settings_keys_error') });
+      }
+    }
+  );
+
+  // PUT — зберегти ключ конкретного провайдера.
+  app.put(
+    '/admin/api/settings/ai-key/:provider',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const cfg = KEY_PROVIDERS[String(req.params.provider)];
+        if (!cfg) {
+          res.status(404).json({ error: 'Невідомий провайдер (anthropic | deepseek)' });
+          return;
+        }
+        const raw = req.body?.apiKey;
+        const apiKey = typeof raw === 'string' ? raw.trim() : '';
+        if (!apiKey) {
+          res.status(400).json({ error: 'apiKey порожній' });
+          return;
+        }
+        if (!cfg.prefix.test(apiKey)) {
+          res.status(400).json({ error: `Ключ має починатися з ${cfg.prefixHint}` });
+          return;
+        }
+        await appSettingsService.set(cfg.setting, apiKey);
+        res.json({ configured: true, source: 'db', masked: `••••${apiKey.slice(-4)}` });
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'settings_key_save_error') });
+      }
+    }
+  );
+
+  // DELETE — прибрати DB-ключ провайдера (повернутись до env).
+  app.delete(
+    '/admin/api/settings/ai-key/:provider',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const cfg = KEY_PROVIDERS[String(req.params.provider)];
+        if (!cfg) {
+          res.status(404).json({ error: 'Невідомий провайдер (anthropic | deepseek)' });
+          return;
+        }
+        await appSettingsService.delete(cfg.setting);
+        res.json(await keyStatus(appSettingsService, cfg, env));
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'settings_key_delete_error') });
+      }
+    }
+  );
 
   // ─── Enrichment prompt ──────────────────────────────────────────────────────
 

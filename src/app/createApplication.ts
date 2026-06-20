@@ -35,6 +35,8 @@ import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 import { MasterCatalogService } from '../core/master_catalog/MasterCatalogService';
 import { ExcelImportService } from '../core/master_catalog/ExcelImportService';
 import { createAnthropicClient } from '../core/ai/AnthropicClient';
+import { createDeepseekClient } from '../core/ai/DeepseekClient';
+import { createAiRouter } from '../core/ai/createAiRouter';
 import { EnrichmentService } from '../core/ai/EnrichmentService';
 import { AiUsageService } from '../core/ai/AiUsageService';
 import { createAnthropicBatchClient } from '../core/ai/AnthropicBatchClient';
@@ -381,10 +383,15 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   // Ключ з app_settings (введений з фронта) має пріоритет над env.
   const anthropicKeyProvider = () => appSettingsService.getAnthropicApiKey();
   const anthropic = createAnthropicClient(env, anthropicKeyProvider);
+  // DeepSeek — другий провайдер (OpenAI-сумісний). Роутер обирає клієнта за
+  // назвою моделі: claude-* → Anthropic, deepseek-* → DeepSeek.
+  const deepseekKeyProvider = () => appSettingsService.getDeepseekApiKey();
+  const deepseek = createDeepseekClient(env, deepseekKeyProvider);
+  const aiClient = createAiRouter({ anthropic, deepseek });
   const aiUsageService = new AiUsageService(pool);
   const enrichmentService = new EnrichmentService(
     pool,
-    anthropic,
+    aiClient,
     logService,
     env,
     aiUsageService,

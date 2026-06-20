@@ -16,6 +16,7 @@ import { ENRICHMENT_SYSTEM_PROMPT } from '../ai/EnrichmentPrompt';
 
 export const SETTING_ENRICHMENT_PROMPT = 'enrichment_system_prompt';
 export const SETTING_ANTHROPIC_API_KEY = 'anthropic_api_key';
+export const SETTING_DEEPSEEK_API_KEY = 'deepseek_api_key';
 export const SETTING_EXCEL_EXCLUDED_COLUMNS = 'excel_import_excluded_columns';
 
 /**
@@ -84,6 +85,13 @@ export class AppSettingsService {
   /** Власний ключ Claude з БД (пріоритет над env) або null. */
   async getAnthropicApiKey(): Promise<string | null> {
     const row = await this.get(SETTING_ANTHROPIC_API_KEY);
+    const key = row?.value?.trim();
+    return key && key.length > 0 ? key : null;
+  }
+
+  /** Власний ключ DeepSeek з БД (пріоритет над env) або null. */
+  async getDeepseekApiKey(): Promise<string | null> {
+    const row = await this.get(SETTING_DEEPSEEK_API_KEY);
     const key = row?.value?.trim();
     return key && key.length > 0 ? key : null;
   }
