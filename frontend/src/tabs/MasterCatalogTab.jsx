@@ -170,8 +170,14 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     }
   };
 
+  // Скільки SKU шлемо в ОДНОМУ HTTP-запиті enrich-batch. Синхронний enrich
+  // обробляється на сервері до відповіді; якщо запит триває >~100с, шлюз
+  // (Cloudflare) рве його з 524. Тому ріжемо вибірку на порції клієнтом —
+  // кожен запит вкладається у ліміт, а прогрес видно поступово.
+  const REQUEST_PAGE = 20;
+
   // Bulk enrich — використовує selectedIds (чекбокси). Якщо нічого не обрано —
-  // підказка користувачу.
+  // підказка користувачу. Велику вибірку шлемо порціями по REQUEST_PAGE.
   const runBatchEnrich = async (overwrite = false) => {
     if (isReadOnly || batchRunning) return;
     const candidates = feedCandidates();
@@ -182,17 +188,40 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       return;
     }
     setBatchRunning(true);
-    setBatchSummary({ status: `Запускаю batch для ${candidates.length} SKU (model: ${aiModel})...` });
+    const pages = [];
+    for (let i = 0; i < candidates.length; i += REQUEST_PAGE) pages.push(candidates.slice(i, i + REQUEST_PAGE));
+    const agg = {
+      itemsRequested: candidates.length, itemsEnriched: 0, itemsFailed: 0,
+      totalFieldsWritten: 0, inputTokens: 0, outputTokens: 0, durationMs: 0, modelVersion: aiModel
+    };
     try {
-      const result = await apiFetch('/master-catalog/enrich-batch', {
-        method: 'POST',
-        body: JSON.stringify({ masterIds: candidates, batchSize, overwrite, model: aiModel })
-      });
-      setBatchSummary(result);
-      await loadList();
+      for (let p = 0; p < pages.length; p++) {
+        const done = agg.itemsEnriched + agg.itemsFailed;
+        setBatchSummary({
+          status: `Обробка ${done}/${candidates.length} SKU · порція ${p + 1}/${pages.length} (model: ${aiModel})...`
+        });
+        const r = await apiFetch('/master-catalog/enrich-batch', {
+          method: 'POST',
+          body: JSON.stringify({ masterIds: pages[p], batchSize, overwrite, model: aiModel })
+        });
+        agg.itemsEnriched += r.itemsEnriched || 0;
+        agg.itemsFailed += r.itemsFailed || 0;
+        agg.totalFieldsWritten += r.totalFieldsWritten || 0;
+        agg.inputTokens += r.inputTokens || 0;
+        agg.outputTokens += r.outputTokens || 0;
+        agg.durationMs += r.durationMs || 0;
+        agg.modelVersion = r.modelVersion || agg.modelVersion;
+        await loadList(); // поступово оновлюємо прогрес у таблиці
+      }
+      setBatchSummary(agg);
       await loadUsage();
     } catch (err) {
-      setBatchSummary({ error: err?.message || 'batch_error' });
+      setBatchSummary({
+        ...agg,
+        error: `${err?.message || 'batch_error'} — опрацьовано ${agg.itemsEnriched}/${candidates.length} до помилки (вже збережені)`
+      });
+      await loadList();
+      await loadUsage();
     } finally {
       setBatchRunning(false);
     }
