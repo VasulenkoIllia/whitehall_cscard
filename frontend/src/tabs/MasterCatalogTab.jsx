@@ -5,7 +5,7 @@ import { ExcelImportModal } from '../components/ExcelImportModal';
 import { PromptPreviewModal } from '../components/PromptPreviewModal';
 import { MasterDrillIn } from '../components/MasterDrillIn';
 import { ModelSelect } from '../components/ModelSelect';
-import { isDeepseek, enrichPageSize } from '../lib/aiModels';
+import { isDeepseek } from '../lib/aiModels';
 import { TOTAL_FIELDS } from '../lib/masterFields';
 
 export function MasterCatalogTab({ apiFetch, isReadOnly }) {
@@ -33,6 +33,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   const [promptPreview, setPromptPreview] = useState(null);
   const [asyncBatches, setAsyncBatches] = useState([]);
   const [asyncSubmitting, setAsyncSubmitting] = useState(false);
+  // Фонові enrichment-завдання (server-side):
+  const [enrichJobs, setEnrichJobs] = useState([]);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
   // "Обрати перші N за фільтром" (10/50/100):
   const [selectCount, setSelectCount] = useState(100);
@@ -92,6 +94,39 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   }, [apiFetch]);
 
   useEffect(() => { void loadAsyncBatches(); }, [loadAsyncBatches]);
+
+  const loadEnrichJobs = useCallback(async () => {
+    try {
+      const data = await apiFetch('/master-catalog/enrich-jobs?limit=10');
+      setEnrichJobs(Array.isArray(data?.rows) ? data.rows : []);
+    } catch {
+      // ignore
+    }
+  }, [apiFetch]);
+
+  useEffect(() => { void loadEnrichJobs(); }, [loadEnrichJobs]);
+
+  // Авто-поллінг поки є running-завдання: оновлюємо прогрес, список і витрати.
+  const enrichJobRunning = enrichJobs.some((j) => j.status === 'running');
+  useEffect(() => {
+    if (!enrichJobRunning) return undefined;
+    const t = setInterval(() => {
+      void loadEnrichJobs();
+      void loadList();
+      void loadUsage();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [enrichJobRunning, loadEnrichJobs, loadList, loadUsage]);
+
+  const cancelEnrichJob = async (jobId) => {
+    if (!window.confirm('Скасувати фонове завдання? Уже оброблені SKU лишаться збереженими.')) return;
+    try {
+      await apiFetch(`/master-catalog/enrich-jobs/${jobId}/cancel`, { method: 'POST' });
+      await loadEnrichJobs();
+    } catch (err) {
+      alert('Помилка: ' + (err?.message || 'unknown'));
+    }
+  };
 
   // Обрані id можуть бути поза видимою сторінкою (через "Обрати перші N" —
   // там сервер вже відфільтрував hasFeed=true). Для видимих перевіряємо
@@ -170,9 +205,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     }
   };
 
-  // Bulk enrich — використовує selectedIds (чекбокси). Якщо нічого не обрано —
-  // підказка користувачу. Велику вибірку шлемо порціями (розмір — за моделлю:
-  // синхронний запит має вкластися у ~100с ліміт шлюзу, інакше 524).
+  // Bulk enrich — стартує ФОНОВЕ завдання на сервері (переживає закриття
+  // браузера/ноута). submit повертає одразу; прогрес — у секції «Фонові завдання».
   const runBatchEnrich = async (overwrite = false) => {
     if (isReadOnly || batchRunning) return;
     const candidates = feedCandidates();
@@ -183,41 +217,19 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       return;
     }
     setBatchRunning(true);
-    const pageSize = enrichPageSize(aiModel);
-    const pages = [];
-    for (let i = 0; i < candidates.length; i += pageSize) pages.push(candidates.slice(i, i + pageSize));
-    const agg = {
-      itemsRequested: candidates.length, itemsEnriched: 0, itemsFailed: 0,
-      totalFieldsWritten: 0, inputTokens: 0, outputTokens: 0, durationMs: 0, modelVersion: aiModel
-    };
+    setBatchSummary({ status: `Запускаю фонове завдання для ${candidates.length} SKU (${aiModel})...` });
     try {
-      for (let p = 0; p < pages.length; p++) {
-        const done = agg.itemsEnriched + agg.itemsFailed;
-        setBatchSummary({
-          status: `Обробка ${done}/${candidates.length} SKU · порція ${p + 1}/${pages.length} (model: ${aiModel})...`
-        });
-        const r = await apiFetch('/master-catalog/enrich-batch', {
-          method: 'POST',
-          body: JSON.stringify({ masterIds: pages[p], batchSize, overwrite, model: aiModel })
-        });
-        agg.itemsEnriched += r.itemsEnriched || 0;
-        agg.itemsFailed += r.itemsFailed || 0;
-        agg.totalFieldsWritten += r.totalFieldsWritten || 0;
-        agg.inputTokens += r.inputTokens || 0;
-        agg.outputTokens += r.outputTokens || 0;
-        agg.durationMs += r.durationMs || 0;
-        agg.modelVersion = r.modelVersion || agg.modelVersion;
-        await loadList(); // поступово оновлюємо прогрес у таблиці
-      }
-      setBatchSummary(agg);
-      await loadUsage();
-    } catch (err) {
-      setBatchSummary({
-        ...agg,
-        error: `${err?.message || 'batch_error'} — опрацьовано ${agg.itemsEnriched}/${candidates.length} до помилки (вже збережені)`
+      const r = await apiFetch('/master-catalog/enrich-job', {
+        method: 'POST',
+        body: JSON.stringify({ masterIds: candidates, batchSize, overwrite, model: aiModel })
       });
-      await loadList();
-      await loadUsage();
+      setBatchSummary({
+        status: `✅ Запущено у фоні (завдання #${r.jobId}, ${r.total} SKU, ${r.model}). Можна закрити вкладку — обробка триває на сервері. Прогрес нижче ⤵`
+      });
+      setSelectedIds(new Set());
+      await loadEnrichJobs();
+    } catch (err) {
+      setBatchSummary({ error: err?.message || 'enrich_job_error' });
     } finally {
       setBatchRunning(false);
     }
@@ -504,17 +516,17 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           </label>
           <button
             className="btn btn-sm primary"
-            disabled={isReadOnly || batchRunning || selectedIds.size === 0}
+            disabled={isReadOnly || batchRunning || enrichJobRunning || selectedIds.size === 0}
             onClick={() => runBatchEnrich(false)}
-            title="Тільки порожні поля у AI"
+            title="Запустити у фоні на сервері (переживає закриття браузера). Тільки порожні поля."
           >
-            {batchRunning ? '⏳ AI працює...' : `✨ Enrich (${selectedIds.size}) — порожні`}
+            {batchRunning ? '⏳ запуск...' : `✨ Enrich (${selectedIds.size}) — порожні`}
           </button>
           <button
             className="btn btn-sm"
-            disabled={isReadOnly || batchRunning || selectedIds.size === 0}
+            disabled={isReadOnly || batchRunning || enrichJobRunning || selectedIds.size === 0}
             onClick={() => runBatchEnrich(true)}
-            title="Переписати всі поля"
+            title="Запустити у фоні на сервері. Переписати ВСІ поля."
           >
             🔁 Enrich ({selectedIds.size}) — переписати
           </button>
@@ -550,6 +562,54 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
               </>
             )}
           </div>
+        ) : null}
+
+        {/* Фонові enrichment-завдання (server-side) */}
+        {enrichJobs.length > 0 ? (
+          <details style={{ marginTop: 8, fontSize: 12 }} open={enrichJobRunning}>
+            <summary style={{ cursor: 'pointer', color: '#1a7f37' }}>
+              <strong>⚙️ Фонові завдання enrichment ({enrichJobs.length})</strong> — працюють на сервері, переживають закриття браузера
+            </summary>
+            <table style={{ width: '100%', fontSize: 11, marginTop: 8 }}>
+              <thead><tr style={{ background: '#f5f5f5' }}>
+                <th style={{ textAlign: 'left', padding: 3 }}>#</th>
+                <th>Модель</th><th>Статус</th><th>Прогрес</th><th>Опрацьовано</th>
+                <th>Полів</th><th>Помилок</th><th>Дія</th>
+              </tr></thead>
+              <tbody>
+                {enrichJobs.map((j) => {
+                  const m = j.meta || {};
+                  const total = Number(m.total || 0);
+                  const processed = Number(m.processed || 0);
+                  const pct = total ? Math.round((processed / total) * 100) : 0;
+                  const tone = j.status === 'success' ? 'ok'
+                    : j.status === 'running' ? 'warn'
+                    : j.status === 'canceled' ? 'warn' : 'error';
+                  return (
+                    <tr key={j.id} style={{ borderTop: '1px solid #eee' }}>
+                      <td style={{ padding: 3 }}>{j.id}</td>
+                      <td>{m.model || '—'}</td>
+                      <td><Tag tone={tone}>{j.status}</Tag></td>
+                      <td>
+                        <div style={{ background: '#eee', borderRadius: 4, height: 10, width: 120, overflow: 'hidden' }}>
+                          <div style={{ background: tone === 'error' ? '#c0392b' : '#1a7f37', height: '100%', width: `${pct}%` }} />
+                        </div>
+                        <span style={{ fontSize: 10 }}>{processed}/{total} ({pct}%)</span>
+                      </td>
+                      <td>{Number(m.succeeded || 0)}</td>
+                      <td>{Number(m.fieldsWritten || 0)}</td>
+                      <td style={{ color: Number(m.failed) ? '#a00' : 'inherit' }}>{Number(m.failed || 0)}</td>
+                      <td>
+                        {j.status === 'running' ? (
+                          <button className="btn btn-sm" onClick={() => cancelEnrichJob(j.id)} title="Зупинити між порціями">✖ Скасувати</button>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </details>
         ) : null}
 
         {/* Async batches list */}

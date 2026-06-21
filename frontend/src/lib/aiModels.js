@@ -15,16 +15,6 @@ export function isDeepseek(model) {
   return typeof model === 'string' && model.trim().toLowerCase().startsWith('deepseek');
 }
 
-/**
- * Скільки SKU слати в одному HTTP-запиті sync enrich. Синхронний запит має
- * вкластися у ~100с ліміт шлюзу (інакше 524). deepseek-reasoner — thinking-
- * модель ~13с/SKU, тож дрібні порції; швидкі моделі — більші.
- */
-export function enrichPageSize(model) {
-  if (typeof model === 'string' && model.toLowerCase().includes('reasoner')) return 4;
-  return 20;
-}
-
 export function modelProvider(model) {
   return isDeepseek(model) ? 'deepseek' : 'anthropic';
 }

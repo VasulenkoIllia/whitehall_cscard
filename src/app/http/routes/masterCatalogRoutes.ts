@@ -6,6 +6,7 @@ import type { ExcelImportService } from '../../../core/master_catalog/ExcelImpor
 import type { EnrichmentService } from '../../../core/ai/EnrichmentService';
 import type { AiUsageService } from '../../../core/ai/AiUsageService';
 import type { AnthropicBatchService } from '../../../core/ai/AnthropicBatchService';
+import type { EnrichmentJobService } from '../../../core/ai/EnrichmentJobService';
 import type { AppSettingsService } from '../../../core/settings/AppSettingsService';
 import type { PipelineJobRunner } from '../../../core/jobs/PipelineJobRunner';
 import type { createAuthMiddleware } from '../authMiddleware';
@@ -18,6 +19,7 @@ interface MasterCatalogRouteDeps {
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
   anthropicBatchService: AnthropicBatchService;
+  enrichmentJobService: EnrichmentJobService;
   appSettingsService: AppSettingsService;
   jobRunner: PipelineJobRunner<unknown>;
   authMw: AuthMiddleware;
@@ -75,7 +77,7 @@ function parseBoolOrNull(value: unknown): boolean | null {
 }
 
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
-  const { masterCatalogService, excelImportService, enrichmentService, aiUsageService, anthropicBatchService, appSettingsService, jobRunner, authMw } = deps;
+  const { masterCatalogService, excelImportService, enrichmentService, aiUsageService, anthropicBatchService, enrichmentJobService, appSettingsService, jobRunner, authMw } = deps;
 
   // ─── Excel upload import ────────────────────────────────────────────────────
 
@@ -215,6 +217,90 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
         res.status(readErrorStatus(err)).json({
           error: readErrorMessage(err, 'batch_poll_error')
         });
+      }
+    }
+  );
+
+  // ─── Фонові enrichment-завдання (server-side, переживають закриття браузера) ──
+
+  // POST /enrich-job — стартує фонову обробку вибірки, повертає jobId ОДРАЗУ.
+  app.post(
+    '/admin/api/master-catalog/enrich-job',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const masterIds = Array.isArray(req.body?.masterIds)
+          ? (req.body.masterIds as unknown[]).map((x) => Number(x)).filter((x) => Number.isFinite(x))
+          : [];
+        if (masterIds.length === 0) {
+          res.status(400).json({ error: 'masterIds порожній' });
+          return;
+        }
+        const result = await enrichmentJobService.submit(masterIds, {
+          model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+          batchSize: parsePositiveInt(req.body?.batchSize) || undefined,
+          overwrite: req.body?.overwrite === true || req.body?.overwrite === 'true'
+        });
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'enrich_job_submit_error') });
+      }
+    }
+  );
+
+  // GET /enrich-jobs — останні фонові завдання (для списку + поллінгу).
+  app.get(
+    '/admin/api/master-catalog/enrich-jobs',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const limit = parsePositiveInt(req.query.limit) || 20;
+        const rows = await enrichmentJobService.recent(limit);
+        res.json({ rows });
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'enrich_jobs_list_error') });
+      }
+    }
+  );
+
+  // GET /enrich-jobs/:id — статус одного завдання (поллінг прогресу).
+  app.get(
+    '/admin/api/master-catalog/enrich-jobs/:id',
+    authMw.requireRole('viewer'),
+    async (req: Request, res: Response) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'id обовʼязковий' });
+          return;
+        }
+        const row = await enrichmentJobService.get(id);
+        if (!row) {
+          res.status(404).json({ error: 'Завдання не знайдено' });
+          return;
+        }
+        res.json(row);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'enrich_job_get_error') });
+      }
+    }
+  );
+
+  // POST /enrich-jobs/:id/cancel — попросити зупинку (між порціями).
+  app.post(
+    '/admin/api/master-catalog/enrich-jobs/:id/cancel',
+    authMw.requireRole('admin'),
+    async (req: Request, res: Response) => {
+      try {
+        const id = parsePositiveInt(req.params.id);
+        if (!id) {
+          res.status(400).json({ error: 'id обовʼязковий' });
+          return;
+        }
+        const result = await enrichmentJobService.cancel(id);
+        res.json(result);
+      } catch (err) {
+        res.status(readErrorStatus(err)).json({ error: readErrorMessage(err, 'enrich_job_cancel_error') });
       }
     }
   );

@@ -1548,6 +1548,7 @@ export function createHttpServer(appContext: AppContext) {
     enrichmentService: appContext.enrichmentService,
     aiUsageService: appContext.aiUsageService,
     anthropicBatchService: appContext.anthropicBatchService,
+    enrichmentJobService: appContext.enrichmentJobService,
     appSettingsService: appContext.appSettingsService,
     jobRunner,
     authMw

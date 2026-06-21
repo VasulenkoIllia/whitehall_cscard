@@ -41,6 +41,7 @@ import { EnrichmentService } from '../core/ai/EnrichmentService';
 import { AiUsageService } from '../core/ai/AiUsageService';
 import { createAnthropicBatchClient } from '../core/ai/AnthropicBatchClient';
 import { AnthropicBatchService } from '../core/ai/AnthropicBatchService';
+import { EnrichmentJobService } from '../core/ai/EnrichmentJobService';
 import { AppSettingsService } from '../core/settings/AppSettingsService';
 
 const LEGACY_ROOT = '/Users/monstermac/WebstormProjects/whitehall.store_integration';
@@ -313,6 +314,7 @@ export interface Application {
   enrichmentService: EnrichmentService;
   aiUsageService: AiUsageService;
   anthropicBatchService: AnthropicBatchService;
+  enrichmentJobService: EnrichmentJobService;
   appSettingsService: AppSettingsService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
@@ -406,6 +408,13 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     env,
     appSettingsService
   );
+  // Фонові enrichment-завдання (server-side, переживають закриття браузера).
+  const enrichmentJobService = new EnrichmentJobService(
+    pool,
+    enrichmentService,
+    jobService,
+    logService
+  );
   const jobRunner = new PipelineJobRunner(
     pipeline,
     jobService,
@@ -473,6 +482,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     enrichmentService,
     aiUsageService,
     anthropicBatchService,
+    enrichmentJobService,
     appSettingsService,
     cleanupService,
     storeMirrorService,
