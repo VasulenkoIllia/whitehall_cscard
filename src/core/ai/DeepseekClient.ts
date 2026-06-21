@@ -144,7 +144,10 @@ export function createDeepseekClient(
           return {
             content,
             rawText,
-            modelVersion: payload?.model || params.model,
+            // У лог пишемо ОБРАНУ модель (deepseek-chat / deepseek-reasoner).
+            // DeepSeek у відповіді повертає назву базової моделі (deepseek-v4-flash)
+            // для обох режимів — це приховувало б, що саме запускали.
+            modelVersion: params.model,
             inputTokens,
             outputTokens,
             // У DeepSeek немає окремого «запису в кеш» — кеш автоматичний.
