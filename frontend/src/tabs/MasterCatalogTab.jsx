@@ -5,7 +5,7 @@ import { ExcelImportModal } from '../components/ExcelImportModal';
 import { PromptPreviewModal } from '../components/PromptPreviewModal';
 import { MasterDrillIn } from '../components/MasterDrillIn';
 import { ModelSelect } from '../components/ModelSelect';
-import { isDeepseek } from '../lib/aiModels';
+import { isDeepseek, enrichPageSize } from '../lib/aiModels';
 import { TOTAL_FIELDS } from '../lib/masterFields';
 
 export function MasterCatalogTab({ apiFetch, isReadOnly }) {
@@ -170,14 +170,9 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     }
   };
 
-  // Скільки SKU шлемо в ОДНОМУ HTTP-запиті enrich-batch. Синхронний enrich
-  // обробляється на сервері до відповіді; якщо запит триває >~100с, шлюз
-  // (Cloudflare) рве його з 524. Тому ріжемо вибірку на порції клієнтом —
-  // кожен запит вкладається у ліміт, а прогрес видно поступово.
-  const REQUEST_PAGE = 20;
-
   // Bulk enrich — використовує selectedIds (чекбокси). Якщо нічого не обрано —
-  // підказка користувачу. Велику вибірку шлемо порціями по REQUEST_PAGE.
+  // підказка користувачу. Велику вибірку шлемо порціями (розмір — за моделлю:
+  // синхронний запит має вкластися у ~100с ліміт шлюзу, інакше 524).
   const runBatchEnrich = async (overwrite = false) => {
     if (isReadOnly || batchRunning) return;
     const candidates = feedCandidates();
@@ -188,8 +183,9 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
       return;
     }
     setBatchRunning(true);
+    const pageSize = enrichPageSize(aiModel);
     const pages = [];
-    for (let i = 0; i < candidates.length; i += REQUEST_PAGE) pages.push(candidates.slice(i, i + REQUEST_PAGE));
+    for (let i = 0; i < candidates.length; i += pageSize) pages.push(candidates.slice(i, i + pageSize));
     const agg = {
       itemsRequested: candidates.length, itemsEnriched: 0, itemsFailed: 0,
       totalFieldsWritten: 0, inputTokens: 0, outputTokens: 0, durationMs: 0, modelVersion: aiModel
