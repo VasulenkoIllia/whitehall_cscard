@@ -36,6 +36,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
   // Фонові enrichment-завдання (server-side):
   const [enrichJobs, setEnrichJobs] = useState([]);
   const [excelModalOpen, setExcelModalOpen] = useState(false);
+  // Експорт: за замовчуванням лише опрацьовані (готові) SKU.
+  const [exportOnlyAi, setExportOnlyAi] = useState(true);
   // "Обрати перші N за фільтром" (10/50/100):
   const [selectCount, setSelectCount] = useState(100);
   const [selectingFirstN, setSelectingFirstN] = useState(false);
@@ -367,18 +369,25 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
         <button
           className="btn"
           onClick={() => {
-            // Експорт за поточними фільтрами. Звичайна навігація — cookie auth
-            // працює для same-origin GET, браузер сам скачає attachment.
+            // Звичайна навігація — cookie auth працює для same-origin GET,
+            // браузер сам скачає attachment.
             const params = new URLSearchParams({ sort });
             if (search.trim()) params.set('search', search.trim());
             if (hasFeed) params.set('hasFeed', hasFeed);
-            if (hasAi) params.set('hasAi', hasAi);
+            // «тільки опрацьовані» примусово hasAi=true (готові SKU незалежно від
+            // фільтра списку). Інакше беремо лише валідні true/false (НЕ 'pending').
+            if (exportOnlyAi) params.set('hasAi', 'true');
+            else if (hasAi === 'true' || hasAi === 'false') params.set('hasAi', hasAi);
             window.location.assign(`/admin/api/master-catalog/export.xlsx?${params.toString()}`);
           }}
-          title="Скачати .xlsx: sku + 23 AI-поля + метадані. Враховує поточні фільтри — постав AI=«Опрацьовано», щоб скачати тільки збагачені"
+          title="Скачати .xlsx: sku + 23 AI-поля + метадані"
         >
           📤 Експорт XLSX
         </button>
+        <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }} title="Експортувати лише AI-збагачені (готові) SKU">
+          <input type="checkbox" checked={exportOnlyAi} onChange={(e) => setExportOnlyAi(e.target.checked)} />
+          тільки опрацьовані
+        </label>
         {lastSyncSummary ? (
           <Tag tone="ok">
             +{lastSyncSummary.inserted} нових, {lastSyncSummary.skipped} вже існували, {lastSyncSummary.durationMs}ms
