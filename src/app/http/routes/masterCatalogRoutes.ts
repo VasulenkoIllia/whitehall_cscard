@@ -76,6 +76,11 @@ function parseBoolOrNull(value: unknown): boolean | null {
   return null;
 }
 
+function parseCompleteness(value: unknown): 'no_desc' | 'incomplete' | null {
+  if (value === 'no_desc' || value === 'incomplete') return value;
+  return null;
+}
+
 export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalogRouteDeps): void {
   const { masterCatalogService, excelImportService, enrichmentService, aiUsageService, anthropicBatchService, enrichmentJobService, appSettingsService, jobRunner, authMw } = deps;
 
@@ -471,6 +476,7 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
           hasFeed: parseBoolOrNull(req.query.hasFeed),
           hasAi: parseBoolOrNull(req.query.hasAi),
           pendingBatch: parseBoolOrNull(req.query.pendingBatch),
+          completeness: parseCompleteness(req.query.completeness),
           isActive: parseBoolOrNull(req.query.isActive),
           page: parsePositiveInt(req.query.page) || 1,
           pageSize: parsePositiveInt(req.query.pageSize) || 50,
@@ -517,6 +523,7 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
             hasFeed: parseBoolOrNull(req.query.hasFeed),
             hasAi: parseBoolOrNull(req.query.hasAi),
             pendingBatch: parseBoolOrNull(req.query.pendingBatch),
+            completeness: parseCompleteness(req.query.completeness),
             isActive: parseBoolOrNull(req.query.isActive),
             sort: typeof req.query.sort === 'string' ? req.query.sort : 'newest'
           },
@@ -546,6 +553,7 @@ export function registerMasterCatalogRoutes(app: Application, deps: MasterCatalo
             hasName: parseBoolOrNull(req.query.hasName),
             hasFeed: parseBoolOrNull(req.query.hasFeed),
             hasAi: parseBoolOrNull(req.query.hasAi),
+            completeness: parseCompleteness(req.query.completeness),
             isActive: parseBoolOrNull(req.query.isActive),
             sort: typeof req.query.sort === 'string' ? req.query.sort : 'sku_asc'
           },

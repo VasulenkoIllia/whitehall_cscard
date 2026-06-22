@@ -52,6 +52,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
     if (hasFeed) p.set('hasFeed', hasFeed);
     if (hasAi === 'true' || hasAi === 'false') p.set('hasAi', hasAi);
     if (hasAi === 'pending') p.set('pendingBatch', 'true');
+    // Повнота результату (серед опрацьованих) — для перегенерації прогалин.
+    if (hasAi === 'no_desc' || hasAi === 'incomplete') p.set('completeness', hasAi);
     return p;
   }, [search, hasFeed, hasAi, sort]);
 
@@ -409,6 +411,11 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
           <span>Всього: <b>{catalogStats.total}</b></span>
           <span>З даними: <b>{catalogStats.withFeed}</b></span>
           <span style={{ color: '#1a7f37' }}>🤖 Опрацьовано: <b>{catalogStats.aiEnriched}</b></span>
+          {catalogStats.noDescription > 0 ? (
+            <span style={{ color: '#c0392b' }} title="Опрацьовані, але без опису — обери фільтр «БЕЗ опису» і перегенеруй (Enrich — порожні)">
+              ⚠️ Без опису: <b>{catalogStats.noDescription}</b>
+            </span>
+          ) : null}
           <span style={{ color: '#8e44ad' }}>⏳ У черзі (batch): <b>{catalogStats.pendingBatch}</b></span>
           <span style={{ color: '#b35900' }}>✨ Лишилось: <b>{catalogStats.fresh}</b></span>
           {catalogStats.withFeed > 0 ? (
@@ -443,6 +450,8 @@ export function MasterCatalogTab({ apiFetch, isReadOnly }) {
             <option value="">Усі</option>
             <option value="false">✨ Не опрацьовані</option>
             <option value="true">🤖 Опрацьовані</option>
+            <option value="no_desc">⚠️ Опрацьовані БЕЗ опису</option>
+            <option value="incomplete">◐ Опрацьовані неповні (&lt;8 полів)</option>
             <option value="pending">⏳ У черзі</option>
           </select>
         </div>

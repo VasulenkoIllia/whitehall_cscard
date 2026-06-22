@@ -40,6 +40,17 @@ export const MASTER_CATALOG_FIELDS = [
 
 export type MasterCatalogField = (typeof MASTER_CATALOG_FIELDS)[number];
 
+/** SQL-вираз: скільки з 23 атрибутних полів заповнені (для filled_count і фільтрів). */
+export const FILLED_COUNT_EXPR = MASTER_CATALOG_FIELDS.map(
+  (f) =>
+    `(CASE WHEN ${f} IS NOT NULL${
+      f === 'old_price' ? '' : ` AND btrim(${f}::text) <> ''`
+    } THEN 1 ELSE 0 END)`
+).join(' + ');
+
+/** Поріг «неповних»: опрацьовано, але заповнено менше стількох полів із 23. */
+export const INCOMPLETE_FILLED_THRESHOLD = 8;
+
 export interface MasterCatalogSyncSummary {
   runId: number;
   jobId: number;
@@ -57,6 +68,12 @@ export interface MasterCatalogListFilters {
   hasAi?: boolean | null;
   /** true — тільки SKU в активному (незавершеному) async batch; false — без них. */
   pendingBatch?: boolean | null;
+  /**
+   * Повнота AI-результату (серед опрацьованих):
+   *   'no_desc'    — без опису (description_full_uk порожній);
+   *   'incomplete' — заповнено < INCOMPLETE_FILLED_THRESHOLD полів.
+   */
+  completeness?: 'no_desc' | 'incomplete' | null;
   isActive?: boolean | null;
   page?: number;
   pageSize?: number;
@@ -71,6 +88,10 @@ export interface MasterCatalogStats {
   pendingBatch: number;
   /** Готові до відправки: з фідом, без AI, не в черзі. */
   fresh: number;
+  /** Опрацьовані, але без опису (description_full_uk порожній) — треба догенерувати. */
+  noDescription: number;
+  /** Опрацьовані, але неповні (< INCOMPLETE_FILLED_THRESHOLD полів). */
+  incomplete: number;
 }
 
 /**
@@ -236,6 +257,15 @@ export class MasterCatalogService {
     if (filters.hasAi === false) where.push(`ai_enriched_at IS NULL`);
     if (filters.pendingBatch === true) where.push(`id IN ${PENDING_BATCH_IDS_SQL}`);
     if (filters.pendingBatch === false) where.push(`id NOT IN ${PENDING_BATCH_IDS_SQL}`);
+    // Повнота результату — лише серед уже опрацьованих (ai_enriched_at IS NOT NULL).
+    if (filters.completeness === 'no_desc') {
+      where.push(
+        `ai_enriched_at IS NOT NULL AND (description_full_uk IS NULL OR btrim(description_full_uk) = '')`
+      );
+    }
+    if (filters.completeness === 'incomplete') {
+      where.push(`ai_enriched_at IS NOT NULL AND (${FILLED_COUNT_EXPR}) < ${INCOMPLETE_FILLED_THRESHOLD}`);
+    }
     if (filters.isActive === true) where.push(`is_active = TRUE`);
     if (filters.isActive === false) where.push(`is_active = FALSE`);
 
@@ -264,12 +294,7 @@ export class MasterCatalogService {
     const orderBy = this.resolveOrderBy(filters.sort);
 
     // filled_count — скільки з 23 атрибутних полів заповнені.
-    const filledExpr = MASTER_CATALOG_FIELDS.map(
-      (f) =>
-        `(CASE WHEN ${f} IS NOT NULL${
-          f === 'old_price' ? '' : ` AND btrim(${f}::text) <> ''`
-        } THEN 1 ELSE 0 END)`
-    ).join(' + ');
+    const filledExpr = FILLED_COUNT_EXPR;
 
     params.push(pageSize, offset);
     const limitParamIdx = params.length - 1;
@@ -313,6 +338,8 @@ export class MasterCatalogService {
       ai_enriched: number;
       pending_batch: number;
       fresh: number;
+      no_description: number;
+      incomplete: number;
     }>(`
       SELECT
         COUNT(*)::int AS total,
@@ -323,7 +350,15 @@ export class MasterCatalogService {
           WHERE feed_matched_at IS NOT NULL
             AND ai_enriched_at IS NULL
             AND id NOT IN ${PENDING_BATCH_IDS_SQL}
-        )::int AS fresh
+        )::int AS fresh,
+        COUNT(*) FILTER (
+          WHERE ai_enriched_at IS NOT NULL
+            AND (description_full_uk IS NULL OR btrim(description_full_uk) = '')
+        )::int AS no_description,
+        COUNT(*) FILTER (
+          WHERE ai_enriched_at IS NOT NULL
+            AND (${FILLED_COUNT_EXPR}) < ${INCOMPLETE_FILLED_THRESHOLD}
+        )::int AS incomplete
       FROM master_catalog
     `);
     const r = res.rows[0];
@@ -332,7 +367,9 @@ export class MasterCatalogService {
       withFeed: Number(r?.with_feed || 0),
       aiEnriched: Number(r?.ai_enriched || 0),
       pendingBatch: Number(r?.pending_batch || 0),
-      fresh: Number(r?.fresh || 0)
+      fresh: Number(r?.fresh || 0),
+      noDescription: Number(r?.no_description || 0),
+      incomplete: Number(r?.incomplete || 0)
     };
   }
 
@@ -381,12 +418,7 @@ export class MasterCatalogService {
     const { whereSql, params } = this.buildListWhere(filters);
     const orderBy = this.resolveOrderBy(filters.sort);
     const needsFilled = orderBy.includes('filled_count');
-    const filledExpr = MASTER_CATALOG_FIELDS.map(
-      (f) =>
-        `(CASE WHEN ${f} IS NOT NULL${
-          f === 'old_price' ? '' : ` AND btrim(${f}::text) <> ''`
-        } THEN 1 ELSE 0 END)`
-    ).join(' + ');
+    const filledExpr = FILLED_COUNT_EXPR;
 
     params.push(capped);
     const sql = `
