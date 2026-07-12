@@ -22,6 +22,29 @@ import type { LogService } from '../pipeline/log';
 export const ENRICH_JOB_TYPE = 'enrich_batch_bg';
 const LOCK_NAME = 'enrichment_batch';
 
+/**
+ * Хард-ліміт на обробку однієї порції. Провайдер (напр. DeepSeek) інколи
+ * зависає намертво, а клієнтський AbortController не завжди рве «напіввідкритий»
+ * сокет — тоді цикл блокувався б на await НАЗАВЖДИ (морозив job, скасування не
+ * діяло). Цей таймаут спрацьовує через setTimeout незалежно від сокета: якщо
+ * порція не вклалась — вона падає у failed, а job іде далі.
+ */
+const PAGE_TIMEOUT_MS = Number(process.env.ENRICH_PAGE_TIMEOUT_MS) || 240_000;
+
+/** Проміс з хард-таймаутом (не залежить від abort/сокета). */
+function withHardTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label}: хард-таймаут ${Math.round(ms / 1000)}с (виклик завис)`)),
+      ms
+    );
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 export interface EnrichJobOptions {
   model?: string;
   batchSize?: number;
@@ -124,11 +147,16 @@ export class EnrichmentJobService {
         }
         const chunk = masterIds.slice(i, i + page);
         try {
-          const r = await this.enrichment.enrichBatch(chunk, {
-            model: opts.model,
-            batchSize: opts.batchSize,
-            overwriteExisting: opts.overwrite
-          });
+          // Хард-таймаут: якщо провайдер завис — порція падає, job не морозиться.
+          const r = await withHardTimeout(
+            this.enrichment.enrichBatch(chunk, {
+              model: opts.model,
+              batchSize: opts.batchSize,
+              overwriteExisting: opts.overwrite
+            }),
+            PAGE_TIMEOUT_MS,
+            'enrichBatch'
+          );
           agg.processed += r.itemsRequested || chunk.length;
           agg.succeeded += r.itemsEnriched || 0;
           agg.failed += r.itemsFailed || 0;
@@ -136,7 +164,9 @@ export class EnrichmentJobService {
           agg.inputTokens += r.inputTokens || 0;
           agg.outputTokens += r.outputTokens || 0;
         } catch (err) {
-          // Ціла порція впала (напр. провайдер недоступний) — рахуємо failed і йдемо далі.
+          // Порція впала (провайдер недоступний / завис / таймаут) — рахуємо
+          // failed і йдемо далі. Ці SKU лишаються «не опрацьованими» — добереш
+          // повторним прогоном. Зависла корутина (якщо була) відпаде у фоні.
           agg.processed += chunk.length;
           agg.failed += chunk.length;
           await this.logs.log(jobId, 'warning', 'enrich порція впала', {
