@@ -47,6 +47,19 @@ function dropPrice(base: number, final: number): number {
   return Math.ceil((base + final) / 2 / 10) * 10;
 }
 
+// Штамп «прайс актуальний станом на …» у київському часі.
+function buildBanner(now: Date): string {
+  const stamp = new Intl.DateTimeFormat('uk-UA', {
+    timeZone: 'Europe/Kyiv',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(now);
+  return `Прайс актуальний станом на ${stamp} (Київ)`;
+}
+
 // Синтетичні, але реалістичні рядки (взяті зі звіреної прод-вибірки).
 function buildSampleRows(): (string | number)[][] {
   const samples: Array<{
@@ -102,6 +115,7 @@ async function main() {
     sheetName: args.tab,
     header: HEADER,
     rows,
+    bannerText: buildBanner(new Date()),
     onProgress: (written, total) => console.log(`  записано ${written}/${total}`)
   });
 

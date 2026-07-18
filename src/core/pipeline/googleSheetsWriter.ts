@@ -144,6 +144,11 @@ export interface WriteSheetTableOptions {
   header: string[];
   rows: CellValue[][];
   batchRows?: number;
+  // Optional highlighted banner written above the header (row 1), e.g. a
+  // "прайс актуальний станом на …" timestamp. When set, the header moves to
+  // row 2 and data starts at row 3; the banner is merged across all columns,
+  // bold, with a yellow background, and the top two rows are frozen.
+  bannerText?: string;
   onProgress?: (writtenDataRows: number, totalDataRows: number) => void;
 }
 
@@ -165,14 +170,14 @@ async function ensureSheetGrid(
   sheetName: string,
   neededRows: number,
   neededCols: number
-): Promise<void> {
+): Promise<number> {
   const meta = await writeWithRetry<any>(() => sheets.spreadsheets.get({ spreadsheetId }));
   const existing = (meta.data.sheets || []).find(
     (s: any) => s.properties?.title === sheetName
   );
 
   if (!existing) {
-    await writeWithRetry<any>(() =>
+    const addRes = await writeWithRetry<any>(() =>
       sheets.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
@@ -189,14 +194,14 @@ async function ensureSheetGrid(
         }
       })
     );
-    return;
+    return addRes.data?.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
   }
 
   const sheetId = existing.properties?.sheetId ?? 0;
   const curRows = existing.properties?.gridProperties?.rowCount || 0;
   const curCols = existing.properties?.gridProperties?.columnCount || 0;
   if (curRows >= neededRows && curCols >= neededCols) {
-    return;
+    return sheetId;
   }
   await writeWithRetry<any>(() =>
     sheets.spreadsheets.batchUpdate({
@@ -218,6 +223,79 @@ async function ensureSheetGrid(
         ]
       }
     })
+  );
+  return sheetId;
+}
+
+// Header/banner styling applied after the values are written. Merges + highlights
+// the banner row, bolds the header, and freezes the top rows so buyers keep the
+// "actual as of" stamp and column titles in view while scrolling. Re-run safe:
+// unmerge precedes merge so a second run does not error on an existing merge.
+async function applyTableFormatting(
+  sheets: any,
+  spreadsheetId: string,
+  sheetId: number,
+  cols: number,
+  hasBanner: boolean
+): Promise<void> {
+  const headerRowIndex = hasBanner ? 1 : 0; // 0-based
+  const requests: any[] = [];
+
+  if (hasBanner) {
+    const bannerRange = {
+      sheetId,
+      startRowIndex: 0,
+      endRowIndex: 1,
+      startColumnIndex: 0,
+      endColumnIndex: cols
+    };
+    requests.push({ unmergeCells: { range: bannerRange } });
+    requests.push({ mergeCells: { range: bannerRange, mergeType: 'MERGE_ALL' } });
+    requests.push({
+      repeatCell: {
+        range: bannerRange,
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.99, green: 0.9, blue: 0.36 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            textFormat: { bold: true, fontSize: 12 }
+          }
+        },
+        fields:
+          'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)'
+      }
+    });
+  }
+
+  requests.push({
+    repeatCell: {
+      range: {
+        sheetId,
+        startRowIndex: headerRowIndex,
+        endRowIndex: headerRowIndex + 1,
+        startColumnIndex: 0,
+        endColumnIndex: cols
+      },
+      cell: {
+        userEnteredFormat: {
+          backgroundColor: { red: 0.9, green: 0.9, blue: 0.9 },
+          textFormat: { bold: true }
+        }
+      },
+      fields: 'userEnteredFormat(backgroundColor,textFormat)'
+    }
+  });
+
+  requests.push({
+    updateSheetProperties: {
+      properties: { sheetId, gridProperties: { frozenRowCount: headerRowIndex + 1 } },
+      fields: 'gridProperties.frozenRowCount'
+    }
+  });
+
+  await writeWithRetry<any>(() =>
+    sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } })
   );
 }
 
@@ -243,14 +321,17 @@ export async function writeSheetTable(
     }
     const batchRows = Math.max(1, options.batchRows || defaultBatchRows);
     const lastCol = columnLetter(cols);
-    const totalRows = rows.length + 1; // + header
+    const hasBanner = Boolean(options.bannerText && options.bannerText.trim());
+    const headerRowNum = hasBanner ? 2 : 1; // 1-based
+    const dataStartRow = headerRowNum + 1;
+    const totalRows = rows.length + (hasBanner ? 2 : 1); // banner + header
 
     const auth = buildWriteJwtClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
     let apiCalls = 0;
 
-    await ensureSheetGrid(sheets, spreadsheetId, sheetName, totalRows, cols);
+    const sheetId = await ensureSheetGrid(sheets, spreadsheetId, sheetName, totalRows, cols);
     apiCalls += 1;
 
     await writeWithRetry<any>(() =>
@@ -258,10 +339,22 @@ export async function writeSheetTable(
     );
     apiCalls += 1;
 
+    if (hasBanner) {
+      await writeWithRetry<any>(() =>
+        sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${sheetName}!A1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [[options.bannerText]] }
+        })
+      );
+      apiCalls += 1;
+    }
+
     await writeWithRetry<any>(() =>
       sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!A1:${lastCol}1`,
+        range: `${sheetName}!A${headerRowNum}:${lastCol}${headerRowNum}`,
         valueInputOption: 'RAW',
         requestBody: { values: [header] }
       })
@@ -272,7 +365,7 @@ export async function writeSheetTable(
     let written = 0;
     for (let start = 0; start < rows.length; start += batchRows) {
       const slice = rows.slice(start, start + batchRows);
-      const startRow = 2 + start; // 1-based, after header
+      const startRow = dataStartRow + start; // 1-based, after header
       const endRow = startRow + slice.length - 1;
       // eslint-disable-next-line no-await-in-loop
       await writeWithRetry<any>(() =>
@@ -290,6 +383,9 @@ export async function writeSheetTable(
         options.onProgress(written, rows.length);
       }
     }
+
+    await applyTableFormatting(sheets, spreadsheetId, sheetId, cols, hasBanner);
+    apiCalls += 1;
 
     return {
       spreadsheetId,
