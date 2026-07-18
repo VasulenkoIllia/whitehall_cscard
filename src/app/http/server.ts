@@ -1054,11 +1054,11 @@ export function createHttpServer(appContext: AppContext) {
         'quantity',
         'price_base',
         'price_final',
-        'price_drop',
         'extra',
         'comment',
         'supplier',
-        'supplier_sku_prefix'
+        'supplier_sku_prefix',
+        'price_drop'
       ]);
 
       while (true) {
@@ -1083,11 +1083,11 @@ export function createHttpServer(appContext: AppContext) {
             row.quantity,
             row.price_base,
             row.price_final,
-            row.price_drop,
             row.extra,
             row.comment,
             row.supplier_name,
-            row.supplier_sku_prefix
+            row.supplier_sku_prefix,
+            row.price_drop
           ]);
         }
 

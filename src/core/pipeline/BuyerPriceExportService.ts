@@ -164,7 +164,9 @@ export class BuyerPriceExportService {
     try {
       locked = await this.jobs.acquireJobLock(job.id, LOCK_NAME);
       if (!locked) {
-        await this.jobs.finishJob(job.id);
+        // Не finishJob: job ще 'queued', а finishJob оновлює лише 'running' → лишив
+        // би вічний 'queued' (cleanup його не чистить). failJob → термінальний 'failed'.
+        await this.jobs.failJob(job.id, new Error('another buyer_price_export is running'));
         await this.logs.log(job.id, 'warning', 'buyer_price_export skipped: locked', {});
         return { status: 'locked', reason: 'another_export_running', jobId: job.id };
       }
@@ -173,6 +175,12 @@ export class BuyerPriceExportService {
       const asOf = options?.asOf ?? (await this.getLastFinalizeAt());
       const rows = await this.loadRows();
 
+      // Guard: невалідний timeoutMs (NaN/0/від'ємний) → setTimeout(fn, NaN) спрацював
+      // би миттєво і завжди таймаутив. Фолбек на 180с.
+      const timeoutMs =
+        Number.isFinite(this.config.timeoutMs) && this.config.timeoutMs > 0
+          ? this.config.timeoutMs
+          : 180000;
       const writeResult = await withTimeout(
         writeSheetTable({
           spreadsheetIdOrUrl: this.config.sheetId,
@@ -182,7 +190,7 @@ export class BuyerPriceExportService {
           batchRows: this.config.batchRows,
           bannerText: buildBanner(asOf)
         }),
-        this.config.timeoutMs,
+        timeoutMs,
         'buyer_price_export write'
       );
 

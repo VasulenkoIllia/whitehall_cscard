@@ -598,6 +598,32 @@ export class PipelineJobRunner<MappedRow = unknown> {
     );
   }
 
+  // Detached-запуск прайсу покупцям. НІКОЛИ не кидає — усе логуємо всередині;
+  // критично, бо в застосунку немає глобального unhandledRejection-хендлера, а
+  // сирий reject від fire-and-forget-промісу міг би завалити процес.
+  private async runBuyerPriceExportDetached(parentJobId: number): Promise<void> {
+    const service = this.buyerPriceExport;
+    if (!service) {
+      return;
+    }
+    try {
+      const result = await service.export();
+      await this.logs.log(parentJobId, 'info', 'buyer_price_export (bg)', {
+        status: result.status,
+        dataRows: result.dataRows ?? null,
+        asOf: result.asOf ?? null
+      });
+    } catch (err) {
+      try {
+        await this.logs.log(parentJobId, 'warning', 'buyer_price_export (bg) failed', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      } catch {
+        // Навіть збій логування не має валити процес — проковтуємо.
+      }
+    }
+  }
+
   async runUpdatePipeline(
     supplier: string | null
   ): Promise<JobRunnerResult<UpdatePipelineSummary<MappedRow>>> {
@@ -637,24 +663,14 @@ export class PipelineJobRunner<MappedRow = unknown> {
         this.pipeline.runFinalize(jobId)
       );
 
-      // Прайс покупцям (дроп-ціни) у Google Sheet — прив'язано до події завершення
-      // finalize, а не до окремого часу: слідує за будь-яким кроном update_pipeline.
-      // ТОЛЕРАНТНО: залежить від products_final, а не від пушу в магазин, тому йде
-      // ПЕРЕД store_import; збій/таймаут запису лише логуємо — пайплайн і магазин
-      // оновлюються як завжди. Свій лок + хард-таймаут усередині export().
+      // Прайс покупцям (дроп-ціни) — прив'язано до події завершення finalize, тож
+      // слідує за будь-яким кроном update_pipeline. Запускаємо DETACHED (fire-and-
+      // forget): НЕ затримує store_import (критичний шлях у магазин) і НЕ може
+      // завалити/заблокувати пайплайн. Свій лок + хард-таймаут усередині export();
+      // помилки лише в лог. runBuyerPriceExportDetached НІКОЛИ не кидає (в застосунку
+      // немає глобального unhandledRejection-хендлера — це обов'язкова умова).
       if (this.buyerPriceExport?.isAutoEnabled()) {
-        try {
-          const exportResult = await this.buyerPriceExport.export();
-          await this.logs.log(parent.id, 'info', 'buyer_price_export (pipeline step)', {
-            status: exportResult.status,
-            dataRows: exportResult.dataRows ?? null,
-            asOf: exportResult.asOf ?? null
-          });
-        } catch (err) {
-          await this.logs.log(parent.id, 'warning', 'buyer_price_export step failed (ignored)', {
-            error: err instanceof Error ? err.message : String(err)
-          });
-        }
+        void this.runBuyerPriceExportDetached(parent.id);
       }
 
       const storeStep = await this.runChildStep(
