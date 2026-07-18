@@ -51,6 +51,17 @@ export function ManualControlTab({
           </button>
         </div>
 
+        <div className="actions" style={{ marginTop: 8 }}>
+          <button
+            className="btn"
+            disabled={isReadOnly}
+            title="Повне перезаписування вкладки прайсу покупцям (дроп-ціни, тільки в наявності). Виконується також автоматично після кожної фіналізації."
+            onClick={() => runJob('buyer_price_export', '/jobs/buyer-price-export')}
+          >
+            Вивантажити прайс покупцям (Google)
+          </button>
+        </div>
+
         <details className="details-block" style={{ marginTop: 10 }}>
           <summary>
             Розширені дії · крок 4:{' '}

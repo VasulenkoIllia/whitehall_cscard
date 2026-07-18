@@ -13,23 +13,32 @@
 
  Реальний режим (читання products_final з БД) підключається у Фазі 2b.
 */
+import { Pool } from 'pg';
 import { writeSheetTable } from '../core/pipeline/googleSheetsWriter';
+import {
+  BUYER_PRICE_HEADER,
+  BuyerPriceExportService
+} from '../core/pipeline/BuyerPriceExportService';
+import { JobService } from '../core/jobs/JobService';
+import { LogService } from '../core/pipeline/log';
 
-// Колонки прайсу покупцям (узгоджено з користувачем).
-const HEADER = ['Артикул', 'Назва', 'Розмір', 'Кількість', 'Ціна'];
+// Колонки прайсу покупцям (єдине джерело — сервіс).
+const HEADER = BUYER_PRICE_HEADER;
 
 interface Args {
   sample: boolean;
+  real: boolean;
   dryRun: boolean;
   tab: string;
   sheet: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { sample: false, dryRun: false, tab: 'DRAFT', sheet: '' };
+  const args: Args = { sample: false, real: false, dryRun: false, tab: 'DRAFT', sheet: '' };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--sample') args.sample = true;
+    else if (a === '--real') args.real = true;
     else if (a === '--dry-run' || a === '--dry') args.dryRun = true;
     else if (a === '--tab') {
       i += 1;
@@ -90,14 +99,33 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const sheet = args.sheet || process.env.BUYER_PRICE_SHEET_ID || '';
 
-  let rows: (string | number)[][];
-  if (args.sample) {
-    rows = buildSampleRows();
-  } else {
-    throw new Error(
-      'Реальний режим (з products_final) підключається у Фазі 2b. Для локального тесту використай --sample.'
-    );
+  // Реальний режим: читає products_final (quantity>0) із DATABASE_URL і пише
+  // прайс. Пре-флайт на проді у чернеткову вкладку: --real --tab DRAFT.
+  if (args.real) {
+    if (!sheet) {
+      throw new Error('Вкажи таблицю: --sheet <ID> (або BUYER_PRICE_SHEET_ID у .env)');
+    }
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    try {
+      const service = new BuyerPriceExportService(pool, new JobService(pool), new LogService(pool), {
+        enabled: true,
+        sheetId: sheet,
+        sheetTab: args.tab,
+        batchRows: Math.max(500, Number(process.env.BUYER_PRICE_BATCH_ROWS || 10000)),
+        timeoutMs: Math.max(30000, Number(process.env.BUYER_PRICE_TIMEOUT_MS || 600000))
+      });
+      const result = await service.export();
+      console.log(JSON.stringify(result, null, 2));
+    } finally {
+      await pool.end();
+    }
+    return;
   }
+
+  if (!args.sample) {
+    throw new Error('Вкажи режим: --sample (синтетика) або --real (з products_final).');
+  }
+  const rows = buildSampleRows();
 
   if (args.dryRun) {
     console.log(JSON.stringify({ header: HEADER, rows, count: rows.length }, null, 2));

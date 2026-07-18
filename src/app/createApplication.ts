@@ -24,6 +24,7 @@ import { ImporterDb } from '../core/pipeline/importerDb';
 import { LogService } from '../core/pipeline/log';
 import { createTelegramAlertServiceFromEnv } from '../core/alerts/TelegramAlertService';
 import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
+import { BuyerPriceExportService } from '../core/pipeline/BuyerPriceExportService';
 import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
 import { CleanupService } from '../core/jobs/CleanupService';
@@ -295,6 +296,7 @@ export interface Application {
   logService: LogService;
   jobService: JobService;
   jobRunner: PipelineJobRunner<unknown>;
+  buyerPriceExportService: BuyerPriceExportService;
   scheduler: JobScheduler;
   schedulerSettingsService: SchedulerSettingsService;
   catalogAdminService: CatalogAdminService;
@@ -361,12 +363,20 @@ export function createApplication(env: Record<string, string | undefined>): Appl
   });
   const jobService = new JobService(pool);
   const cleanupService = new CleanupService(pool);
+  const buyerPriceExportService = new BuyerPriceExportService(pool, jobService, logService, {
+    enabled: env.BUYER_PRICE_EXPORT_ENABLED === 'true',
+    sheetId: env.BUYER_PRICE_SHEET_ID || '',
+    sheetTab: env.BUYER_PRICE_SHEET_TAB || 'Прайс',
+    batchRows: Math.max(500, Number(env.BUYER_PRICE_BATCH_ROWS || 10000)),
+    timeoutMs: Math.max(30000, Number(env.BUYER_PRICE_TIMEOUT_MS || 180000))
+  });
   const jobRunner = new PipelineJobRunner(
     pipeline,
     jobService,
     logService,
     cleanupService,
-    storeMirrorService
+    storeMirrorService,
+    buyerPriceExportService
   );
   const scheduler = new JobScheduler({
     enabled: config.scheduler.enabled,
@@ -419,6 +429,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     logService,
     jobService,
     jobRunner,
+    buyerPriceExportService,
     scheduler,
     schedulerSettingsService,
     catalogAdminService,

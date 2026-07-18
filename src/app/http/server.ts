@@ -1438,6 +1438,21 @@ export function createHttpServer(appContext: AppContext) {
     }
   );
 
+  app.post(
+    '/admin/api/jobs/buyer-price-export',
+    authMw.requireRole('admin'),
+    async (_req: Request, res: Response) => {
+      try {
+        const result = await appContext.buyerPriceExportService.export();
+        res.json(result);
+      } catch (err) {
+        res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'buyer_price_export_error') });
+      }
+    }
+  );
+
   app.post('/admin/api/jobs/cleanup', authMw.requireRole('admin'), async (req: Request, res: Response) => {
     const requested = Number(req.body?.retentionDays);
     const retentionDays = Number.isFinite(requested)

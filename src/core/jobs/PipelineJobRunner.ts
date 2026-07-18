@@ -10,6 +10,7 @@ import type {
 import { JobService, type JobRecord } from './JobService';
 import type { CleanupService, CleanupSummary } from './CleanupService';
 import type { StoreMirrorService, StoreMirrorSyncSummary } from './StoreMirrorService';
+import type { BuyerPriceExportService } from '../pipeline/BuyerPriceExportService';
 import type { StoreImportProgress } from '../connectors/StoreConnector';
 
 const BLOCKING_JOB_TYPES = [
@@ -98,7 +99,10 @@ export class PipelineJobRunner<MappedRow = unknown> {
     private readonly jobs: JobService,
     private readonly logs: LogService,
     private readonly cleanupService: CleanupService,
-    private readonly storeMirrorService: StoreMirrorService
+    private readonly storeMirrorService: StoreMirrorService,
+    // Опційний — прайс покупцям. Толерантний крок після finalize; його відсутність
+    // (undefined) або збій не впливають на пайплайн.
+    private readonly buyerPriceExport?: BuyerPriceExportService
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -632,6 +636,27 @@ export class PipelineJobRunner<MappedRow = unknown> {
       const finalizeStep = await this.runChildStep(parent.id, 'finalize', {}, (jobId) =>
         this.pipeline.runFinalize(jobId)
       );
+
+      // Прайс покупцям (дроп-ціни) у Google Sheet — прив'язано до події завершення
+      // finalize, а не до окремого часу: слідує за будь-яким кроном update_pipeline.
+      // ТОЛЕРАНТНО: залежить від products_final, а не від пушу в магазин, тому йде
+      // ПЕРЕД store_import; збій/таймаут запису лише логуємо — пайплайн і магазин
+      // оновлюються як завжди. Свій лок + хард-таймаут усередині export().
+      if (this.buyerPriceExport?.isEnabled()) {
+        try {
+          const exportResult = await this.buyerPriceExport.export();
+          await this.logs.log(parent.id, 'info', 'buyer_price_export (pipeline step)', {
+            status: exportResult.status,
+            dataRows: exportResult.dataRows ?? null,
+            asOf: exportResult.asOf ?? null
+          });
+        } catch (err) {
+          await this.logs.log(parent.id, 'warning', 'buyer_price_export step failed (ignored)', {
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+
       const storeStep = await this.runChildStep(
         parent.id,
         'store_import',
