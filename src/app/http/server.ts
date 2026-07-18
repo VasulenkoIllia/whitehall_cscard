@@ -1059,7 +1059,8 @@ export function createHttpServer(appContext: AppContext) {
         'extra',
         'comment',
         'supplier',
-        'supplier_sku_prefix'
+        'supplier_sku_prefix',
+        'price_drop'
       ]);
 
       while (true) {
@@ -1087,7 +1088,8 @@ export function createHttpServer(appContext: AppContext) {
             row.extra,
             row.comment,
             row.supplier_name,
-            row.supplier_sku_prefix
+            row.supplier_sku_prefix,
+            row.price_drop
           ]);
         }
 
@@ -1434,6 +1436,21 @@ export function createHttpServer(appContext: AppContext) {
         res
           .status(readErrorStatus(err))
           .json({ error: readErrorMessage(err, 'store_mirror_sync_error') });
+      }
+    }
+  );
+
+  app.post(
+    '/admin/api/jobs/buyer-price-export',
+    authMw.requireRole('admin'),
+    async (_req: Request, res: Response) => {
+      try {
+        const result = await appContext.buyerPriceExportService.export();
+        res.json(result);
+      } catch (err) {
+        res
+          .status(readErrorStatus(err))
+          .json({ error: readErrorMessage(err, 'buyer_price_export_error') });
       }
     }
   );

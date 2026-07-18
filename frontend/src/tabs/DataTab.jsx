@@ -65,6 +65,7 @@ const VIEW_CONFIG = {
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
       { key: 'price_final', label: 'Фінальна ціна' },
+      { key: 'price_drop', label: 'Дроп ціна' },
       { key: 'extra', label: 'Назва' },
       { key: 'comment', label: 'Коментар' },
       { key: 'created_at', label: 'Створено' }
@@ -555,6 +556,7 @@ export function DataTab({
                           column.key === 'price' ||
                           column.key === 'price_base' ||
                           column.key === 'price_final' ||
+                          column.key === 'price_drop' ||
                           column.key === 'store_price'
                         ) {
                           return <td key={`${rowIndex}_${column.key}`}>{formatPriceCell(row[column.key])}</td>;

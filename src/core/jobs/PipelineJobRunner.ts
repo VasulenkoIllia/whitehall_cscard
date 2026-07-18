@@ -10,6 +10,7 @@ import type {
 import { JobService, type JobRecord } from './JobService';
 import type { CleanupService, CleanupSummary } from './CleanupService';
 import type { StoreMirrorService, StoreMirrorSyncSummary } from './StoreMirrorService';
+import type { BuyerPriceExportService } from '../pipeline/BuyerPriceExportService';
 import type { StoreImportProgress } from '../connectors/StoreConnector';
 import type {
   MasterCatalogService,
@@ -107,7 +108,10 @@ export class PipelineJobRunner<MappedRow = unknown> {
     private readonly logs: LogService,
     private readonly cleanupService: CleanupService,
     private readonly storeMirrorService: StoreMirrorService,
-    private readonly masterCatalogService?: MasterCatalogService | null
+    private readonly masterCatalogService?: MasterCatalogService | null,
+    // Опційний — прайс покупцям. Толерантний крок після finalize; його відсутність
+    // (undefined) або збій не впливають на пайплайн.
+    private readonly buyerPriceExport?: BuyerPriceExportService
   ) {}
 
   private async ensureNoRunningJobs(): Promise<void> {
@@ -617,6 +621,32 @@ export class PipelineJobRunner<MappedRow = unknown> {
     );
   }
 
+  // Detached-запуск прайсу покупцям. НІКОЛИ не кидає — усе логуємо всередині;
+  // критично, бо в застосунку немає глобального unhandledRejection-хендлера, а
+  // сирий reject від fire-and-forget-промісу міг би завалити процес.
+  private async runBuyerPriceExportDetached(parentJobId: number): Promise<void> {
+    const service = this.buyerPriceExport;
+    if (!service) {
+      return;
+    }
+    try {
+      const result = await service.export();
+      await this.logs.log(parentJobId, 'info', 'buyer_price_export (bg)', {
+        status: result.status,
+        dataRows: result.dataRows ?? null,
+        asOf: result.asOf ?? null
+      });
+    } catch (err) {
+      try {
+        await this.logs.log(parentJobId, 'warning', 'buyer_price_export (bg) failed', {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      } catch {
+        // Навіть збій логування не має валити процес — проковтуємо.
+      }
+    }
+  }
+
   async runUpdatePipeline(
     supplier: string | null
   ): Promise<JobRunnerResult<UpdatePipelineSummary<MappedRow>>> {
@@ -655,6 +685,17 @@ export class PipelineJobRunner<MappedRow = unknown> {
       const finalizeStep = await this.runChildStep(parent.id, 'finalize', {}, (jobId) =>
         this.pipeline.runFinalize(jobId)
       );
+
+      // Прайс покупцям (дроп-ціни) — прив'язано до події завершення finalize, тож
+      // слідує за будь-яким кроном update_pipeline. Запускаємо DETACHED (fire-and-
+      // forget): НЕ затримує store_import (критичний шлях у магазин) і НЕ може
+      // завалити/заблокувати пайплайн. Свій лок + хард-таймаут усередині export();
+      // помилки лише в лог. runBuyerPriceExportDetached НІКОЛИ не кидає (в застосунку
+      // немає глобального unhandledRejection-хендлера — це обов'язкова умова).
+      if (this.buyerPriceExport?.isAutoEnabled()) {
+        void this.runBuyerPriceExportDetached(parent.id);
+      }
+
       const storeStep = await this.runChildStep(
         parent.id,
         'store_import',

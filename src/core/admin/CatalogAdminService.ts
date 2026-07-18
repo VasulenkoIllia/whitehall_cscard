@@ -1636,6 +1636,10 @@ export class CatalogAdminService {
     const result = await this.pool.query(
       `SELECT pf.article, pf.size, pf.quantity, pf.price_base,
               pf.price_final,
+              CASE
+                WHEN pf.price_base IS NULL OR pf.price_final IS NULL THEN NULL
+                ELSE CEIL((pf.price_base + pf.price_final) / 2 / 10) * 10
+              END AS price_drop,
               pf.extra, pf.comment_text AS comment, sp.name AS supplier_name, sp.sku_prefix AS supplier_sku_prefix,
               pf.created_at, pf.job_id,
               COUNT(*) OVER() AS total
