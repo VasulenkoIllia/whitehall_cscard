@@ -92,19 +92,6 @@ export class BuyerPriceExportService {
     return this.config.enabled && this.isConfigured();
   }
 
-  // Час завершення останнього finalize — "актуально станом на".
-  private async getLastFinalizeAt(): Promise<Date | null> {
-    const res = await this.pool.query(
-      `SELECT finished_at
-         FROM jobs
-        WHERE type = 'finalize' AND finished_at IS NOT NULL
-        ORDER BY finished_at DESC
-        LIMIT 1`
-    );
-    const value = res.rows[0]?.finished_at;
-    return value ? new Date(value) : null;
-  }
-
   // Keyset-читання всіх in-stock рядків у пам'ять (порціями, щоб не тримати
   // курсор і не робити OFFSET). ~148k рядків × 5 колонок ≈ десятки МБ — ок.
   private async loadRows(): Promise<(string | number)[][]> {
@@ -172,7 +159,9 @@ export class BuyerPriceExportService {
       }
 
       await this.jobs.startJob(job.id);
-      const asOf = options?.asOf ?? (await this.getLastFinalizeAt());
+      // Дата банера = час ГЕНЕРАЦІЇ прайсу (момент вивантаження) — оновлюється при
+      // кожному прогоні. На авто-шляху це ≈ час finalize (експорт іде одразу після).
+      const asOf = options?.asOf ?? new Date();
       const rows = await this.loadRows();
 
       // Guard: невалідний timeoutMs (NaN/0/від'ємний) → setTimeout(fn, NaN) спрацював
