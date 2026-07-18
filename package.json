@@ -27,7 +27,8 @@
     "import:legacy-config": "node dist/scripts/importSupplierConfigSnapshot.js",
     "hash-password": "node dist/scripts/hashPassword.js",
     "export:config": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; node dist/scripts/exportProdConfig.js'",
-    "import:config": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; node dist/scripts/importProdConfig.js'"
+    "import:config": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; node dist/scripts/importProdConfig.js'",
+    "export:buyer-price": "sh -c 'set -a; [ -f .env ] && . ./.env; set +a; node dist/scripts/runBuyerPriceExport.js \"$@\"' _"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
