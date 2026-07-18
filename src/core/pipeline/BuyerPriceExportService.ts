@@ -81,8 +81,15 @@ export class BuyerPriceExportService {
     private readonly config: BuyerPriceExportConfig
   ) {}
 
-  isEnabled(): boolean {
-    return this.config.enabled && Boolean(this.config.sheetId);
+  // Чи задано таблицю — цього достатньо для РУЧНОГО запуску (кнопка / CLI).
+  isConfigured(): boolean {
+    return Boolean(this.config.sheetId);
+  }
+
+  // Чи вмикати АВТО-крок після finalize (окремий прапорець + задана таблиця).
+  // Ручна кнопка від цього прапорця НЕ залежить.
+  isAutoEnabled(): boolean {
+    return this.config.enabled && this.isConfigured();
   }
 
   // Час завершення останнього finalize — "актуально станом на".
@@ -147,8 +154,8 @@ export class BuyerPriceExportService {
    * пайплайні — обгортай у try/catch).
    */
   async export(options?: { asOf?: Date | null }): Promise<BuyerPriceExportResult> {
-    if (!this.isEnabled()) {
-      return { status: 'skipped', reason: 'disabled_or_no_sheet' };
+    if (!this.isConfigured()) {
+      return { status: 'skipped', reason: 'no_sheet' };
     }
 
     const job = await this.jobs.createJob('buyer_price_export', { sheetId: this.config.sheetId });

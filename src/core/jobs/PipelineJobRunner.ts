@@ -642,7 +642,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
       // ТОЛЕРАНТНО: залежить від products_final, а не від пушу в магазин, тому йде
       // ПЕРЕД store_import; збій/таймаут запису лише логуємо — пайплайн і магазин
       // оновлюються як завжди. Свій лок + хард-таймаут усередині export().
-      if (this.buyerPriceExport?.isEnabled()) {
+      if (this.buyerPriceExport?.isAutoEnabled()) {
         try {
           const exportResult = await this.buyerPriceExport.export();
           await this.logs.log(parent.id, 'info', 'buyer_price_export (pipeline step)', {
