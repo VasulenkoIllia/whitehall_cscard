@@ -394,7 +394,7 @@ async function testResumeMismatchGuards(pool: Pool): Promise<void> {
     { log: async () => undefined } as any,
     { run: async () => ({ retentionDays: 1, deletedRows: 0 }) } as any,
     {
-      createSyncMarker: () => new Date().toISOString(),
+      createSyncMarker: async () => new Date().toISOString(),
       upsertSnapshotChunk: async () => 0,
       pruneSnapshot: async () => 0
     } as any
@@ -494,6 +494,13 @@ async function testMirrorPrunesVanishedRowsInvariant(pool: Pool): Promise<void> 
   const kept = ['K-01', 'K-02', 'K-03', 'K-04', 'K-05', 'K-06', 'K-07', 'K-08', 'K-09', 'K-10'];
 
   await pool.query(`DELETE FROM store_mirror`);
+
+  // First sync ever: the mirror is empty and the ratio guard must not divide by zero.
+  assert.equal(
+    await mirror.pruneSnapshot('cscart', await mirror.createSyncMarker()),
+    0,
+    'pruning an empty mirror must be a no-op'
+  );
 
   const previous = await mirror.createSyncMarker();
   await mirror.upsertSnapshotChunk('cscart', mirrorRows([...kept, 'GONE-1']), previous);
