@@ -611,7 +611,10 @@ export default function App() {
       }
       const [statsPayload, readinessPayload, jobsPayload, logsPayload, latestErrorsPayload] = await Promise.all([
         apiFetch('/stats'),
-        apiFetch('/backend-readiness?store=cscart&maxMirrorAgeMinutes=120'),
+        // Без maxMirrorAgeMinutes — бекенд бере ліміт із CSCART_DELTA_MAX_MIRROR_AGE_MINUTES,
+        // той самий, за яким працюють фільтри дельти. Зашите тут раніше значення 120
+        // розходилося з реальним циклом пайплайну і показувало "не готово" на рівному місці.
+        apiFetch('/backend-readiness?store=cscart'),
         apiFetch('/jobs?limit=25'),
         apiFetch(`/logs?${logsQuery.toString()}`),
         apiFetch('/logs?limit=5&level=error')

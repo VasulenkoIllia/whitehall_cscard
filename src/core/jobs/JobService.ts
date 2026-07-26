@@ -61,6 +61,14 @@ function normalizeJsonPayload(value: unknown): Record<string, unknown> | null {
   return { message: String(value) };
 }
 
+/**
+ * How long a job that holds the global lock may stay in status 'queued' before
+ * another job is allowed to reclaim the lock. Covers the createJob→startJob
+ * window with a wide margin; a process that dies in between frees the lock
+ * after this delay instead of blocking the scheduler forever.
+ */
+const JOB_LOCK_QUEUED_GRACE_SECONDS = 120;
+
 export class JobService {
   constructor(private readonly pool: Pool) {}
 
@@ -287,19 +295,29 @@ export class JobService {
       return true;
     }
 
+    // Reclaim a lock left behind by a crashed process — but never one that is
+    // simply not started yet. Every caller does createJob() (status 'queued')
+    // and only then startJob() (status 'running'); treating 'queued' as dead
+    // meant a second job could steal the lock inside that window. On 2026-07-22
+    // update_pipeline and the standalone store_mirror_sync fired 3 ms apart and
+    // both ran, wiping store_mirror. A queued job keeps its lock for the grace
+    // period; after that it is assumed dead and the lock becomes reclaimable.
     await this.pool.query(
       `DELETE FROM job_locks jl
        WHERE jl.name = $1
-         AND (
-           jl.job_id IS NULL
-           OR NOT EXISTS (
-             SELECT 1
-             FROM jobs j
-             WHERE j.id = jl.job_id
-               AND j.status = 'running'
-           )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM jobs j
+           WHERE j.id = jl.job_id
+             AND (
+               j.status = 'running'
+               OR (
+                 j.status = 'queued'
+                 AND j.created_at > NOW() - make_interval(secs => $2::int)
+               )
+             )
          )`,
-      [name]
+      [name, JOB_LOCK_QUEUED_GRACE_SECONDS]
     );
 
     return tryAcquire();

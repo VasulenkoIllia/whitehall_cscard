@@ -132,16 +132,6 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
         runOnStartup: readBoolean(env, 'SCHEDULER_UPDATE_PIPELINE_RUN_ON_STARTUP', false),
         supplier: readOptionalString(env, 'SCHEDULER_UPDATE_PIPELINE_SUPPLIER')
       },
-      storeMirrorSync: {
-        enabled: readBoolean(env, 'SCHEDULER_STORE_MIRROR_SYNC_ENABLED', false),
-        intervalMinutes: readPositiveInteger(
-          env,
-          'SCHEDULER_STORE_MIRROR_SYNC_INTERVAL_MINUTES',
-          120,
-          issues
-        ),
-        runOnStartup: readBoolean(env, 'SCHEDULER_STORE_MIRROR_SYNC_RUN_ON_STARTUP', false)
-      },
       cleanup: {
         enabled: readBoolean(env, 'SCHEDULER_CLEANUP_ENABLED', false),
         intervalMinutes: readPositiveInteger(

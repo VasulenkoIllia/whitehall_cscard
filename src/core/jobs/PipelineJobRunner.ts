@@ -604,7 +604,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
       'store_mirror_sync',
       { store },
       async (_jobId) => {
-        const seenAt = this.storeMirrorService.createSyncMarker();
+        const seenAt = await this.storeMirrorService.createSyncMarker();
         let upserted = 0;
         const snapshot = await this.pipeline.forEachStoreMirrorPage(async (items) => {
           upserted += await this.storeMirrorService.upsertSnapshotChunk(store, items, seenAt);
@@ -669,7 +669,7 @@ export class PipelineJobRunner<MappedRow = unknown> {
         'store_mirror_sync',
         { store },
         async (_jobId) => {
-          const seenAt = this.storeMirrorService.createSyncMarker();
+          const seenAt = await this.storeMirrorService.createSyncMarker();
           let upserted = 0;
           const snapshot = await this.pipeline.forEachStoreMirrorPage(async (items) => {
             upserted += await this.storeMirrorService.upsertSnapshotChunk(store, items, seenAt);

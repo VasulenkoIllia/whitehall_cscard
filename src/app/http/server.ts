@@ -1245,9 +1245,11 @@ export function createHttpServer(appContext: AppContext) {
         typeof req.query.maxMirrorAgeMinutes === 'string'
           ? Number(req.query.maxMirrorAgeMinutes)
           : NaN;
+      // Falls back to the same age limit the delta filters use, so the readiness
+      // badge and the actual import logic cannot disagree about a fresh mirror.
       const maxMirrorAgeMinutes = Number.isFinite(maxMirrorAgeMinutesRaw)
         ? Math.max(1, Math.trunc(maxMirrorAgeMinutesRaw))
-        : 120;
+        : appContext.mirrorMaxAgeMinutes;
       const result = await catalogAdmin.getBackendReadiness({
         store,
         maxMirrorAgeMinutes
