@@ -44,9 +44,7 @@
 - `SCHEDULER_UPDATE_PIPELINE_INTERVAL_MINUTES` — інтервал запуску `update_pipeline` (default `180`).
 - `SCHEDULER_UPDATE_PIPELINE_RUN_ON_STARTUP` — одноразовий запуск `update_pipeline` після старту сервера.
 - `SCHEDULER_UPDATE_PIPELINE_SUPPLIER` — фільтр supplier для `update_pipeline` (optional).
-- `SCHEDULER_STORE_MIRROR_SYNC_ENABLED` — запуск `store_mirror_sync`.
-- `SCHEDULER_STORE_MIRROR_SYNC_INTERVAL_MINUTES` — інтервал sync mirror (default `120`).
-- `SCHEDULER_STORE_MIRROR_SYNC_RUN_ON_STARTUP` — одноразовий mirror sync після старту.
+- ~~`SCHEDULER_STORE_MIRROR_SYNC_ENABLED`~~, ~~`SCHEDULER_STORE_MIRROR_SYNC_INTERVAL_MINUTES`~~, ~~`SCHEDULER_STORE_MIRROR_SYNC_RUN_ON_STARTUP`~~ — **прибрано в липні 2026.** Знімок магазину виконується кроком ① усередині `update_pipeline`, окремої крон-задачі більше немає. Паралельний запуск двох знімків знищував `store_mirror` — розбір у [`RUNBOOK_STORE_MIRROR_RACE_2026_07.md`](./RUNBOOK_STORE_MIRROR_RACE_2026_07.md).
 - `SCHEDULER_CLEANUP_ENABLED` — запуск `cleanup`.
 - `SCHEDULER_CLEANUP_INTERVAL_MINUTES` — інтервал cleanup (default `720`).
 - `SCHEDULER_CLEANUP_RUN_ON_STARTUP` — одноразовий cleanup після старту.

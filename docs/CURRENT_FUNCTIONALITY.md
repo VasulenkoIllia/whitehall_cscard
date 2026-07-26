@@ -18,7 +18,7 @@
 - `Націнки` — markup rule sets: list/create/update/default + conditions editor.
 - `Дані` — merged/final/compare preview + `В магазині` (store mirror) + `До відправки` (store preview) + server filters/sort/paging + підтаб **Розміри**.
   - **Compare-вкладка** (12 колонок): `SKU (ефективний)`, `Розмір`, `Постачальник`, `SKU префікс`, `К-сть`, `Базова ціна`, `Фінальна ціна`, `SKU з розміром`, `SKU магазину`, **`Варіація-група`** (CS-Cart variation_group_code), **`Колекція в магазині`** (feature 558), `Назва`. Чекбокс **«Лише без колекції»** працює незалежно від «Лише missing» — комбінація обох дає кандидатів на створення нових товарів. Пошук охоплює `article`/`SKU`/`колекцію`/`варіація-групу`. Прибрано: `Артикул в магазині` (давав фантомні `-`), `Ціна в магазині`, `Видимість`, `Постачальник в магазині`, `Коментар`. **CSV-експорт синхронізований з UI** — ті самі 12 полів (раніше було 16, backwards-incompat для скриптів що читають CSV по позиції). Деталі в [`CSCART_CONNECTOR_NOTES.md`](./CSCART_CONNECTOR_NOTES.md#колекція-в-магазині-feature-558-2026-05-09).
-- `Крон` — runtime-налаштування scheduler (`update_pipeline`, `store_mirror_sync`, `cleanup`).
+- `Крон` — runtime-налаштування scheduler (`update_pipeline`, `cleanup`). Знімок магазину окремої задачі не має — це крок ① усередині `update_pipeline`.
 - `Моніторинг` — jobs/logs + 5 останніх error + modal-деталі + filter by level/jobId.
 - Авторефреш на вкладці `Дані` **видалено** — пагінація стабільна, дані не стрибають.
 - Активна вкладка зберігається в URL `?tab=` + localStorage.
@@ -108,7 +108,8 @@
 | 031 | `031_add_amount_to_store_mirror.sql` | Додає колонку `amount INTEGER NOT NULL DEFAULT 0` до `store_mirror` (для синхронізації реальної кількості) |
 | 032 | `032_store_mirror_feature_indexes.sql` | Partial GIN на `raw->'product_features'` + functional partial для feature_564='Y' (~5-10 сек на 200k+) |
 | 033 | `033_add_collection_code_to_store_mirror.sql` | Додає `collection_code TEXT` + partial B-tree індекс `(store, collection_code)` + бекфіл з feature 558. UPDATE ~30-60 сек на 239k. **Після міграції виконати `VACUUM (ANALYZE) store_mirror`** (поза транзакцією). |
-| 034 | `034_add_variation_group_code_to_store_mirror.sql` | Додає `variation_group_code TEXT` + partial B-tree індекс `(store, variation_group_code)` + бекфіл з top-level field. UPDATE ~30-60 сек на 239k. **Після міграції виконати `VACUUM (ANALYZE) store_mirror`** і **обов'язково pause mirror_sync** на час деплою — minimum required, інакше можливі lock-конфлікти як траплялись при деплої 033. |
+| 034 | `034_add_variation_group_code_to_store_mirror.sql` | Додає `variation_group_code TEXT` + partial B-tree індекс `(store, variation_group_code)` + бекфіл з top-level field. UPDATE ~30-60 сек на 239k. **Після міграції виконати `VACUUM (ANALYZE) store_mirror`** і **обов'язково паузити `update_pipeline`** на час деплою — minimum required, інакше можливі lock-конфлікти як траплялись при деплої 033. |
+| 041 | `041_disable_standalone_store_mirror_sync.sql` | Вимикає осиротілий рядок `cron_settings` для `store_mirror_sync`. Задача була кроком пайплайну ще з березня, але рядок у БД лишався увімкненим і задача працювала паралельно, знищуючи дзеркало. Деталі — [`RUNBOOK_STORE_MIRROR_RACE_2026_07.md`](./RUNBOOK_STORE_MIRROR_RACE_2026_07.md) |
 
 ### Config snapshot (перенос даних між середовищами)
 - `npm run export:config` → `output/prod_config_snapshot.json` (постачальники, джерела, маппінги колонок, націнки, розміри).
@@ -205,9 +206,11 @@ appendCsCartMissingAsHidden ЗАПУСКАЄТЬСЯ якщо:
 - **Graceful shutdown:** SIGTERM → позначає running jobs як failed + видаляє job_locks перед закриттям pool.
 - **Startup cleanup:** orphaned `running` jobs → `failed` + `DELETE FROM job_locks` при старті.
   - Cleanup awaited перед `scheduler.start()` — усуває race condition де scheduler знаходив застарілі `running` jobs і кидав 409 ("інший джоб виконується").
-- Scheduler (env-driven): `update_pipeline`, `store_mirror_sync`, `cleanup`.
+- Scheduler (env-driven): `update_pipeline`, `cleanup`. Знімок магазину виконується як крок ① усередині `update_pipeline`; окремої крон-задачі `store_mirror_sync` немає (лишився тільки ручний запуск з вкладки «Ручне керування»).
 - Runtime API для scheduler: `GET/PUT /admin/api/cron-settings` (персистенс у `cron_settings`, без рестарту).
-- **Job lock self-healing:** `acquireJobLock` автоматично видаляє stale lock якщо referenced job вже не `running`.
+- **Job lock self-healing:** `acquireJobLock` видаляє stale lock, якщо referenced job уже не `running` — **окрім** job'а, створеного менш ніж 120 секунд тому і ще в статусі `queued`. Без цього винятку другий job міг відібрати лок у вікні між `createJob` і `startJob` (інцидент 22.07.2026, див. [`RUNBOOK_STORE_MIRROR_RACE_2026_07.md`](./RUNBOOK_STORE_MIRROR_RACE_2026_07.md)).
+- **Знімок магазину не видаляє чужі рядки:** `pruneSnapshot` чистить лише `seen_at < marker` і відмовляється видаляти понад `STORE_MIRROR_MAX_PRUNE_RATIO` (default `0.2`) дзеркала.
+- **`store_import` не працює наосліп:** падає, якщо дзеркало порожнє/протухле або якщо частка відсутніх у дзеркалі перевищує `CSCART_MAX_MISSING_IN_MIRROR_RATIO` (default `0.8`). Раніше такі випадки давали зелений прогін із нульовою відправкою.
 
 ## Стабільність
 - Daily partition для `products_raw`.

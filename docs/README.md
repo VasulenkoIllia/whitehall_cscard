@@ -19,6 +19,8 @@
 - `ARCHITECTURE_BASELINE_2026_03.md` — що вже закладено в `whitehall_cscard` після рев’ю документації та як це мапиться на legacy-код.
 - `CSCART_CONNECTOR_NOTES.md` — конспект CS-Cart REST API та мапінг під наш нейтральний preview.
 - `AUTH_SIMPLE_ROLES.md` — план простої авторизації (admin/viewer) без реєстрації, з сесіями та хешованими паролями.
+- `RUNBOOK_STORE_MIRROR_RACE_2026_07.md` — інцидент 22.07.2026: паралельні знімки магазину знищували `store_mirror`, `store_import` мовчки не відправляв нічого. Ланцюг подій, масштаб, виправлення, зміни в поведінці та перевірка після деплою.
+- `DEPLOYMENT.md` — середовища, контейнери, workflow розробки, деплой TEST/PROD, паузи перед міграціями з бекфілом.
 
 Посилання на вихідну бізнес-логіку:
 - Кодова база Horoshop (джерело істини логіки, імпорт/фіналізація/експорт): `/Users/monstermac/WebstormProjects/whitehall.store_integration`.
