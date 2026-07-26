@@ -88,6 +88,17 @@ function readEnvPositiveInt(value: string | undefined, fallback: number): number
   return Math.trunc(parsed);
 }
 
+/**
+ * How old store_mirror may be before it stops being treated as the truth about
+ * the store. Single source for both the delta filters and the readiness gate —
+ * the UI badge used to hardcode 120 minutes of its own, which meant it reported
+ * "not ready" for a third of every pipeline interval once the standalone mirror
+ * sync was removed.
+ */
+function readMirrorMaxAgeMinutes(env: Record<string, string | undefined>): number {
+  return readEnvPositiveInt(env.CSCART_DELTA_MAX_MIRROR_AGE_MINUTES, 120);
+}
+
 /** Reads a 0..1 share; anything outside that range falls back to the default. */
 function readEnvRatio(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -195,10 +206,7 @@ function createImportBatchOptimizer(
   if (config.base.activeStore !== 'cscart') {
     return undefined;
   }
-  const maxMirrorAgeMinutes = readEnvPositiveInt(
-    env.CSCART_DELTA_MAX_MIRROR_AGE_MINUTES,
-    120
-  );
+  const maxMirrorAgeMinutes = readMirrorMaxAgeMinutes(env);
   const disableMissingOnFullImport =
     String(env.CSCART_DISABLE_MISSING_ON_FULL_IMPORT || 'true').toLowerCase() !== 'false';
   const featureScopeEnabled =
@@ -351,6 +359,8 @@ export interface Application {
   catalogAdminService: CatalogAdminService;
   cleanupService: CleanupService;
   storeMirrorService: StoreMirrorService;
+  /** Age limit that makes store_mirror stop counting as the truth about the store. */
+  mirrorMaxAgeMinutes: number;
   migrationTargets: string[];
   auth: AuthService;
   /** Resolves when orphaned-job cleanup has completed. Await before starting the scheduler. */
@@ -504,6 +514,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
       }
       await pool.end();
     },
+    mirrorMaxAgeMinutes: readMirrorMaxAgeMinutes(env),
     migrationTargets: [
       `${LEGACY_ROOT}/src/services/importService.js -> src/core/pipeline`,
       `${LEGACY_ROOT}/src/services/finalizeService.js -> src/core/pipeline`,
