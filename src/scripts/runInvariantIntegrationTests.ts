@@ -415,6 +415,45 @@ async function testResumeMismatchGuards(pool: Pool): Promise<void> {
   );
 }
 
+/**
+ * Regression for the lock hole behind the 2026-07-22 incident.
+ *
+ * Every caller creates its job (status 'queued') and only then starts it
+ * (status 'running'). The reclaim branch of acquireJobLock treated anything
+ * that was not 'running' as a dead holder, so a second job arriving inside that
+ * window simply took the lock away. The scheduler fires all due tasks in one
+ * tick, so update_pipeline and the standalone store_mirror_sync hit it 3 ms
+ * apart and both proceeded.
+ */
+async function testJobLockQueuedGraceInvariant(pool: Pool): Promise<void> {
+  const jobs = new JobService(pool);
+  await pool.query(`DELETE FROM job_locks`);
+
+  const holder = await jobs.createJob('update_pipeline', {});
+  assert.equal(await jobs.acquireJobLock(holder.id), true, 'first job must take the lock');
+
+  const rival = await jobs.createJob('store_mirror_sync', {});
+  assert.equal(
+    await jobs.acquireJobLock(rival.id),
+    false,
+    'a queued lock holder must not be mistaken for a dead one'
+  );
+
+  await jobs.startJob(holder.id);
+  assert.equal(
+    await jobs.acquireJobLock(rival.id),
+    false,
+    'a running lock holder must keep the lock'
+  );
+
+  await jobs.failJob(holder.id, new Error('process crashed'));
+  assert.equal(
+    await jobs.acquireJobLock(rival.id),
+    true,
+    'a dead lock holder must release the lock'
+  );
+}
+
 function mirrorRow(article: string): MirrorRow {
   return {
     article,
@@ -587,6 +626,7 @@ async function main(): Promise<void> {
     }
 
     await run('resume-guards', () => testResumeMismatchGuards(pool));
+    await run('job-lock-queued-grace', () => testJobLockQueuedGraceInvariant(pool));
     await run('concurrent-mirror-snapshots', () => testConcurrentMirrorSnapshotsInvariant(pool));
     await run('mirror-prunes-vanished-rows', () => testMirrorPrunesVanishedRowsInvariant(pool));
     await run('mirror-prune-safety-valve', () => testMirrorPruneSafetyValveInvariant(pool));
