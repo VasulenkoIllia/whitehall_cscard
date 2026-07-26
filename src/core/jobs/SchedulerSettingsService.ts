@@ -20,11 +20,10 @@ interface CronSettingRow {
   updated_at: string;
 }
 
-const ALLOWED_TASK_NAMES: SchedulerTaskName[] = [
-  'update_pipeline',
-  'store_mirror_sync',
-  'cleanup'
-];
+// store_mirror_sync is intentionally absent: the snapshot runs as a step of
+// update_pipeline, not on its own schedule. A leftover cron_settings row for it
+// is ignored rather than applied.
+const ALLOWED_TASK_NAMES: SchedulerTaskName[] = ['update_pipeline', 'cleanup'];
 
 function normalizeMeta(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

@@ -443,14 +443,12 @@ export function createApplication(env: Record<string, string | undefined>): Appl
         runOnStartup: config.scheduler.updatePipeline.runOnStartup,
         action: () => jobRunner.runUpdatePipeline(schedulerRuntimeState.updatePipelineSupplier)
       },
-      {
-        name: 'store_mirror_sync',
-        enabled: config.scheduler.storeMirrorSync.enabled,
-        intervalMs: config.scheduler.storeMirrorSync.intervalMinutes * 60 * 1000,
-        cron: null,
-        runOnStartup: config.scheduler.storeMirrorSync.runOnStartup,
-        action: () => jobRunner.runStoreMirrorSync()
-      },
+      // store_mirror_sync is deliberately NOT a scheduled task. The snapshot is
+      // step ① of update_pipeline (see 9517dbc, "add mirror sync to update
+      // pipeline"), and running it standalone as well only creates collisions:
+      // whenever both fell on the same tick the run either wiped store_mirror or
+      // took the lock and cancelled the whole pipeline. Manual runs stay
+      // available via POST /admin/api/jobs/store-mirror-sync.
       {
         name: 'cleanup',
         enabled: config.scheduler.cleanup.enabled,

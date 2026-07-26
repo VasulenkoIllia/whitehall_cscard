@@ -1,6 +1,6 @@
 import { LogService, type LogLevel } from '../pipeline/log';
 
-export type SchedulerTaskName = 'update_pipeline' | 'store_mirror_sync' | 'cleanup';
+export type SchedulerTaskName = 'update_pipeline' | 'cleanup';
 
 export interface SchedulerTask {
   name: SchedulerTaskName;
