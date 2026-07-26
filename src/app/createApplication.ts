@@ -88,6 +88,15 @@ function readEnvPositiveInt(value: string | undefined, fallback: number): number
   return Math.trunc(parsed);
 }
 
+/** Reads a 0..1 share; anything outside that range falls back to the default. */
+function readEnvRatio(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function readEnvBoolean(value: string | undefined, fallback: boolean): boolean {
   if (typeof value === 'undefined') {
     return fallback;
@@ -197,6 +206,7 @@ function createImportBatchOptimizer(
   const featureScopeId = String(readEnvPositiveInt(env.CSCART_API_UPDATE_FEATURE_ID, 564));
   const featureScopeValue = String(env.CSCART_API_UPDATE_FEATURE_VALUE || 'Y').trim() || 'Y';
   const allowCreateInStore = config.connectors.cscart.allowCreate;
+  const maxMissingInMirrorRatio = readEnvRatio(env.CSCART_MAX_MISSING_IN_MIRROR_RATIO, 0.8);
 
   return async (batch: StoreImportBatch<unknown>): Promise<StoreImportBatch<unknown>> => {
     if (batch.store !== 'cscart') {
@@ -270,6 +280,45 @@ function createImportBatchOptimizer(
       maxMirrorAgeMinutes,
       { allowCreate: allowCreateInStore }
     );
+
+    // Refuse to push against a mirror we cannot trust.
+    //
+    // Every filter here decides what to send by comparing products_final with
+    // store_mirror, and every "unknown" verdict resolves to "skip silently".
+    // When the mirror was broken on 2026-07-22 that produced a perfectly green
+    // run that sent nothing: 153 233 of 153 311 SKUs dropped as missing, zero
+    // rows imported, no warning anywhere. Four days passed before anyone
+    // noticed. A failed job is cheap; a silent no-op is not.
+    //
+    // The threshold is deliberately far above the normal figure — on this
+    // catalogue ~37% of final SKUs legitimately do not exist in the store and
+    // are skipped every single run (allowCreate=false). A broken mirror shows
+    // ~99%, so 80% separates the two cleanly with room to spare.
+    const featureScopeReason = String(
+      (featureScopeSummary as { reason?: unknown } | null)?.reason || ''
+    );
+    if (featureScopeReason === 'mirror_empty' || featureScopeReason === 'mirror_stale') {
+      throw new Error(
+        `store_import refused: store_mirror is ${featureScopeReason.replace('mirror_', '')} ` +
+          `(age limit ${maxMirrorAgeMinutes} min). Nothing can be compared, so nothing would be ` +
+          'sent. Run a store mirror snapshot first.'
+      );
+    }
+    const deltaTotal = Number(delta.summary.total || 0);
+    const deltaMissing = Number(delta.summary.missingInMirror || 0);
+    const missingRatio = deltaTotal > 0 ? deltaMissing / deltaTotal : 0;
+    if (missingRatio > maxMissingInMirrorRatio) {
+      const percent = (missingRatio * 100).toFixed(1);
+      const limit = (maxMissingInMirrorRatio * 100).toFixed(0);
+      throw new Error(
+        `store_import refused: ${deltaMissing} of ${deltaTotal} products (${percent}%) are absent ` +
+          `from store_mirror, limit ${limit}%. The mirror holds ${
+            (featureScopeSummary as { mirrorTotal?: unknown } | null)?.mirrorTotal ?? 'unknown'
+          } rows and is almost certainly incomplete — pushing now would silently skip most of the ` +
+          'catalogue. Re-run the store mirror snapshot and check for overlapping syncs.'
+      );
+    }
+
     return {
       ...batch,
       rows: delta.rows as unknown[],
@@ -345,7 +394,10 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     errorAlertSink: telegramAlertService
   });
   const connector = createConnector(config);
-  const storeMirrorService = new StoreMirrorService(pool);
+  // Undefined keeps the service default; the service validates the range itself.
+  const storeMirrorService = new StoreMirrorService(pool, {
+    maxPruneRatio: Number(env.STORE_MIRROR_MAX_PRUNE_RATIO) || undefined
+  });
   const catalogAdminService = new CatalogAdminService(pool);
   const schedulerRuntimeState = {
     updatePipelineSupplier: config.scheduler.updatePipeline.supplier
