@@ -98,28 +98,44 @@ docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c
 - `033_add_collection_code_to_store_mirror.sql` → `VACUUM (ANALYZE) store_mirror`.
 - `034_add_variation_group_code_to_store_mirror.sql` → `VACUUM (ANALYZE) store_mirror`.
 
-### Pause mirror_sync перед деплоєм міграцій з UPDATE
+### Pause update_pipeline перед деплоєм міграцій з UPDATE
 
 Бекфіл-UPDATE на `store_mirror` (~30-60 сек на 239k рядків) тримає
-RowExclusiveLock на таблиці. Якщо в цей момент `mirror_sync` cron
-запускає upsert — обидва упрутся в lock і `runMigrations` може зависнути.
-Це вже траплялось при міграції 033 (потребувало ручного `pg_terminate_backend`).
+RowExclusiveLock на таблиці. Якщо в цей момент знімок магазину запускає
+upsert — обидва упрутся в lock і `runMigrations` може зависнути. Це вже
+траплялось при міграції 033 (потребувало ручного `pg_terminate_backend`).
+
+Знімок магазину виконується як **крок ① усередині `update_pipeline`**, тому
+паузити треба саме пайплайн. Окремої крон-задачі `store_mirror_sync` більше
+немає — її прибрано разом із фіксом гонки (див.
+[`RUNBOOK_STORE_MIRROR_RACE_2026_07.md`](./RUNBOOK_STORE_MIRROR_RACE_2026_07.md)).
 
 **Перед `docker compose up -d --build app` для деплою з міграцією-бекфілом:**
 
 ```bash
 docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
-  "UPDATE cron_settings SET is_enabled=false WHERE name='store_mirror_sync' RETURNING name, is_enabled;"
+  "UPDATE cron_settings SET is_enabled=false WHERE name='update_pipeline' RETURNING name, is_enabled;"
+```
+
+Пауза застосовується не миттєво: планувальник перечитує `cron_settings` при
+старті або при збереженні через `PUT /admin/api/cron-settings`. Тому перед
+деплоєм переконайся, що зараз нічого не виконується:
+
+```bash
+docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
+  "SELECT id, type, status FROM jobs WHERE status = 'running' ORDER BY id;"
 ```
 
 Після успішного деплою + VACUUM:
 
 ```bash
 docker exec -i whitehall-cscard-db psql -U whitehall_store -d whitehall_store -c \
-  "UPDATE cron_settings SET is_enabled=true WHERE name='store_mirror_sync' RETURNING name, is_enabled;"
+  "UPDATE cron_settings SET is_enabled=true WHERE name='update_pipeline' RETURNING name, is_enabled;"
 ```
 
 > **Примітка:** колонка називається саме `is_enabled` (BOOLEAN), а не `enabled`. Перевірити можна командою `\d cron_settings` всередині psql.
+>
+> **Примітка 2:** прямий `UPDATE` у БД підхоплюється лише після рестарту контейнера. Щоб застосувати на льоту — міняй розклад через адмінку (вкладка «Розклад»), яка ходить у `PUT /admin/api/cron-settings`.
 
 ---
 

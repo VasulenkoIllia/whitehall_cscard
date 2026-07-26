@@ -26,7 +26,9 @@ Auth / env для CS-Cart:
 - `CSCART_PRODUCTS_UPDATE_BATCH_SIZE` (default `1000`, max `5000`) — розмір batch. Аліас: `CSCART_STOCK_UPDATE_BATCH_SIZE`.
 - `CSCART_PRODUCTS_UPDATE_RETRY_LIMIT` (default `5`) — retry на 429/5xx для bulk-запиту. Аліас: `CSCART_STOCK_UPDATE_RETRY_LIMIT`.
 - `CSCART_PRODUCTS_UPDATE_AUTH_MODE` (`auto`|`bearer`|`basic`, **default `basic` для нового endpoint у resolver-і коду**) — auth для bulk-запиту. Аліас: `CSCART_STOCK_UPDATE_AUTH_MODE`.
-- `CSCART_DELTA_MAX_MIRROR_AGE_MINUTES` (default `120`, **рекомендую `480` на проді**) — порог віку mirror'у для активації delta-filter. Якщо mirror старіший — delta вимикається і всі rows ідуть як changed (повільно). 480 хв (8 год) дає запас між cron-ticks, не змушуючи pipeline робити форсований mirror_sync перед кожним store_import.
+- `CSCART_DELTA_MAX_MIRROR_AGE_MINUTES` (default `120`, **на проді `480`**) — порог віку mirror'у. Використовується у двох місцях: delta/feature-фільтри `store_import` і бейдж готовності «Імпорт у магазин» в адмінці (раніше фронт зашивав власні 120 хв, що розходилося з реальним циклом). Пайплайн робить свій знімок кроком ① перед кожним `store_import`, тож у нормі вік дзеркала не перевищує тривалості одного циклу; 480 хв — запас на випадок збоїв. При перевищенні порогу `store_import` **падає з помилкою** (раніше тихо не відправляв нічого).
+- `STORE_MIRROR_MAX_PRUNE_RATIO` (default `0.2`) — яку частку дзеркала знімок має право видалити за прогін. Знімок, що не побачив більшість каталогу, вважається зламаним: prune падає з помилкою і не чіпає таблицю. За спостереженнями нормальний `deleted` — 0-90 рядків із ~242 600 (0.04%), тож поріг можна звужувати.
+- `CSCART_MAX_MISSING_IN_MIRROR_RATIO` (default `0.8`) — яка частка фінальних товарів може бути відсутня в дзеркалі, перш ніж `store_import` відмовиться відправляти. У нормі на цьому каталозі ~37% SKU справді не існує в магазині (`CSCART_ALLOW_CREATE=false`), при зламаному дзеркалі — ~99%.
 
 ### Production .env checklist (мінімальний набір)
 ```dotenv
