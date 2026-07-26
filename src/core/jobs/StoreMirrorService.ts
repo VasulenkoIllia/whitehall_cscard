@@ -83,6 +83,12 @@ interface StoreMirrorRow {
 
 const UPSERT_CHUNK_SIZE = 500;
 
+/**
+ * A snapshot that fails to see more than this share of the mirror is treated as
+ * broken rather than authoritative. See pruneSnapshot for the reasoning.
+ */
+const DEFAULT_MAX_PRUNE_RATIO = 0.2;
+
 interface CsCartMirrorStateRow {
   article: string;
   visibility: boolean;
@@ -170,10 +176,29 @@ function dedupeMirrorRows(rows: StoreMirrorRow[]): StoreMirrorRow[] {
 }
 
 export class StoreMirrorService {
-  constructor(private readonly pool: Pool) {}
+  private readonly maxPruneRatio: number;
 
-  createSyncMarker(now: Date = new Date()): string {
-    return now.toISOString();
+  constructor(
+    private readonly pool: Pool,
+    options: { maxPruneRatio?: number } = {}
+  ) {
+    const ratio = Number(options.maxPruneRatio);
+    this.maxPruneRatio =
+      Number.isFinite(ratio) && ratio > 0 && ratio <= 1 ? ratio : DEFAULT_MAX_PRUNE_RATIO;
+  }
+
+  /**
+   * Marker identifying one snapshot run. Read from Postgres rather than the
+   * Node clock so every seen_at in store_mirror is comparable against a single
+   * authoritative clock even when several app instances write to the mirror.
+   */
+  async createSyncMarker(): Promise<string> {
+    const result = await this.pool.query<{ now: Date }>(`SELECT NOW() AS now`);
+    const marker = result.rows[0]?.now;
+    if (!marker) {
+      throw new Error('Failed to read sync marker from database');
+    }
+    return new Date(marker).toISOString();
   }
 
   private async getCsCartMirrorFreshness(): Promise<{ ageMinutes: number | null; totalRows: number }> {
@@ -737,18 +762,69 @@ export class StoreMirrorService {
     return prepared.length;
   }
 
+  /**
+   * Drop rows this snapshot did not see, i.e. products that disappeared from
+   * the store.
+   *
+   * The condition is `seen_at < marker`, NOT `seen_at IS DISTINCT FROM marker`.
+   * The old form deleted rows written by any *other* run, including one still
+   * in flight, so two overlapping snapshots destroyed each other's work: on
+   * 2026-07-22 the mirror went from 242 613 rows to 613 and the store import
+   * that followed pushed nothing. Rows carrying a newer marker belong to a run
+   * that started after this one and are none of our business.
+   *
+   * The ratio guard is the second line of defence. A snapshot that misses most
+   * of the catalog is a broken snapshot — a concurrent sync, an interrupted
+   * walk, a store API returning short pages — and must never be treated as the
+   * authority on what to delete. Failing loudly keeps a stale mirror, which is
+   * recoverable; an emptied mirror silently stops every update to the store.
+   */
   async pruneSnapshot(store: ActiveStore, seenAt: string): Promise<number> {
-    const deleteResult = await this.pool.query(
-      `DELETE FROM store_mirror
-       WHERE store = $1
-         AND seen_at IS DISTINCT FROM $2`,
-      [store, seenAt]
+    // Single statement so the count and the delete observe the same snapshot —
+    // a concurrent sync cannot slip rows in between the guard and the delete.
+    const result = await this.pool.query<{ total: string; stale: string; deleted: string }>(
+      `WITH stats AS (
+         SELECT
+           COUNT(*) AS total,
+           COUNT(*) FILTER (WHERE seen_at IS NULL OR seen_at < $2) AS stale
+         FROM store_mirror
+         WHERE store = $1
+       ),
+       removed AS (
+         DELETE FROM store_mirror
+         WHERE store = $1
+           AND (seen_at IS NULL OR seen_at < $2)
+           -- NULLIF guards the very first sync on an empty mirror: Postgres does
+           -- not promise to short-circuit OR, so total=0 must not reach a division.
+           AND (SELECT total = 0 OR stale::numeric / NULLIF(total, 0) <= $3::numeric FROM stats)
+         RETURNING 1
+       )
+       SELECT
+         (SELECT total FROM stats)::text   AS total,
+         (SELECT stale FROM stats)::text   AS stale,
+         (SELECT COUNT(*) FROM removed)::text AS deleted`,
+      [store, seenAt, this.maxPruneRatio]
     );
-    return deleteResult.rowCount || 0;
+
+    const total = Number(result.rows[0]?.total || '0');
+    const stale = Number(result.rows[0]?.stale || '0');
+    const deleted = Number(result.rows[0]?.deleted || '0');
+
+    if (total > 0 && stale / total > this.maxPruneRatio) {
+      const percent = ((stale / total) * 100).toFixed(1);
+      const limit = (this.maxPruneRatio * 100).toFixed(0);
+      throw new Error(
+        `store_mirror prune refused for store "${store}": snapshot saw only ${total - stale} of ` +
+          `${total} rows, pruning would delete ${stale} (${percent}%, limit ${limit}%). ` +
+          'Most likely a concurrent snapshot or an interrupted catalog walk. Mirror left untouched.'
+      );
+    }
+
+    return deleted;
   }
 
   async syncSnapshot(store: ActiveStore, items: MirrorRow[]): Promise<StoreMirrorSyncSummary> {
-    const seenAt = this.createSyncMarker();
+    const seenAt = await this.createSyncMarker();
     const upserted = await this.upsertSnapshotChunk(store, items, seenAt);
     const deleted = await this.pruneSnapshot(store, seenAt);
 

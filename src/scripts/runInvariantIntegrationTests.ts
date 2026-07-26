@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
+import { StoreMirrorService } from '../core/jobs/StoreMirrorService';
 import { FinalizerDb } from '../core/pipeline/finalizerDb';
 import { ExportPreviewDb } from '../core/pipeline/exportPreviewDb';
 import { detectMappingFromRow, hasRequiredFields } from '../core/pipeline/mapping';
+import type { MirrorRow } from '../core/domain/store';
 
 function readRequiredEnv(name: string): string {
   const value = String(process.env[name] || '').trim();
@@ -115,6 +117,34 @@ async function createTables(pool: Pool): Promise<void> {
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       notes TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE size_mappings (
+      id BIGSERIAL PRIMARY KEY,
+      size_from TEXT NOT NULL,
+      size_to TEXT NOT NULL,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX size_mappings_from_ci_uq
+      ON size_mappings (LOWER(TRIM(size_from)));
+
+    CREATE TABLE store_mirror (
+      store TEXT NOT NULL,
+      article TEXT NOT NULL,
+      supplier TEXT,
+      parent_article TEXT,
+      visibility BOOLEAN NOT NULL,
+      price NUMERIC(12, 2),
+      amount INTEGER NOT NULL DEFAULT 0,
+      raw JSONB,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      seen_at TIMESTAMPTZ,
+      collection_code TEXT,
+      variation_group_code TEXT,
+      PRIMARY KEY (store, article)
     );
   `);
 }
@@ -364,7 +394,7 @@ async function testResumeMismatchGuards(pool: Pool): Promise<void> {
     { log: async () => undefined } as any,
     { run: async () => ({ retentionDays: 1, deletedRows: 0 }) } as any,
     {
-      createSyncMarker: () => new Date().toISOString(),
+      createSyncMarker: async () => new Date().toISOString(),
       upsertSnapshotChunk: async () => 0,
       pruneSnapshot: async () => 0
     } as any
@@ -385,6 +415,180 @@ async function testResumeMismatchGuards(pool: Pool): Promise<void> {
   );
 }
 
+/**
+ * Regression for the lock hole behind the 2026-07-22 incident.
+ *
+ * Every caller creates its job (status 'queued') and only then starts it
+ * (status 'running'). The reclaim branch of acquireJobLock treated anything
+ * that was not 'running' as a dead holder, so a second job arriving inside that
+ * window simply took the lock away. The scheduler fires all due tasks in one
+ * tick, so update_pipeline and the standalone store_mirror_sync hit it 3 ms
+ * apart and both proceeded.
+ */
+async function testJobLockQueuedGraceInvariant(pool: Pool): Promise<void> {
+  const jobs = new JobService(pool);
+  await pool.query(`DELETE FROM job_locks`);
+
+  const holder = await jobs.createJob('update_pipeline', {});
+  assert.equal(await jobs.acquireJobLock(holder.id), true, 'first job must take the lock');
+
+  const rival = await jobs.createJob('store_mirror_sync', {});
+  assert.equal(
+    await jobs.acquireJobLock(rival.id),
+    false,
+    'a queued lock holder must not be mistaken for a dead one'
+  );
+
+  await jobs.startJob(holder.id);
+  assert.equal(
+    await jobs.acquireJobLock(rival.id),
+    false,
+    'a running lock holder must keep the lock'
+  );
+
+  await jobs.failJob(holder.id, new Error('process crashed'));
+  assert.equal(
+    await jobs.acquireJobLock(rival.id),
+    true,
+    'a dead lock holder must release the lock'
+  );
+}
+
+function mirrorRow(article: string): MirrorRow {
+  return {
+    article,
+    supplier: null,
+    parentArticle: null,
+    visibility: true,
+    price: 100,
+    collectionCode: null,
+    variationGroupCode: null,
+    raw: { product_id: article, amount: '1', status: 'A' }
+  };
+}
+
+function mirrorRows(articles: string[]): MirrorRow[] {
+  return articles.map((article) => mirrorRow(article));
+}
+
+async function readMirrorArticles(pool: Pool): Promise<string[]> {
+  const result = await pool.query<{ article: string }>(
+    `SELECT article FROM store_mirror WHERE store = 'cscart' ORDER BY article ASC`
+  );
+  return result.rows.map((row) => row.article);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Regression for the 2026-07-22 production incident.
+ *
+ * The scheduler fired the standalone store_mirror_sync task and the
+ * update_pipeline mirror step in the same tick (3 ms apart) and the job lock
+ * let both through. Each run pruned with
+ * `seen_at IS DISTINCT FROM <its own marker>`, so whichever finished last
+ * deleted every row the other had written. The mirror collapsed from 242 613
+ * rows to 613 — literally the last catalog page — and the store_import that
+ * followed dropped 153 233 SKUs as "missing in mirror" and pushed nothing,
+ * while every job still reported success.
+ *
+ * The sequence below reproduces that interleaving deterministically: A walks
+ * the whole catalog, B rewrites part of it, A prunes, B finishes and prunes.
+ * No row that either run wrote may disappear.
+ */
+async function testConcurrentMirrorSnapshotsInvariant(pool: Pool): Promise<void> {
+  const mirror = new StoreMirrorService(pool);
+  const catalog = ['SKU-1', 'SKU-2', 'SKU-3'];
+
+  await pool.query(`DELETE FROM store_mirror`);
+
+  const markerA = await mirror.createSyncMarker();
+  await sleep(5);
+  const markerB = await mirror.createSyncMarker();
+  assert.ok(markerA < markerB, 'sync markers must be strictly increasing');
+
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows(catalog), markerA);
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows(catalog.slice(0, 2)), markerB);
+  await mirror.pruneSnapshot('cscart', markerA);
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows(catalog.slice(2)), markerB);
+  await mirror.pruneSnapshot('cscart', markerB);
+
+  assert.deepEqual(
+    await readMirrorArticles(pool),
+    catalog,
+    'overlapping mirror snapshots must not delete each other rows'
+  );
+}
+
+/**
+ * The prune must still do its actual job: drop rows for products that really
+ * vanished from the store. Guards against "fixing" the race by never deleting.
+ */
+async function testMirrorPrunesVanishedRowsInvariant(pool: Pool): Promise<void> {
+  const mirror = new StoreMirrorService(pool);
+  const kept = ['K-01', 'K-02', 'K-03', 'K-04', 'K-05', 'K-06', 'K-07', 'K-08', 'K-09', 'K-10'];
+
+  await pool.query(`DELETE FROM store_mirror`);
+
+  // First sync ever: the mirror is empty and the ratio guard must not divide by zero.
+  assert.equal(
+    await mirror.pruneSnapshot('cscart', await mirror.createSyncMarker()),
+    0,
+    'pruning an empty mirror must be a no-op'
+  );
+
+  const previous = await mirror.createSyncMarker();
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows([...kept, 'GONE-1']), previous);
+  await sleep(5);
+
+  const current = await mirror.createSyncMarker();
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows(kept), current);
+  const deleted = await mirror.pruneSnapshot('cscart', current);
+
+  assert.equal(deleted, 1, 'prune must delete products that disappeared from the store');
+  assert.deepEqual(
+    await readMirrorArticles(pool),
+    kept,
+    'prune must keep every product the current snapshot saw'
+  );
+}
+
+/**
+ * Last line of defence. Even if two runs somehow overlap again (a manual
+ * "Знімок магазину" fired at the wrong moment), a prune that would wipe most
+ * of the mirror must fail loudly instead of silently emptying the table —
+ * a silent empty mirror is exactly what made the incident invisible for days.
+ */
+async function testMirrorPruneSafetyValveInvariant(pool: Pool): Promise<void> {
+  const mirror = new StoreMirrorService(pool);
+  const catalog = ['S-01', 'S-02', 'S-03', 'S-04', 'S-05', 'S-06', 'S-07', 'S-08', 'S-09', 'S-10'];
+
+  await pool.query(`DELETE FROM store_mirror`);
+
+  const previous = await mirror.createSyncMarker();
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows(catalog), previous);
+  await sleep(5);
+
+  const current = await mirror.createSyncMarker();
+  await mirror.upsertSnapshotChunk('cscart', mirrorRows(catalog.slice(0, 1)), current);
+
+  await assert.rejects(
+    () => mirror.pruneSnapshot('cscart', current),
+    (error: any) => String(error?.message || '').includes('store_mirror prune'),
+    'prune must refuse to delete an implausible share of the mirror'
+  );
+
+  assert.deepEqual(
+    await readMirrorArticles(pool),
+    catalog,
+    'a refused prune must leave the mirror untouched'
+  );
+}
+
 async function main(): Promise<void> {
   const databaseUrl = readRequiredEnv('DATABASE_URL');
   const schema = createSchemaName();
@@ -395,13 +599,37 @@ async function main(): Promise<void> {
     await pool.query(`SET search_path TO ${schema}, public`);
     await createTables(pool);
 
-    await testMappingInvariant();
+    // Optional argv filter: `node runInvariantIntegrationTests.js <check> [...]`
+    // runs only the named checks. No arguments keeps the previous behaviour and
+    // runs the whole suite.
+    const requested = process.argv.slice(2).map((value) => value.trim()).filter(Boolean);
+    const wanted = (check: string): boolean => requested.length === 0 || requested.includes(check);
+    const executed: string[] = [];
+    const run = async (check: string, action: () => Promise<void>): Promise<void> => {
+      if (!wanted(check)) {
+        return;
+      }
+      await action();
+      executed.push(check);
+    };
 
-    const seeded = await seedCoreData(pool);
-    await testFinalizeDedupInvariant(pool, seeded);
-    await testOverridePrecedenceInvariant(pool, seeded);
-    await testSupplierPrefixIsolationInvariant(pool, seeded);
-    await testResumeMismatchGuards(pool);
+    await run('mapping', () => testMappingInvariant());
+
+    const seedDependent = ['dedup-winner', 'override-precedence', 'supplier-sku-prefix-isolation'];
+    if (seedDependent.some(wanted)) {
+      const seeded = await seedCoreData(pool);
+      await run('dedup-winner', () => testFinalizeDedupInvariant(pool, seeded));
+      await run('override-precedence', () => testOverridePrecedenceInvariant(pool, seeded));
+      await run('supplier-sku-prefix-isolation', () =>
+        testSupplierPrefixIsolationInvariant(pool, seeded)
+      );
+    }
+
+    await run('resume-guards', () => testResumeMismatchGuards(pool));
+    await run('job-lock-queued-grace', () => testJobLockQueuedGraceInvariant(pool));
+    await run('concurrent-mirror-snapshots', () => testConcurrentMirrorSnapshotsInvariant(pool));
+    await run('mirror-prunes-vanished-rows', () => testMirrorPrunesVanishedRowsInvariant(pool));
+    await run('mirror-prune-safety-valve', () => testMirrorPruneSafetyValveInvariant(pool));
 
     // eslint-disable-next-line no-console
     console.log(
@@ -409,13 +637,7 @@ async function main(): Promise<void> {
         ok: true,
         suite: 'invariant-integration',
         schema,
-        checks: [
-          'mapping',
-          'dedup-winner',
-          'override-precedence',
-          'supplier-sku-prefix-isolation',
-          'resume-guards'
-        ]
+        checks: executed
       })
     );
   } finally {

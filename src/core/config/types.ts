@@ -49,7 +49,6 @@ export interface SchedulerConfig {
   enabled: boolean;
   tickSeconds: number;
   updatePipeline: SchedulerTaskConfig & { supplier: string | null };
-  storeMirrorSync: SchedulerTaskConfig;
   cleanup: SchedulerTaskConfig;
 }
 
