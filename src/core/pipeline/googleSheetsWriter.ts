@@ -170,7 +170,7 @@ async function ensureSheetGrid(
   sheetName: string,
   neededRows: number,
   neededCols: number
-): Promise<number> {
+): Promise<{ sheetId: number; merges: any[] }> {
   const meta = await writeWithRetry<any>(() => sheets.spreadsheets.get({ spreadsheetId }));
   const existing = (meta.data.sheets || []).find(
     (s: any) => s.properties?.title === sheetName
@@ -194,14 +194,15 @@ async function ensureSheetGrid(
         }
       })
     );
-    return addRes.data?.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
+    return { sheetId: addRes.data?.replies?.[0]?.addSheet?.properties?.sheetId ?? 0, merges: [] };
   }
 
   const sheetId = existing.properties?.sheetId ?? 0;
+  const merges: any[] = Array.isArray(existing.merges) ? existing.merges : [];
   const curRows = existing.properties?.gridProperties?.rowCount || 0;
   const curCols = existing.properties?.gridProperties?.columnCount || 0;
   if (curRows >= neededRows && curCols >= neededCols) {
-    return sheetId;
+    return { sheetId, merges };
   }
   await writeWithRetry<any>(() =>
     sheets.spreadsheets.batchUpdate({
@@ -224,7 +225,7 @@ async function ensureSheetGrid(
       }
     })
   );
-  return sheetId;
+  return { sheetId, merges };
 }
 
 // Header/banner styling applied after the values are written. Merges + highlights
@@ -236,30 +237,78 @@ async function applyTableFormatting(
   spreadsheetId: string,
   sheetId: number,
   cols: number,
-  hasBanner: boolean
+  hasBanner: boolean,
+  existingMerges: any[]
 ): Promise<void> {
   const headerRowIndex = hasBanner ? 1 : 0; // 0-based
   const requests: any[] = [];
+  const firstRowRange = {
+    sheetId,
+    startRowIndex: 0,
+    endRowIndex: 1,
+    startColumnIndex: 0,
+    endColumnIndex: cols
+  };
+
+  // Розліплюємо перший рядок ЗАВЖДИ, не лише коли малюємо банер: values.clear()
+  // прибирає значення, але не об'єднання і не заливку, тож аркуш, який колись мав
+  // банер, лишався б зі злитим A1:E1 — і шапка колонок опинилась би всередині
+  // однієї клітинки (видно тільки перший заголовок на всю ширину).
+  //
+  // Розліплюємо ПОІМЕННО, за фактичними об'єднаннями, а не одним запитом на весь
+  // рядок: unmergeCells падає, якщо діапазон ЧАСТКОВО перетинає merge. Об'єднання
+  // ширше за таблицю (A1:F1, зроблене руками в таблиці) завалило б увесь
+  // batchUpdate, а з ним і кожне наступне вивантаження прайсу.
+  for (const merge of existingMerges) {
+    const startRow = Number(merge?.startRowIndex ?? -1);
+    const endRow = Number(merge?.endRowIndex ?? -1);
+    // Беремо лише ті, що лежать РІВНО в межах першого рядка — їх можна зняти
+    // їхнім же діапазоном, без ризику часткового перетину. Вертикальні
+    // об'єднання (A1:A3) не чіпаємо: вони не наших рук справа.
+    if (startRow === 0 && endRow === 1) {
+      requests.push({
+        unmergeCells: {
+          range: {
+            sheetId,
+            startRowIndex: startRow,
+            endRowIndex: endRow,
+            startColumnIndex: Number(merge.startColumnIndex ?? 0),
+            endColumnIndex: Number(merge.endColumnIndex ?? cols)
+          }
+        }
+      });
+    }
+  }
 
   if (hasBanner) {
-    const bannerRange = {
-      sheetId,
-      startRowIndex: 0,
-      endRowIndex: 1,
-      startColumnIndex: 0,
-      endColumnIndex: cols
-    };
-    requests.push({ unmergeCells: { range: bannerRange } });
-    requests.push({ mergeCells: { range: bannerRange, mergeType: 'MERGE_ALL' } });
+    requests.push({ mergeCells: { range: firstRowRange, mergeType: 'MERGE_ALL' } });
     requests.push({
       repeatCell: {
-        range: bannerRange,
+        range: firstRowRange,
         cell: {
           userEnteredFormat: {
             backgroundColor: { red: 0.99, green: 0.9, blue: 0.36 },
             horizontalAlignment: 'CENTER',
             verticalAlignment: 'MIDDLE',
             textFormat: { bold: true, fontSize: 12 }
+          }
+        },
+        fields:
+          'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)'
+      }
+    });
+  } else {
+    // Скидаємо жовту заливку/центрування, що лишились від колишнього банера,
+    // інакше шапка колонок успадкує його вигляд.
+    requests.push({
+      repeatCell: {
+        range: firstRowRange,
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 1, green: 1, blue: 1 },
+            horizontalAlignment: 'LEFT',
+            verticalAlignment: 'BOTTOM',
+            textFormat: { bold: false, fontSize: 10 }
           }
         },
         fields:
@@ -331,7 +380,13 @@ export async function writeSheetTable(
 
     let apiCalls = 0;
 
-    const sheetId = await ensureSheetGrid(sheets, spreadsheetId, sheetName, totalRows, cols);
+    const { sheetId, merges } = await ensureSheetGrid(
+      sheets,
+      spreadsheetId,
+      sheetName,
+      totalRows,
+      cols
+    );
     apiCalls += 1;
 
     await writeWithRetry<any>(() =>
@@ -384,7 +439,7 @@ export async function writeSheetTable(
       }
     }
 
-    await applyTableFormatting(sheets, spreadsheetId, sheetId, cols, hasBanner);
+    await applyTableFormatting(sheets, spreadsheetId, sheetId, cols, hasBanner, merges);
     apiCalls += 1;
 
     return {
@@ -395,6 +450,105 @@ export async function writeSheetTable(
       batches,
       apiCalls
     };
+  } catch (err) {
+    throw normalizeWriteError(err);
+  }
+}
+
+export interface WriteSheetKeyValueOptions {
+  spreadsheetIdOrUrl: string;
+  sheetName: string;
+  /** Рядки виду [підпис, значення] — пишуться в A/B згори вниз. */
+  entries: [string, CellValue][];
+}
+
+export interface WriteSheetKeyValueResult {
+  spreadsheetId: string;
+  sheetName: string;
+  rows: number;
+  apiCalls: number;
+}
+
+/**
+ * Повністю перезаписати невелику вкладку парами «підпис → значення».
+ *
+ * Для службової інформації поруч із основною таблицею — наприклад, вкладка
+ * «Оновлено» з датою генерації прайсу. Вкладка створюється, якщо її немає.
+ * Підписи (колонка A) виділяються жирним, ширина A підганяється під вміст.
+ */
+export async function writeSheetKeyValue(
+  options: WriteSheetKeyValueOptions
+): Promise<WriteSheetKeyValueResult> {
+  try {
+    const spreadsheetId = parseSheetId(options.spreadsheetIdOrUrl);
+    if (!spreadsheetId) {
+      throw new Error('Invalid Google Sheets URL or ID');
+    }
+    const { sheetName, entries } = options;
+    if (!entries.length) {
+      throw new Error('Entries are empty');
+    }
+
+    const auth = buildWriteJwtClient();
+    const sheets = google.sheets({ version: 'v4', auth });
+    let apiCalls = 0;
+
+    // Сітка з запасом: аркуш 1x2 технічно валідний, але для людини виглядає як
+    // зламаний — ані прокрутити, ані дописати.
+    const { sheetId } = await ensureSheetGrid(
+      sheets,
+      spreadsheetId,
+      sheetName,
+      Math.max(entries.length, 20),
+      4
+    );
+    apiCalls += 1;
+
+    await writeWithRetry<any>(() =>
+      sheets.spreadsheets.values.clear({ spreadsheetId, range: sheetName })
+    );
+    apiCalls += 1;
+
+    await writeWithRetry<any>(() =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1:B${entries.length}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: entries.map((entry) => [entry[0], entry[1]]) }
+      })
+    );
+    apiCalls += 1;
+
+    await writeWithRetry<any>(() =>
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 0,
+                  endRowIndex: entries.length,
+                  startColumnIndex: 0,
+                  endColumnIndex: 1
+                },
+                cell: { userEnteredFormat: { textFormat: { bold: true } } },
+                fields: 'userEnteredFormat(textFormat)'
+              }
+            },
+            {
+              autoResizeDimensions: {
+                dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 2 }
+              }
+            }
+          ]
+        }
+      })
+    );
+    apiCalls += 1;
+
+    return { spreadsheetId, sheetName, rows: entries.length, apiCalls };
   } catch (err) {
     throw normalizeWriteError(err);
   }
