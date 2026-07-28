@@ -14,7 +14,7 @@
  Реальний режим (читання products_final з БД) підключається у Фазі 2b.
 */
 import { Pool } from 'pg';
-import { writeSheetTable } from '../core/pipeline/googleSheetsWriter';
+import { writeSheetKeyValue, writeSheetTable } from '../core/pipeline/googleSheetsWriter';
 import {
   BUYER_PRICE_HEADER,
   BuyerPriceExportService
@@ -30,11 +30,19 @@ interface Args {
   real: boolean;
   dryRun: boolean;
   tab: string;
+  statusTab: string;
   sheet: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { sample: false, real: false, dryRun: false, tab: 'DRAFT', sheet: '' };
+  const args: Args = {
+    sample: false,
+    real: false,
+    dryRun: false,
+    tab: 'DRAFT',
+    statusTab: '',
+    sheet: ''
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--sample') args.sample = true;
@@ -43,6 +51,9 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--tab') {
       i += 1;
       args.tab = argv[i] || args.tab;
+    } else if (a === '--status-tab') {
+      i += 1;
+      args.statusTab = argv[i] || '';
     } else if (a === '--sheet') {
       i += 1;
       args.sheet = argv[i] || '';
@@ -56,9 +67,9 @@ function dropPrice(base: number, final: number): number {
   return Math.ceil((base + final) / 2 / 10) * 10;
 }
 
-// Штамп «прайс актуальний станом на …» у київському часі.
-function buildBanner(now: Date): string {
-  const stamp = new Intl.DateTimeFormat('uk-UA', {
+// Дата генерації у київському часі — пишеться в окрему вкладку, не банером.
+function formatStamp(now: Date): string {
+  return new Intl.DateTimeFormat('uk-UA', {
     timeZone: 'Europe/Kyiv',
     day: '2-digit',
     month: '2-digit',
@@ -66,7 +77,21 @@ function buildBanner(now: Date): string {
     hour: '2-digit',
     minute: '2-digit'
   }).format(now);
-  return `Прайс актуальний станом на ${stamp} (Київ)`;
+}
+
+/**
+ * Вкладка для дати. Чернетковий прогін (`--tab DRAFT`) НЕ має чіпати бойову
+ * вкладку «Оновлено» — інакше покупець побачить свіжий штамп над старим прайсом.
+ * Тому службова вкладка виводиться з назви цільової, окрім випадку, коли пишемо
+ * саме в бойову.
+ */
+function resolveStatusTab(args: Args): string {
+  if (args.statusTab) {
+    return args.statusTab;
+  }
+  const productionTab = process.env.BUYER_PRICE_SHEET_TAB || 'Прайс';
+  const productionStatusTab = process.env.BUYER_PRICE_STATUS_TAB || 'Оновлено';
+  return args.tab === productionTab ? productionStatusTab : `${args.tab} ${productionStatusTab}`;
 }
 
 // Синтетичні, але реалістичні рядки (взяті зі звіреної прод-вибірки).
@@ -111,6 +136,7 @@ async function main() {
         enabled: true,
         sheetId: sheet,
         sheetTab: args.tab,
+        statusTab: resolveStatusTab(args),
         batchRows: Math.max(500, Number(process.env.BUYER_PRICE_BATCH_ROWS || 10000)),
         timeoutMs: Math.max(30000, Number(process.env.BUYER_PRICE_TIMEOUT_MS || 600000))
       });
@@ -143,13 +169,18 @@ async function main() {
     sheetName: args.tab,
     header: HEADER,
     rows,
-    bannerText: buildBanner(new Date()),
     onProgress: (written, total) => console.log(`  записано ${written}/${total}`)
+  });
+
+  const statusResult = await writeSheetKeyValue({
+    spreadsheetIdOrUrl: sheet,
+    sheetName: resolveStatusTab(args),
+    entries: [['Оновлено', formatStamp(new Date())]]
   });
 
   console.log(
     JSON.stringify(
-      { ok: true, durationMs: Math.max(0, Date.now() - startedAt), ...result },
+      { ok: true, durationMs: Math.max(0, Date.now() - startedAt), ...result, statusResult },
       null,
       2
     )

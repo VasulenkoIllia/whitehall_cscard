@@ -1,10 +1,13 @@
 import { Pool } from 'pg';
 import { JobService } from '../jobs/JobService';
 import { LogService } from './log';
-import { writeSheetTable } from './googleSheetsWriter';
+import { writeSheetKeyValue, writeSheetTable } from './googleSheetsWriter';
 
 // Колонки прайсу покупцям (узгоджено з користувачем).
 export const BUYER_PRICE_HEADER = ['Артикул', 'Назва', 'Розмір', 'Кількість', 'Ціна'];
+
+// Підпис у вкладці зі службовою інформацією.
+const STATUS_LABEL = 'Оновлено';
 
 const LOCK_NAME = 'buyer_price_export';
 
@@ -12,6 +15,8 @@ export interface BuyerPriceExportConfig {
   enabled: boolean;
   sheetId: string;
   sheetTab: string;
+  /** Вкладка зі службовою інформацією (дата оновлення прайсу). */
+  statusTab: string;
   batchRows: number;
   timeoutMs: number;
 }
@@ -50,9 +55,10 @@ function dropPrice(base: number, final: number): number {
   return Math.ceil((base + final) / 2 / 10) * 10;
 }
 
-function buildBanner(asOf: Date | null): string {
+// Дата у вкладці «Оновлено». Київський час — покупці читають саме його.
+function formatStamp(asOf: Date | null): string {
   const when = asOf || new Date();
-  const stamp = new Intl.DateTimeFormat('uk-UA', {
+  return new Intl.DateTimeFormat('uk-UA', {
     timeZone: 'Europe/Kyiv',
     day: '2-digit',
     month: '2-digit',
@@ -60,7 +66,6 @@ function buildBanner(asOf: Date | null): string {
     hour: '2-digit',
     minute: '2-digit'
   }).format(when);
-  return `Прайс актуальний станом на ${stamp} (Київ)`;
 }
 
 /**
@@ -69,9 +74,10 @@ function buildBanner(asOf: Date | null): string {
  * Джерело — products_final (quantity>0), один рядок на (article,size). Читаємо
  * keyset-порціями (без OFFSET), дедупів немає (finalize робить DISTINCT ON).
  * Запис — повне перезаписування вкладки (clear + write), тож дані завжди свіжі
- * без лишків/дублів. Дата актуальності банера = час завершення останнього
- * finalize. Захищено власним локом `buyer_price_export` (не блокує пайплайн — цей
- * тип НЕ в BLOCKING_JOB_TYPES) + хард-таймаутом.
+ * без лишків/дублів. Дата генерації пишеться окремою вкладкою (`statusTab`), а не
+ * банером над таблицею: аркуш прайсу починається одразу з шапки колонок.
+ * Захищено власним локом `buyer_price_export` (не блокує пайплайн — цей тип НЕ в
+ * BLOCKING_JOB_TYPES) + хард-таймаутом.
  */
 export class BuyerPriceExportService {
   constructor(
@@ -159,7 +165,7 @@ export class BuyerPriceExportService {
       }
 
       await this.jobs.startJob(job.id);
-      // Дата банера = час ГЕНЕРАЦІЇ прайсу (момент вивантаження) — оновлюється при
+      // Дата = час ГЕНЕРАЦІЇ прайсу (момент вивантаження) — оновлюється при
       // кожному прогоні. На авто-шляху це ≈ час finalize (експорт іде одразу після).
       const asOf = options?.asOf ?? new Date();
       const rows = await this.loadRows();
@@ -170,17 +176,32 @@ export class BuyerPriceExportService {
         Number.isFinite(this.config.timeoutMs) && this.config.timeoutMs > 0
           ? this.config.timeoutMs
           : 180000;
+      // Аркуш прайсу — тільки шапка + дані, без банера. Дата оновлення живе в
+      // окремій вкладці, щоб покупцю було зручно копіювати таблицю цілком і щоб
+      // рядок 1 завжди був заголовками колонок.
       const writeResult = await withTimeout(
         writeSheetTable({
           spreadsheetIdOrUrl: this.config.sheetId,
           sheetName: this.config.sheetTab,
           header: BUYER_PRICE_HEADER,
           rows,
-          batchRows: this.config.batchRows,
-          bannerText: buildBanner(asOf)
+          batchRows: this.config.batchRows
         }),
         timeoutMs,
         'buyer_price_export write'
+      );
+
+      // Службова вкладка пишеться ПІСЛЯ прайсу: дата має з'явитись лише тоді,
+      // коли дані справді лягли. Якщо основний запис упаде — стара дата
+      // залишиться, і це чесніше, ніж свіжий штамп над старим прайсом.
+      const statusResult = await withTimeout(
+        writeSheetKeyValue({
+          spreadsheetIdOrUrl: this.config.sheetId,
+          sheetName: this.config.statusTab,
+          entries: [[STATUS_LABEL, formatStamp(asOf)]]
+        }),
+        timeoutMs,
+        'buyer_price_export status write'
       );
 
       await this.jobs.finishJob(job.id);
@@ -188,7 +209,7 @@ export class BuyerPriceExportService {
         status: 'ok',
         jobId: job.id,
         dataRows: writeResult.dataRows,
-        apiCalls: writeResult.apiCalls,
+        apiCalls: writeResult.apiCalls + statusResult.apiCalls,
         asOf: asOf ? asOf.toISOString() : null,
         durationMs: Math.max(0, Date.now() - startedAt)
       };

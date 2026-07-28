@@ -240,26 +240,49 @@ async function applyTableFormatting(
 ): Promise<void> {
   const headerRowIndex = hasBanner ? 1 : 0; // 0-based
   const requests: any[] = [];
+  const firstRowRange = {
+    sheetId,
+    startRowIndex: 0,
+    endRowIndex: 1,
+    startColumnIndex: 0,
+    endColumnIndex: cols
+  };
+
+  // Розліплюємо перший рядок ЗАВЖДИ, не лише коли малюємо банер. values.clear()
+  // прибирає значення, але не об'єднання і не заливку — тож аркуш, який колись
+  // мав банер, лишався б зі злитим A1:E1, і шапка колонок опинилась би всередині
+  // однієї клітинки (видно тільки перший заголовок на всю ширину).
+  requests.push({ unmergeCells: { range: firstRowRange } });
 
   if (hasBanner) {
-    const bannerRange = {
-      sheetId,
-      startRowIndex: 0,
-      endRowIndex: 1,
-      startColumnIndex: 0,
-      endColumnIndex: cols
-    };
-    requests.push({ unmergeCells: { range: bannerRange } });
-    requests.push({ mergeCells: { range: bannerRange, mergeType: 'MERGE_ALL' } });
+    requests.push({ mergeCells: { range: firstRowRange, mergeType: 'MERGE_ALL' } });
     requests.push({
       repeatCell: {
-        range: bannerRange,
+        range: firstRowRange,
         cell: {
           userEnteredFormat: {
             backgroundColor: { red: 0.99, green: 0.9, blue: 0.36 },
             horizontalAlignment: 'CENTER',
             verticalAlignment: 'MIDDLE',
             textFormat: { bold: true, fontSize: 12 }
+          }
+        },
+        fields:
+          'userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)'
+      }
+    });
+  } else {
+    // Скидаємо жовту заливку/центрування, що лишились від колишнього банера,
+    // інакше шапка колонок успадкує його вигляд.
+    requests.push({
+      repeatCell: {
+        range: firstRowRange,
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 1, green: 1, blue: 1 },
+            horizontalAlignment: 'LEFT',
+            verticalAlignment: 'BOTTOM',
+            textFormat: { bold: false, fontSize: 10 }
           }
         },
         fields:
@@ -395,6 +418,97 @@ export async function writeSheetTable(
       batches,
       apiCalls
     };
+  } catch (err) {
+    throw normalizeWriteError(err);
+  }
+}
+
+export interface WriteSheetKeyValueOptions {
+  spreadsheetIdOrUrl: string;
+  sheetName: string;
+  /** Рядки виду [підпис, значення] — пишуться в A/B згори вниз. */
+  entries: [string, CellValue][];
+}
+
+export interface WriteSheetKeyValueResult {
+  spreadsheetId: string;
+  sheetName: string;
+  rows: number;
+  apiCalls: number;
+}
+
+/**
+ * Повністю перезаписати невелику вкладку парами «підпис → значення».
+ *
+ * Для службової інформації поруч із основною таблицею — наприклад, вкладка
+ * «Оновлено» з датою генерації прайсу. Вкладка створюється, якщо її немає.
+ * Підписи (колонка A) виділяються жирним, ширина A підганяється під вміст.
+ */
+export async function writeSheetKeyValue(
+  options: WriteSheetKeyValueOptions
+): Promise<WriteSheetKeyValueResult> {
+  try {
+    const spreadsheetId = parseSheetId(options.spreadsheetIdOrUrl);
+    if (!spreadsheetId) {
+      throw new Error('Invalid Google Sheets URL or ID');
+    }
+    const { sheetName, entries } = options;
+    if (!entries.length) {
+      throw new Error('Entries are empty');
+    }
+
+    const auth = buildWriteJwtClient();
+    const sheets = google.sheets({ version: 'v4', auth });
+    let apiCalls = 0;
+
+    const sheetId = await ensureSheetGrid(sheets, spreadsheetId, sheetName, entries.length, 2);
+    apiCalls += 1;
+
+    await writeWithRetry<any>(() =>
+      sheets.spreadsheets.values.clear({ spreadsheetId, range: sheetName })
+    );
+    apiCalls += 1;
+
+    await writeWithRetry<any>(() =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1:B${entries.length}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: entries.map(([label, value]) => [label, value]) }
+      })
+    );
+    apiCalls += 1;
+
+    await writeWithRetry<any>(() =>
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              repeatCell: {
+                range: {
+                  sheetId,
+                  startRowIndex: 0,
+                  endRowIndex: entries.length,
+                  startColumnIndex: 0,
+                  endColumnIndex: 1
+                },
+                cell: { userEnteredFormat: { textFormat: { bold: true } } },
+                fields: 'userEnteredFormat(textFormat)'
+              }
+            },
+            {
+              autoResizeDimensions: {
+                dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 2 }
+              }
+            }
+          ]
+        }
+      })
+    );
+    apiCalls += 1;
+
+    return { spreadsheetId, sheetName, rows: entries.length, apiCalls };
   } catch (err) {
     throw normalizeWriteError(err);
   }

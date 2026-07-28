@@ -483,6 +483,7 @@ export function createApplication(env: Record<string, string | undefined>): Appl
     enabled: env.BUYER_PRICE_EXPORT_ENABLED === 'true',
     sheetId: env.BUYER_PRICE_SHEET_ID || '',
     sheetTab: env.BUYER_PRICE_SHEET_TAB || 'Прайс',
+    statusTab: env.BUYER_PRICE_STATUS_TAB || 'Оновлено',
     batchRows: Math.max(500, Number(env.BUYER_PRICE_BATCH_ROWS || 10000)),
     timeoutMs: Math.max(30000, Number(env.BUYER_PRICE_TIMEOUT_MS || 180000))
   });
