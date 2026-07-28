@@ -151,6 +151,21 @@ export class BuyerPriceExportService {
       return { status: 'skipped', reason: 'no_sheet' };
     }
 
+    // Перевірка ДО будь-якого запису. Службова вкладка пишеться через
+    // values.clear + запис — якщо її назва збігається з вкладкою прайсу, другий
+    // крок стер би щойно записаний прайс і лишив на його місці два слова.
+    const priceTab = String(this.config.sheetTab || '').trim().toLowerCase();
+    const statusTab = String(this.config.statusTab || '').trim().toLowerCase();
+    if (!statusTab) {
+      throw new Error('BUYER_PRICE_STATUS_TAB порожній — нема куди писати дату оновлення.');
+    }
+    if (priceTab === statusTab) {
+      throw new Error(
+        `BUYER_PRICE_STATUS_TAB ("${this.config.statusTab}") збігається з BUYER_PRICE_SHEET_TAB. ` +
+          'Вкладка з датою перезаписується цілком — вона стерла б прайс. Задай різні назви.'
+      );
+    }
+
     const job = await this.jobs.createJob('buyer_price_export', { sheetId: this.config.sheetId });
     const startedAt = Date.now();
     let locked = false;
@@ -194,15 +209,29 @@ export class BuyerPriceExportService {
       // Службова вкладка пишеться ПІСЛЯ прайсу: дата має з'явитись лише тоді,
       // коли дані справді лягли. Якщо основний запис упаде — стара дата
       // залишиться, і це чесніше, ніж свіжий штамп над старим прайсом.
-      const statusResult = await withTimeout(
-        writeSheetKeyValue({
-          spreadsheetIdOrUrl: this.config.sheetId,
-          sheetName: this.config.statusTab,
-          entries: [[STATUS_LABEL, formatStamp(asOf)]]
-        }),
-        timeoutMs,
-        'buyer_price_export status write'
-      );
+      //
+      // Падіння саме цього кроку валить увесь job — але повідомлення мусить
+      // казати правду: прайс уже записано, не оновилась лише дата. Інакше
+      // оператор побачить червоний job і піде шукати проблему в прайсі.
+      let statusResult;
+      try {
+        statusResult = await withTimeout(
+          writeSheetKeyValue({
+            spreadsheetIdOrUrl: this.config.sheetId,
+            sheetName: this.config.statusTab,
+            entries: [[STATUS_LABEL, formatStamp(asOf)]]
+          }),
+          timeoutMs,
+          'buyer_price_export status write'
+        );
+      } catch (statusErr) {
+        const detail = statusErr instanceof Error ? statusErr.message : String(statusErr);
+        throw new Error(
+          `Прайс записано (${writeResult.dataRows} рядків у вкладку "${this.config.sheetTab}"), ` +
+            `але не вдалося оновити вкладку "${this.config.statusTab}" з датою: ${detail}. ` +
+            'Дані актуальні, дата лишилась стара — оновиться наступним прогоном.'
+        );
+      }
 
       await this.jobs.finishJob(job.id);
       const result: BuyerPriceExportResult = {
