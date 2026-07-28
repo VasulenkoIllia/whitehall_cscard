@@ -170,7 +170,7 @@ async function ensureSheetGrid(
   sheetName: string,
   neededRows: number,
   neededCols: number
-): Promise<number> {
+): Promise<{ sheetId: number; merges: any[] }> {
   const meta = await writeWithRetry<any>(() => sheets.spreadsheets.get({ spreadsheetId }));
   const existing = (meta.data.sheets || []).find(
     (s: any) => s.properties?.title === sheetName
@@ -194,14 +194,15 @@ async function ensureSheetGrid(
         }
       })
     );
-    return addRes.data?.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
+    return { sheetId: addRes.data?.replies?.[0]?.addSheet?.properties?.sheetId ?? 0, merges: [] };
   }
 
   const sheetId = existing.properties?.sheetId ?? 0;
+  const merges: any[] = Array.isArray(existing.merges) ? existing.merges : [];
   const curRows = existing.properties?.gridProperties?.rowCount || 0;
   const curCols = existing.properties?.gridProperties?.columnCount || 0;
   if (curRows >= neededRows && curCols >= neededCols) {
-    return sheetId;
+    return { sheetId, merges };
   }
   await writeWithRetry<any>(() =>
     sheets.spreadsheets.batchUpdate({
@@ -224,7 +225,7 @@ async function ensureSheetGrid(
       }
     })
   );
-  return sheetId;
+  return { sheetId, merges };
 }
 
 // Header/banner styling applied after the values are written. Merges + highlights
@@ -236,7 +237,8 @@ async function applyTableFormatting(
   spreadsheetId: string,
   sheetId: number,
   cols: number,
-  hasBanner: boolean
+  hasBanner: boolean,
+  existingMerges: any[]
 ): Promise<void> {
   const headerRowIndex = hasBanner ? 1 : 0; // 0-based
   const requests: any[] = [];
@@ -248,11 +250,35 @@ async function applyTableFormatting(
     endColumnIndex: cols
   };
 
-  // Розліплюємо перший рядок ЗАВЖДИ, не лише коли малюємо банер. values.clear()
-  // прибирає значення, але не об'єднання і не заливку — тож аркуш, який колись
-  // мав банер, лишався б зі злитим A1:E1, і шапка колонок опинилась би всередині
+  // Розліплюємо перший рядок ЗАВЖДИ, не лише коли малюємо банер: values.clear()
+  // прибирає значення, але не об'єднання і не заливку, тож аркуш, який колись мав
+  // банер, лишався б зі злитим A1:E1 — і шапка колонок опинилась би всередині
   // однієї клітинки (видно тільки перший заголовок на всю ширину).
-  requests.push({ unmergeCells: { range: firstRowRange } });
+  //
+  // Розліплюємо ПОІМЕННО, за фактичними об'єднаннями, а не одним запитом на весь
+  // рядок: unmergeCells падає, якщо діапазон ЧАСТКОВО перетинає merge. Об'єднання
+  // ширше за таблицю (A1:F1, зроблене руками в таблиці) завалило б увесь
+  // batchUpdate, а з ним і кожне наступне вивантаження прайсу.
+  for (const merge of existingMerges) {
+    const startRow = Number(merge?.startRowIndex ?? -1);
+    const endRow = Number(merge?.endRowIndex ?? -1);
+    // Беремо лише ті, що лежать РІВНО в межах першого рядка — їх можна зняти
+    // їхнім же діапазоном, без ризику часткового перетину. Вертикальні
+    // об'єднання (A1:A3) не чіпаємо: вони не наших рук справа.
+    if (startRow === 0 && endRow === 1) {
+      requests.push({
+        unmergeCells: {
+          range: {
+            sheetId,
+            startRowIndex: startRow,
+            endRowIndex: endRow,
+            startColumnIndex: Number(merge.startColumnIndex ?? 0),
+            endColumnIndex: Number(merge.endColumnIndex ?? cols)
+          }
+        }
+      });
+    }
+  }
 
   if (hasBanner) {
     requests.push({ mergeCells: { range: firstRowRange, mergeType: 'MERGE_ALL' } });
@@ -354,7 +380,13 @@ export async function writeSheetTable(
 
     let apiCalls = 0;
 
-    const sheetId = await ensureSheetGrid(sheets, spreadsheetId, sheetName, totalRows, cols);
+    const { sheetId, merges } = await ensureSheetGrid(
+      sheets,
+      spreadsheetId,
+      sheetName,
+      totalRows,
+      cols
+    );
     apiCalls += 1;
 
     await writeWithRetry<any>(() =>
@@ -407,7 +439,7 @@ export async function writeSheetTable(
       }
     }
 
-    await applyTableFormatting(sheets, spreadsheetId, sheetId, cols, hasBanner);
+    await applyTableFormatting(sheets, spreadsheetId, sheetId, cols, hasBanner, merges);
     apiCalls += 1;
 
     return {
@@ -461,7 +493,15 @@ export async function writeSheetKeyValue(
     const sheets = google.sheets({ version: 'v4', auth });
     let apiCalls = 0;
 
-    const sheetId = await ensureSheetGrid(sheets, spreadsheetId, sheetName, entries.length, 2);
+    // Сітка з запасом: аркуш 1x2 технічно валідний, але для людини виглядає як
+    // зламаний — ані прокрутити, ані дописати.
+    const { sheetId } = await ensureSheetGrid(
+      sheets,
+      spreadsheetId,
+      sheetName,
+      Math.max(entries.length, 20),
+      4
+    );
     apiCalls += 1;
 
     await writeWithRetry<any>(() =>
@@ -474,7 +514,7 @@ export async function writeSheetKeyValue(
         spreadsheetId,
         range: `${sheetName}!A1:B${entries.length}`,
         valueInputOption: 'RAW',
-        requestBody: { values: entries.map(([label, value]) => [label, value]) }
+        requestBody: { values: entries.map((entry) => [entry[0], entry[1]]) }
       })
     );
     apiCalls += 1;
