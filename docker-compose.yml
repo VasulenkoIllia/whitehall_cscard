@@ -2,18 +2,18 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: whitehall-cscard-db
+    container_name: ${DB_CONTAINER:-whitehall-cscard-db}
     environment:
       POSTGRES_USER: whitehall_store
-      POSTGRES_PASSWORD: whitehall_store
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whitehall_store}
       POSTGRES_DB: whitehall_store
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       # Доступ з локального ПК через SSH-тунель (DataGrip):
-      #   ssh -L 5433:localhost:5432 user@whitehallshop.workflo.space
+      #   ssh -L 5433:localhost:${DB_HOST_PORT:-5432} user@СЕРВЕР
       # Потім в DataGrip: host=localhost, port=5433
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U whitehall_store -d whitehall_store"]
       interval: 10s
@@ -27,11 +27,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: whitehall-cscard-app
+    container_name: ${APP_CONTAINER:-whitehall-cscard-app}
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://whitehall_store:whitehall_store@db:5432/whitehall_store
+      DATABASE_URL: postgres://whitehall_store:${POSTGRES_PASSWORD:-whitehall_store}@db:5432/whitehall_store
       PORT: 3000
       TZ: Europe/Kyiv
     depends_on:
@@ -49,10 +49,10 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
-      - "traefik.http.routers.whitehall-cscard.rule=Host(`whitehallshop.workflo.space`)"
-      - "traefik.http.routers.whitehall-cscard.entrypoints=websecure"
-      - "traefik.http.routers.whitehall-cscard.tls.certresolver=cf"
-      - "traefik.http.services.whitehall-cscard.loadbalancer.server.port=3000"
+      - "traefik.http.routers.${ROUTER_NAME:-whitehall-cscard}.rule=Host(`${APP_DOMAIN:-whitehallshop.workflo.space}`)"
+      - "traefik.http.routers.${ROUTER_NAME:-whitehall-cscard}.entrypoints=websecure"
+      - "traefik.http.routers.${ROUTER_NAME:-whitehall-cscard}.tls.certresolver=cf"
+      - "traefik.http.services.${ROUTER_NAME:-whitehall-cscard}.loadbalancer.server.port=3000"
     healthcheck:
       test:
         [
