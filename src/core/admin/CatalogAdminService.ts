@@ -1761,12 +1761,18 @@ export class CatalogAdminService {
          LIMIT 1
        ) sm_col ON TRUE
        LEFT JOIN LATERAL (
-         SELECT sm.variation_group_code AS code
+         -- Одна колекція може містити кілька груп варіацій (на проді 2 139 із
+         -- 63 757, максимум 5). Не обираємо за власника жодної — показуємо всі
+         -- через кому, впорядковано. Раніше тут був LIMIT 1 без ORDER BY: він
+         -- повертав довільну групу, і значення могло змінитись між двома
+         -- відкриттями сторінки без будь-якої зміни даних.
+         -- Агрегат без GROUP BY завжди дає рівно один рядок (code = NULL, якщо
+         -- збігів немає), тож ON TRUE лишається коректним.
+         SELECT string_agg(DISTINCT sm.variation_group_code, ', ' ORDER BY sm.variation_group_code) AS code
          FROM store_mirror sm
          WHERE sm.store = $${values.length}
            AND sm.collection_code = base.article
            AND sm.variation_group_code IS NOT NULL
-         LIMIT 1
        ) sm_vgc ON TRUE
        ${whereClause}
        ORDER BY base.id ASC
