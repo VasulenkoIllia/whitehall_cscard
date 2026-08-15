@@ -1689,15 +1689,15 @@ export class CatalogAdminService {
           OR base.supplier_name ILIKE $${index}
           OR base.supplier_sku_prefix ILIKE $${index}
           OR base.sku_article ILIKE $${index}
-          OR COALESCE(sm_col.code, '') ILIKE $${index}
-          OR COALESCE(sm_vgc.code, '') ILIKE $${index})`
+          OR COALESCE(sm_sku.collection_code, sm_col.code, '') ILIKE $${index}
+          OR COALESCE(sm_sku.variation_group_code, sm_vgc.code, '') ILIKE $${index})`
       );
     }
     if (missingOnly) {
       whereParts.push('sm_sku.article IS NULL');
     }
     if (missingCollectionOnly) {
-      whereParts.push('sm_col.code IS NULL');
+      whereParts.push('COALESCE(sm_sku.collection_code, sm_col.code) IS NULL');
     }
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     values.push(store);
@@ -1739,27 +1739,53 @@ export class CatalogAdminService {
          base.supplier_has_sku_prefix,
          base.sku_article,
          sm_sku.article AS store_sku,
-         sm_vgc.code AS store_variation_group_code,
-         sm_col.code AS store_collection_code,
+         -- Пріоритет — рядок дзеркала цього самого SKU (sm_sku): якщо товар уже
+         -- в магазині, його власні collection_code / variation_group_code і є
+         -- правильною відповіддю. LATERAL-пошук по collection_code = base.article
+         -- лишається ЗАПАСНИМ шляхом для товарів, яких у магазині ще немає, але
+         -- модель із таким кодом там є (задум коміту d774250). До цієї правки
+         -- запасний шлях витісняв основний, і 15 972 товарів показували "-"
+         -- попри те, що дані лежали в дзеркалі.
+         COALESCE(sm_sku.variation_group_code, sm_vgc.code) AS store_variation_group_code,
+         COALESCE(sm_sku.collection_code, sm_col.code) AS store_collection_code,
          COUNT(*) OVER() AS total
        FROM base
        LEFT JOIN store_mirror sm_sku
          ON sm_sku.store = $${values.length}
         AND sm_sku.article = base.sku_article
        LEFT JOIN LATERAL (
+         -- Guard sm_sku.collection_code IS NULL: коли власний рядок дзеркала
+         -- уже має значення, COALESCE нижче все одно візьме його, а цей пошук
+         -- був би марною роботою — а виконується він для КОЖНОГО рядка каталогу,
+         -- бо COUNT(*) OVER() змушує пройти весь набір незалежно від LIMIT.
+         -- На проді це 117 662 зайвих пошуки зі 173 795. Заміряно: без guard
+         -- запит 3.43 с, з guard 2.93 с (поточний прод — 2.99 с).
+         -- ІНВАРІАНТ: guard коректний лише тому, що КОЖЕН споживач sm_col.code
+         -- і sm_vgc.code загорнутий у COALESCE(sm_sku.<поле>, ...). Якщо колись
+         -- знадобиться використати sm_col.code напряму — guard треба зняти,
+         -- інакше там мовчки буде NULL.
          SELECT sm.collection_code AS code
          FROM store_mirror sm
-         WHERE sm.store = $${values.length}
+         WHERE sm_sku.collection_code IS NULL
+           AND sm.store = $${values.length}
            AND sm.collection_code = base.article
          LIMIT 1
        ) sm_col ON TRUE
        LEFT JOIN LATERAL (
-         SELECT sm.variation_group_code AS code
+         -- Одна колекція може містити кілька груп варіацій (на проді 2 139 із
+         -- 63 757, максимум 5). Не обираємо за власника жодної — показуємо всі
+         -- через кому, впорядковано. Раніше тут був LIMIT 1 без ORDER BY: він
+         -- повертав довільну групу, і значення могло змінитись між двома
+         -- відкриттями сторінки без будь-якої зміни даних.
+         -- Агрегат без GROUP BY завжди дає рівно один рядок (code = NULL, якщо
+         -- збігів немає), тож ON TRUE лишається коректним.
+         -- Guard — див. пояснення та інваріант у sm_col вище.
+         SELECT string_agg(DISTINCT sm.variation_group_code, ', ' ORDER BY sm.variation_group_code) AS code
          FROM store_mirror sm
-         WHERE sm.store = $${values.length}
+         WHERE sm_sku.variation_group_code IS NULL
+           AND sm.store = $${values.length}
            AND sm.collection_code = base.article
            AND sm.variation_group_code IS NOT NULL
-         LIMIT 1
        ) sm_vgc ON TRUE
        ${whereClause}
        ORDER BY base.id ASC

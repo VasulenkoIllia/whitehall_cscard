@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { CatalogAdminService } from '../core/admin/CatalogAdminService';
 import { JobService } from '../core/jobs/JobService';
 import { PipelineJobRunner } from '../core/jobs/PipelineJobRunner';
 import { StoreMirrorService } from '../core/jobs/StoreMirrorService';
@@ -589,6 +590,114 @@ async function testMirrorPruneSafetyValveInvariant(pool: Pool): Promise<void> {
   );
 }
 
+/**
+ * Compare-таб показує «Колекція в магазині» і «Варіація-група» з дзеркала.
+ *
+ * Регресія, яку ця перевірка тримає (виявлено на проді 15.08.2026): обидві
+ * колонки читались ВИКЛЮЧНО через LATERAL `collection_code = base.article`,
+ * тобто відповідали на питання «чи є в магазині колекція з кодом = наш
+ * артикул», а не «до чого належить цей SKU». Наслідки:
+ *   - 15 972 товари зі 173 795 показували «-», хоча значення лежали в
+ *     store_mirror для тих самих SKU;
+ *   - LIMIT 1 без ORDER BY серед рядків колекції повертав довільну групу, а
+ *     2 139 колекцій із 63 757 містять більше однієї (до 5) — значення могло
+ *     змінитись між двома відкриттями сторінки;
+ *   - у 431 випадку показувалась група ЧУЖОГО товару.
+ *
+ * Попереднє «виправлення» (d774250) замінило прямий пошук пер-колекційним
+ * замість того, щоб додати його як запасний. Ця перевірка ловить обидві
+ * крайності: і втрату власного значення, і повернення до вибору однієї групи
+ * замість показу всіх.
+ */
+async function testCompareCollectionAndGroupInvariant(pool: Pool): Promise<void> {
+  await pool.query(`DELETE FROM products_final`);
+  await pool.query(`DELETE FROM store_mirror`);
+
+  await pool.query(
+    `INSERT INTO products_final (article, size, quantity, price_base, price_final, extra)
+     VALUES ('A-100', '45', 1, 100, 200, 'collection head'),
+            ('A-200', '46', 1, 100, 200, 'sibling in the same collection'),
+            ('B-100', 'S',  1, 100, 200, 'own value must win'),
+            ('C-100', 'M',  1, 100, 200, 'absent from store, ambiguous collection'),
+            ('D-100', 'L',  1, 100, 200, 'nothing anywhere')`
+  );
+
+  await pool.query(
+    `INSERT INTO store_mirror (store, article, visibility, collection_code, variation_group_code)
+     VALUES ('cscart', 'A-100-45', TRUE, 'A-100', 'G-1'),
+            ('cscart', 'A-200-46', TRUE, 'A-100', 'G-1'),
+            ('cscart', 'B-100-S',  TRUE, 'C-999', 'G-OWN'),
+            ('cscart', 'Z-1',      TRUE, 'B-100', 'G-OTHER'),
+            ('cscart', 'X-1',      TRUE, 'C-100', 'G-B'),
+            ('cscart', 'X-2',      TRUE, 'C-100', 'G-A')`
+  );
+
+  const admin = new CatalogAdminService(pool);
+  const options = {
+    limit: 100,
+    offset: 0,
+    search: null,
+    supplierId: null,
+    missingOnly: false,
+    missingCollectionOnly: false,
+    store: 'cscart'
+  };
+
+  const preview = await admin.listComparePreview(options);
+  const byArticle = new Map(preview.rows.map((row) => [String(row.article), row]));
+
+  // Голова колекції — артикул збігається з кодом колекції. Працювало й до фіксу.
+  assert.equal(byArticle.get('A-100')?.store_collection_code, 'A-100');
+  assert.equal(byArticle.get('A-100')?.store_variation_group_code, 'G-1');
+
+  // Брат по колекції: артикул НЕ дорівнює коду колекції. Саме ці 15 972 рядки
+  // показували «-», хоча власний рядок дзеркала має обидва значення.
+  assert.equal(
+    byArticle.get('A-200')?.store_collection_code,
+    'A-100',
+    'SKU present in the store must show its own collection, not "-"'
+  );
+  assert.equal(byArticle.get('A-200')?.store_variation_group_code, 'G-1');
+
+  // Власний рядок переважає: у колекції з кодом B-100 лежить ЧУЖИЙ товар Z-1
+  // з групою G-OTHER, але B-100-S має власну G-OWN — показати треба її.
+  assert.equal(
+    byArticle.get('B-100')?.store_variation_group_code,
+    'G-OWN',
+    'own mirror row must win over a foreign product whose collection is named after this article'
+  );
+  assert.equal(byArticle.get('B-100')?.store_collection_code, 'C-999');
+
+  // Запасний шлях (SKU у магазині немає): показуємо ВСІ групи колекції,
+  // впорядковано — а не одну довільну.
+  assert.equal(
+    byArticle.get('C-100')?.store_variation_group_code,
+    'G-A, G-B',
+    'fallback must list every group of the collection in a stable order, never pick one'
+  );
+  assert.equal(byArticle.get('C-100')?.store_collection_code, 'C-100');
+
+  // Немає ні свого рядка, ні колекції — обидві колонки порожні.
+  assert.equal(byArticle.get('D-100')?.store_collection_code, null);
+  assert.equal(byArticle.get('D-100')?.store_variation_group_code, null);
+
+  // Пошук за кодом колекції має повертати всю групу, а не лише її голову.
+  const searched = await admin.listComparePreview({ ...options, search: 'A-100' });
+  assert.deepEqual(
+    searched.rows.map((row) => String(row.article)).sort(),
+    ['A-100', 'A-200'],
+    'searching by collection code must return every SKU of that collection'
+  );
+
+  // Фільтр «лише без колекції» має бути узгоджений з тим, що видно в таблиці.
+  const missing = await admin.listComparePreview({ ...options, missingCollectionOnly: true });
+  assert.deepEqual(
+    missing.rows.map((row) => String(row.article)),
+    ['D-100'],
+    'a row with an inherited collection must not be listed as missing one'
+  );
+}
+
 async function main(): Promise<void> {
   const databaseUrl = readRequiredEnv('DATABASE_URL');
   const schema = createSchemaName();
@@ -630,6 +739,9 @@ async function main(): Promise<void> {
     await run('concurrent-mirror-snapshots', () => testConcurrentMirrorSnapshotsInvariant(pool));
     await run('mirror-prunes-vanished-rows', () => testMirrorPrunesVanishedRowsInvariant(pool));
     await run('mirror-prune-safety-valve', () => testMirrorPruneSafetyValveInvariant(pool));
+    await run('compare-collection-and-group', () =>
+      testCompareCollectionAndGroupInvariant(pool)
+    );
 
     // eslint-disable-next-line no-console
     console.log(
