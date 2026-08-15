@@ -1754,9 +1754,20 @@ export class CatalogAdminService {
          ON sm_sku.store = $${values.length}
         AND sm_sku.article = base.sku_article
        LEFT JOIN LATERAL (
+         -- Guard sm_sku.collection_code IS NULL: коли власний рядок дзеркала
+         -- уже має значення, COALESCE нижче все одно візьме його, а цей пошук
+         -- був би марною роботою — а виконується він для КОЖНОГО рядка каталогу,
+         -- бо COUNT(*) OVER() змушує пройти весь набір незалежно від LIMIT.
+         -- На проді це 117 662 зайвих пошуки зі 173 795. Заміряно: без guard
+         -- запит 3.43 с, з guard 2.93 с (поточний прод — 2.99 с).
+         -- ІНВАРІАНТ: guard коректний лише тому, що КОЖЕН споживач sm_col.code
+         -- і sm_vgc.code загорнутий у COALESCE(sm_sku.<поле>, ...). Якщо колись
+         -- знадобиться використати sm_col.code напряму — guard треба зняти,
+         -- інакше там мовчки буде NULL.
          SELECT sm.collection_code AS code
          FROM store_mirror sm
-         WHERE sm.store = $${values.length}
+         WHERE sm_sku.collection_code IS NULL
+           AND sm.store = $${values.length}
            AND sm.collection_code = base.article
          LIMIT 1
        ) sm_col ON TRUE
@@ -1768,9 +1779,11 @@ export class CatalogAdminService {
          -- відкриттями сторінки без будь-якої зміни даних.
          -- Агрегат без GROUP BY завжди дає рівно один рядок (code = NULL, якщо
          -- збігів немає), тож ON TRUE лишається коректним.
+         -- Guard — див. пояснення та інваріант у sm_col вище.
          SELECT string_agg(DISTINCT sm.variation_group_code, ', ' ORDER BY sm.variation_group_code) AS code
          FROM store_mirror sm
-         WHERE sm.store = $${values.length}
+         WHERE sm_sku.variation_group_code IS NULL
+           AND sm.store = $${values.length}
            AND sm.collection_code = base.article
            AND sm.variation_group_code IS NOT NULL
        ) sm_vgc ON TRUE
