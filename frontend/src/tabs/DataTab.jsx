@@ -64,8 +64,8 @@ const VIEW_CONFIG = {
       { key: 'supplier_sku_prefix', label: 'SKU префікс' },
       { key: 'quantity', label: 'К-сть' },
       { key: 'price_base', label: 'Базова ціна' },
-      { key: 'price_final', label: 'Фінальна ціна' },
       { key: 'price_drop', label: 'Дроп ціна' },
+      { key: 'price_final', label: 'Фінальна ціна' },
       { key: 'extra', label: 'Назва' },
       { key: 'comment', label: 'Коментар' },
       { key: 'created_at', label: 'Створено' }
