@@ -4,14 +4,31 @@
 
 | Середовище | Домен | Гілка | Папка на сервері |
 |---|---|---|---|
-| **PROD** | https://whitehallshop.workflo.space | `main` | `/var/www/projects/whitehall_cscard` |
-| **TEST** | https://whitehallshoptest.workflo.space | `develop` | `/var/www/projects/whitehall_cscard_test` |
+| **PROD** | https://system.whitehall.store | `main` | `/var/www/projects/whitehall_cscard` |
+| **TEST** | https://systemtest.whitehall.store | `develop` | `/var/www/projects/whitehall_cscard_test` |
+
+> Обидва середовища переїхали на новий сервер у ніч на 15.08.2026. Хід переносу,
+> ухвалені рішення та шлях відкату —
+> [`RUNBOOK_SERVER_MIGRATION_2026_08.md`](./RUNBOOK_SERVER_MIGRATION_2026_08.md).
+> Старі адреси `whitehallshop.workflo.space` і `whitehallshoptest.workflo.space`
+> лишились на старому сервері як відкат і згаснуть разом з ним.
 
 ## Сервер
 
-- **Хост:** WorkfloMain
-- **Реверс-проксі:** Traefik (мережа `proxy`)
-- **База даних:** PostgreSQL 16 (окремий контейнер на кожне середовище)
+- **Хост:** `77.42.87.94`, SSH на нестандартному порту **2222**, користувач `root`:
+  ```bash
+  ssh -p 2222 root@77.42.87.94
+  ```
+- **Реверс-проксі:** Traefik у `/var/www/proxy/traefik`, docker-мережа `proxy`
+- **Сертифікати:** Let's Encrypt через DNS-01 Cloudflare, resolver `cf`,
+  сховище `/var/www/proxy/traefik/acme/acme.json`. Випускаються автоматично,
+  щойно стартує контейнер із відповідними лейблами — окремих дій не треба.
+- **DNS:** зона `whitehall.store` у Cloudflare, записи **проксійовані**
+  (помаранчева хмарка). Відвідувачу Cloudflare віддає свій wildcard-сертифікат,
+  до origin ходить по нашому Let's Encrypt → режим SSL має бути **Full**
+  (при Flexible буде нескінченний редирект).
+- **База даних:** PostgreSQL 16, окремий контейнер на кожне середовище,
+  дані на bind-mount `./data/postgres` усередині папки проєкту
 
 ## Контейнери
 
@@ -20,10 +37,65 @@
 | PROD | `whitehall-cscard-app` | `whitehall-cscard-db` | `5432` |
 | TEST | `whitehall-cscard-test-app` | `whitehall-cscard-test-db` | `5433` |
 
+Порти БД слухають **тільки на `127.0.0.1`**. Назовні відкриті лише 2222 (SSH),
+80 і 443.
+
 ### Підключення до БД через DataGrip (SSH тунель)
 ```
-ssh -L 5432:localhost:5432 user@WorkfloMain   # PROD
-ssh -L 5433:localhost:5433 user@WorkfloMain   # TEST
+ssh -p 2222 -L 5432:localhost:5432 root@77.42.87.94   # PROD
+ssh -p 2222 -L 5433:localhost:5433 root@77.42.87.94   # TEST
+```
+
+---
+
+## Конфігурація середовища: `.env` і compose
+
+**`.env` більше не версіонується** (коміт `be11318` — файл лежав у публічному
+репозиторії). На сервері створюється вручну, права `600`. Бекапи, зняті при
+переносі, лежать у `/root/env-*-BEFORE-EDIT-*.bak`.
+
+`docker-compose.yml` **однаковий на обох гілках**: середовище-залежні поля
+винесені у змінні з дефолтами (коміт `be70f3f`). Розходження між PROD і TEST
+тепер живе виключно в `.env`:
+
+| Ключ | PROD | TEST |
+|---|---|---|
+| `APP_CONTAINER` | `whitehall-cscard-app` | `whitehall-cscard-test-app` |
+| `DB_CONTAINER` | `whitehall-cscard-db` | `whitehall-cscard-test-db` |
+| `DB_HOST_PORT` | `5432` | `5433` |
+| `ROUTER_NAME` | `whitehall-cscard` | `whitehall-cscard-test` |
+| `APP_DOMAIN` | `system.whitehall.store` | `systemtest.whitehall.store` |
+| `POSTGRES_PASSWORD` | свій | свій |
+
+`POSTGRES_PASSWORD` мусить збігатися з паролем усередині `DATABASE_URL` — це
+найлегша помилка при ручному правленні `.env`. Перевірка:
+
+```bash
+cd /var/www/projects/whitehall_cscard
+A=$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2)
+B=$(grep '^DATABASE_URL=' .env | sed -E 's|.*://whitehall_store:([^@]+)@.*|\1|')
+[ "$A" = "$B" ] && echo OK || echo РОЗБІЖНІСТЬ
+```
+
+Перед перезапуском корисно глянути, що саме зрендериться з `.env`:
+
+```bash
+docker compose config | grep -E 'container_name|published|traefik.http.routers'
+```
+
+## Робоча копія на сервері: sparse-checkout
+
+Обидва проєкти клоновані з виключенням каталогів, непотрібних у продакшені:
+
+```
+/*  !/docs/  !/.claude/  !/.idea/  !/output/
+```
+
+Тобто `git pull` **ніколи не притягне документацію на сервер** — вона живе лише
+в репозиторії. Перевірити:
+
+```bash
+git -C /var/www/projects/whitehall_cscard sparse-checkout list
 ```
 
 ---
@@ -201,6 +273,8 @@ docker compose exec -T db psql -U whitehall_store whitehall_store < /tmp/whiteha
 
 ## Відкат PROD у разі проблем
 
+### Відкат коду (звичайний випадок)
+
 ```bash
 cd /var/www/projects/whitehall_cscard
 
@@ -211,6 +285,27 @@ git log --oneline -10
 git checkout <commit-hash>
 docker compose up -d --build app
 ```
+
+### Відкат на старий сервер (поки він живий)
+
+Старий сервер лишається цілим із даними станом на момент переносу. Повернення:
+
+```bash
+# НА СТАРОМУ сервері (49.12.219.133, користувач workflo)
+cd /var/www/projects/whitehall_cscard && docker compose start app
+```
+
+> **Обережно: шляхи на обох серверах ідентичні** (`/var/www/projects/whitehall_cscard`
+> і `..._test`). Команду, скопійовану без прив'язки до хоста, легко виконати не на
+> тій машині — так уже було з `docker compose stop`. Для команд на старому сервері
+> використовуй запобіжник:
+> ```bash
+> if [ "$(hostname)" = "WorkfloMain" ]; then cd /var/www/projects/whitehall_cscard && docker compose ps -a; else echo "НЕ ТОЙ СЕРВЕР: $(hostname)"; fi
+> ```
+
+> **Поки ключі не ротовані**, старий і новий прод мають один CS-Cart API-юзер,
+> один Google service account і один Telegram-бот. Обидва одночасно запускати
+> НЕ можна — вони писатимуть в один магазин і одну таблицю покупцям.
 
 ---
 
