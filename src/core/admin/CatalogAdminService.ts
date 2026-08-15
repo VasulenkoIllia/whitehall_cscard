@@ -1689,15 +1689,15 @@ export class CatalogAdminService {
           OR base.supplier_name ILIKE $${index}
           OR base.supplier_sku_prefix ILIKE $${index}
           OR base.sku_article ILIKE $${index}
-          OR COALESCE(sm_col.code, '') ILIKE $${index}
-          OR COALESCE(sm_vgc.code, '') ILIKE $${index})`
+          OR COALESCE(sm_sku.collection_code, sm_col.code, '') ILIKE $${index}
+          OR COALESCE(sm_sku.variation_group_code, sm_vgc.code, '') ILIKE $${index})`
       );
     }
     if (missingOnly) {
       whereParts.push('sm_sku.article IS NULL');
     }
     if (missingCollectionOnly) {
-      whereParts.push('sm_col.code IS NULL');
+      whereParts.push('COALESCE(sm_sku.collection_code, sm_col.code) IS NULL');
     }
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
     values.push(store);
@@ -1739,8 +1739,15 @@ export class CatalogAdminService {
          base.supplier_has_sku_prefix,
          base.sku_article,
          sm_sku.article AS store_sku,
-         sm_vgc.code AS store_variation_group_code,
-         sm_col.code AS store_collection_code,
+         -- Пріоритет — рядок дзеркала цього самого SKU (sm_sku): якщо товар уже
+         -- в магазині, його власні collection_code / variation_group_code і є
+         -- правильною відповіддю. LATERAL-пошук по collection_code = base.article
+         -- лишається ЗАПАСНИМ шляхом для товарів, яких у магазині ще немає, але
+         -- модель із таким кодом там є (задум коміту d774250). До цієї правки
+         -- запасний шлях витісняв основний, і 15 972 товарів показували "-"
+         -- попри те, що дані лежали в дзеркалі.
+         COALESCE(sm_sku.variation_group_code, sm_vgc.code) AS store_variation_group_code,
+         COALESCE(sm_sku.collection_code, sm_col.code) AS store_collection_code,
          COUNT(*) OVER() AS total
        FROM base
        LEFT JOIN store_mirror sm_sku
